@@ -1,5 +1,10 @@
 import { useState, useEffect } from 'react';
-import { Search, RefreshCw, Loader2, AlertCircle } from 'lucide-react';
+import { Search, RefreshCw, Loader2, AlertCircle, Zap } from 'lucide-react';
+
+interface PerceptionSignal {
+  type: string;
+  message: string;
+}
 
 interface KnowledgeCard {
   id: string;
@@ -50,11 +55,13 @@ export default function Memory() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchResults, setSearchResults] = useState<any[] | null>(null);
+  const [signals, setSignals] = useState<PerceptionSignal[]>([]);
   const [searching, setSearching] = useState(false);
 
   // Load cards on mount
   useEffect(() => {
     loadCards();
+    loadPerception();
   }, []);
 
   const loadCards = async () => {
@@ -86,6 +93,18 @@ export default function Memory() {
     }
 
     setLoading(false);
+  };
+
+  const loadPerception = async () => {
+    if (!window.electronAPI) return;
+    try {
+      const result = await (window.electronAPI as any).memoryGetPerception();
+      const text = result?.result?.content?.[0]?.text;
+      if (text) {
+        const parsed = JSON.parse(text);
+        setSignals(parsed.signals || []);
+      }
+    } catch { /* no perception data */ }
   };
 
   const handleSearch = async () => {
@@ -200,6 +219,30 @@ export default function Memory() {
         {loading && (
           <div className="flex items-center justify-center py-12">
             <Loader2 size={24} className="animate-spin text-brand-500" />
+          </div>
+        )}
+
+        {/* Perception Signals */}
+        {signals.length > 0 && (
+          <div className="space-y-2 mb-4">
+            <h3 className="text-xs font-medium text-slate-500 uppercase tracking-wider flex items-center gap-1">
+              <Zap size={12} /> 感知信号
+            </h3>
+            {signals.map((signal, i) => {
+              const config: Record<string, { emoji: string; color: string }> = {
+                contradiction: { emoji: '⚡', color: 'border-red-500/30 bg-red-500/5' },
+                pattern: { emoji: '🔄', color: 'border-amber-500/30 bg-amber-500/5' },
+                resonance: { emoji: '💫', color: 'border-purple-500/30 bg-purple-500/5' },
+                staleness: { emoji: '⏰', color: 'border-slate-500/30 bg-slate-500/5' },
+              };
+              const c = config[signal.type] || { emoji: '💡', color: 'border-brand-500/30 bg-brand-500/5' };
+              return (
+                <div key={i} className={`p-3 rounded-xl border ${c.color} flex items-start gap-2.5`}>
+                  <span className="text-base">{c.emoji}</span>
+                  <p className="text-sm text-slate-200">{signal.message}</p>
+                </div>
+              );
+            })}
           </div>
         )}
 

@@ -754,6 +754,10 @@ ipcMain.handle('memory:get-context', async () => {
   return callMcp('awareness_lookup', { type: 'context' });
 });
 
+ipcMain.handle('memory:get-perception', async () => {
+  return callMcp('awareness_lookup', { type: 'perception' });
+});
+
 // --- App Lifecycle ---
 
 app.whenReady().then(createWindow);

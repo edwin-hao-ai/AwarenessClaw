@@ -49,4 +49,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
   memoryGetCards: () => ipcRenderer.invoke('memory:get-cards'),
   memoryGetTasks: () => ipcRenderer.invoke('memory:get-tasks'),
   memoryGetContext: () => ipcRenderer.invoke('memory:get-context'),
+  memoryGetPerception: () => ipcRenderer.invoke('memory:get-perception'),
 });
