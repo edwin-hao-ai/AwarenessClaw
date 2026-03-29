@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getPlatform: () => ipcRenderer.invoke('app:get-platform'),
   openExternal: (url: string) => ipcRenderer.invoke('app:open-external'),
   getDashboardUrl: () => ipcRenderer.invoke('app:get-dashboard-url'),
+  checkUpdates: () => ipcRenderer.invoke('app:check-updates'),
 
   // Setup wizard
   detectEnvironment: () => ipcRenderer.invoke('setup:detect-environment'),

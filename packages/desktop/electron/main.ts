@@ -405,6 +405,52 @@ ipcMain.handle('setup:save-config', async (_e, config: Record<string, unknown>) 
   return { success: true };
 });
 
+/**
+ * Check for updates — compare installed vs npm latest versions
+ */
+ipcMain.handle('app:check-updates', async () => {
+  const updates: any[] = [];
+
+  // Check OpenClaw version
+  const currentOC = safeShellExec('openclaw --version');
+  if (currentOC) {
+    const latestOC = safeShellExec('npm view openclaw version', 10000);
+    if (latestOC && latestOC !== currentOC.replace(/[^\d.]/g, '').trim()) {
+      const current = currentOC.replace(/[^\d.]/g, '').trim();
+      if (current !== latestOC.trim()) {
+        updates.push({
+          component: 'openclaw',
+          label: 'OpenClaw',
+          currentVersion: current,
+          latestVersion: latestOC.trim(),
+        });
+      }
+    }
+  }
+
+  // Check Awareness plugin version
+  const currentPlugin = safeShellExec('npm ls -g @awareness-sdk/openclaw-memory --json 2>/dev/null', 10000);
+  if (currentPlugin) {
+    try {
+      const parsed = JSON.parse(currentPlugin);
+      const installed = parsed?.dependencies?.['@awareness-sdk/openclaw-memory']?.version;
+      if (installed) {
+        const latestPlugin = safeShellExec('npm view @awareness-sdk/openclaw-memory version', 10000);
+        if (latestPlugin && latestPlugin.trim() !== installed) {
+          updates.push({
+            component: 'plugin',
+            label: 'Awareness Memory 插件',
+            currentVersion: installed,
+            latestVersion: latestPlugin.trim(),
+          });
+        }
+      }
+    } catch {}
+  }
+
+  return { updates };
+});
+
 ipcMain.handle('setup:open-auth-url', (_e, url: string) => {
   shell.openExternal(url);
 });

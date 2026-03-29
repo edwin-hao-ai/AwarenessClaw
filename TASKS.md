@@ -49,7 +49,7 @@
 
 ### 模型配置
 - [x] 模型激活状态 badge（✅已配置 / 🔑需配置）
-- [ ] 未配置厂商点击提示输入 API Key
+- [x] 未配置厂商点击弹出 API Key 输入框（2026-03-30）
 - [ ] 测试连接按钮
 - [x] **已安装 OpenClaw 自动延用配置**：检测到已有 providers/models 时跳过模型选择步骤（2026-03-30）
 
@@ -66,9 +66,9 @@
 - [ ] 通道状态实时显示
 
 ### 定时任务（Cron）
-- [ ] Cron 可视化管理页面
-- [ ] 调用 `openclaw cron list/add/remove`
-- [ ] Heartbeat 开关 + 频率配置
+- [x] Cron 可视化管理页面（独立"自动化"tab）（2026-03-30）
+- [x] 调用 `openclaw cron list/add/remove`（2026-03-30）
+- [x] Heartbeat 开关 + 频率配置（2026-03-30）
 
 ### 系统管理
 - [x] Gateway 启动/停止/重启按钮
@@ -79,7 +79,7 @@
 ### 升级提醒
 - [x] **强提醒（弹窗）**：模态框 — 立即升级 / 下次提醒 / 永不提醒（2026-03-30）
 - [x] **弱提醒（tooltip）**：顶部提示条，手动关闭（sessionStorage）（2026-03-30）
-- [ ] 检测 OpenClaw / Awareness 插件 / 桌面端版本（版本号对比逻辑待实现）
+- [x] 检测 OpenClaw / Awareness 插件版本（npm view 对比）（2026-03-30）
 
 ### OpenClaw 初始化
 - [x] 已安装 OpenClaw 检测 + 配置复用（setup:read-existing-config）（2026-03-30）

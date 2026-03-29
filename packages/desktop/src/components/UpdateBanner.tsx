@@ -35,16 +35,18 @@ export default function UpdateBanner() {
     setChecking(true);
 
     try {
-      // Check OpenClaw version
-      const env = await (window.electronAPI as any).detectEnvironment();
-      if (env.openclawInstalled && env.openclawVersion) {
-        // Compare with npm latest (best effort)
-        // For now, just show the current version — real check would need npm view
+      const result = await (window.electronAPI as any).checkUpdates();
+      if (result.updates && result.updates.length > 0) {
+        setUpdates(result.updates.map((u: any) => ({
+          available: true,
+          currentVersion: u.currentVersion,
+          latestVersion: u.latestVersion,
+          component: u.component,
+          label: u.label,
+        })));
       }
     } catch { /* ignore */ }
 
-    // TODO: When real version check is implemented, populate updates array
-    // For now, the banner is ready but won't show (updates = [])
     setChecking(false);
   };
 
