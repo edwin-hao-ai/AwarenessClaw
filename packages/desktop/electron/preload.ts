@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveConfig: (config: Record<string, unknown>) => ipcRenderer.invoke('setup:save-config', config),
   openAuthUrl: (url: string) => ipcRenderer.invoke('setup:open-auth-url', url),
   readExistingConfig: () => ipcRenderer.invoke('setup:read-existing-config'),
+  bootstrap: () => ipcRenderer.invoke('setup:bootstrap'),
 
   // Chat
   chatSend: (message: string, sessionId?: string) => ipcRenderer.invoke('chat:send', message, sessionId),

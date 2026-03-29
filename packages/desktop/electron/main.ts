@@ -459,6 +459,14 @@ ipcMain.handle('setup:open-auth-url', (_e, url: string) => {
  * Read existing openclaw.json to detect pre-configured providers/models.
  * Used by setup wizard to skip model selection if user already has OpenClaw configured.
  */
+/**
+ * Run openclaw onboard/doctor for new users
+ */
+ipcMain.handle('setup:bootstrap', async () => {
+  const result = safeShellExec('openclaw doctor --fix 2>&1', 30000);
+  return { success: !!result, output: result };
+});
+
 ipcMain.handle('setup:read-existing-config', async () => {
   const configPath = path.join(HOME, '.openclaw', 'openclaw.json');
   try {

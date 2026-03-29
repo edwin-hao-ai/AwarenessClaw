@@ -95,6 +95,11 @@ export default function SetupWizard({ onComplete }: SetupProps) {
         }
       }
       updateInstallStep('openclaw', 'done');
+
+      // Run bootstrap for newly installed OpenClaw
+      if (!simulate && api) {
+        await (api as any).bootstrap();
+      }
     }
 
     // Step 4: Install plugin

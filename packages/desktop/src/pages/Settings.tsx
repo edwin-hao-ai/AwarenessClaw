@@ -9,6 +9,8 @@ export default function Settings() {
   const [gatewayLoading, setGatewayLoading] = useState(false);
   const [logs, setLogs] = useState('');
   const [showLogs, setShowLogs] = useState(false);
+  const [testingConnection, setTestingConnection] = useState(false);
+  const [testResult, setTestResult] = useState<'idle' | 'success' | 'error'>('idle');
   const [tempProvider, setTempProvider] = useState('');
   const [tempModel, setTempModel] = useState('');
   const [tempApiKey, setTempApiKey] = useState('');
@@ -411,6 +413,35 @@ export default function Settings() {
                     />
                     <p className="text-xs text-slate-600 mt-1">默认已填好，使用代理或自定义网关时可修改</p>
                   </div>
+
+                  {/* Test Connection */}
+                  {selectedTempProvider.needsKey && tempApiKey && (
+                    <div className="flex items-center gap-3 pt-2 border-t border-slate-700/50">
+                      <button
+                        onClick={async () => {
+                          setTestingConnection(true);
+                          setTestResult('idle');
+                          try {
+                            const url = (tempBaseUrl || selectedTempProvider.baseUrl) + '/models';
+                            const res = await fetch(url, {
+                              headers: { 'Authorization': `Bearer ${tempApiKey}` },
+                              signal: AbortSignal.timeout(8000),
+                            });
+                            setTestResult(res.ok ? 'success' : 'error');
+                          } catch {
+                            setTestResult('error');
+                          }
+                          setTestingConnection(false);
+                        }}
+                        disabled={testingConnection}
+                        className="flex items-center gap-1 px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg transition-colors"
+                      >
+                        {testingConnection ? <Loader2 size={12} className="animate-spin" /> : '🔗'} 测试连接
+                      </button>
+                      {testResult === 'success' && <span className="text-xs text-emerald-400">✅ 连接成功</span>}
+                      {testResult === 'error' && <span className="text-xs text-red-400">❌ 连接失败，请检查 API Key</span>}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
