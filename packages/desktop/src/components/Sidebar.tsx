@@ -1,7 +1,7 @@
-import { MessageCircle, Brain, Radio, Puzzle, Settings } from 'lucide-react';
+import { MessageCircle, Brain, Radio, Puzzle, Settings, Clock } from 'lucide-react';
 import logoUrl from '../assets/logo.png';
 
-type Page = 'chat' | 'memory' | 'channels' | 'skills' | 'settings';
+export type Page = 'chat' | 'memory' | 'channels' | 'skills' | 'automation' | 'settings';
 
 interface SidebarProps {
   currentPage: Page;
@@ -13,6 +13,7 @@ const navItems: { id: Page; icon: typeof MessageCircle; label: string }[] = [
   { id: 'memory', icon: Brain, label: '记忆' },
   { id: 'channels', icon: Radio, label: '通道' },
   { id: 'skills', icon: Puzzle, label: '技能' },
+  { id: 'automation', icon: Clock, label: '自动化' },
   { id: 'settings', icon: Settings, label: '设置' },
 ];
 

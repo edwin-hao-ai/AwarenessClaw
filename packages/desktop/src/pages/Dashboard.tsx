@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Send, Paperclip, ChevronDown, ExternalLink, Loader2, Copy, Check, X, File, Image, Plus, Brain } from 'lucide-react';
+import { Send, Paperclip, ChevronDown, ExternalLink, Loader2, Copy, Check, X, File, Image, Plus, Brain, Key } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useAppConfig, MODEL_PROVIDERS } from '../lib/store';
@@ -126,6 +126,8 @@ export default function Dashboard() {
   const [input, setInput] = useState('');
   const [agentStatus, setAgentStatus] = useState<AgentStatus>('idle');
   const [showModelSelector, setShowModelSelector] = useState(false);
+  const [showApiKeyInput, setShowApiKeyInput] = useState<string | null>(null); // provider key needing API key
+  const [tempApiKey, setTempApiKey] = useState('');
   const [showSidebar, setShowSidebar] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<{ name: string; path: string }[]>([]);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -349,7 +351,19 @@ export default function Dashboard() {
                         </div>
                         {provider.models.map(model => (
                           <button key={model.id}
-                            onClick={() => { setShowModelSelector(false); /* TODO: switch model */ }}
+                            onClick={() => {
+                              if (provider.needsKey && !isConfigured) {
+                                // Need API key first
+                                setShowApiKeyInput(provider.key);
+                                setTempApiKey('');
+                                setShowModelSelector(false);
+                              } else {
+                                // Switch model
+                                updateConfig({ providerKey: provider.key, modelId: model.id });
+                                syncConfig(MODEL_PROVIDERS);
+                                setShowModelSelector(false);
+                              }
+                            }}
                             className={`w-full text-left px-4 py-1.5 text-xs hover:bg-slate-800 transition-colors ${
                               config.providerKey === provider.key && config.modelId === model.id ? 'text-brand-400' : 'text-slate-300'
                             }`}
@@ -373,6 +387,51 @@ export default function Dashboard() {
             <ExternalLink size={10} /> Dashboard
           </button>
         </div>
+
+        {/* API Key Input Modal */}
+        {showApiKeyInput && (() => {
+          const provider = MODEL_PROVIDERS.find(p => p.key === showApiKeyInput);
+          return (
+            <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-8">
+              <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-sm p-6 space-y-4">
+                <div className="text-center">
+                  <span className="text-2xl">{provider?.emoji}</span>
+                  <h3 className="text-sm font-bold mt-2">配置 {provider?.name}</h3>
+                  <p className="text-xs text-slate-500 mt-1">输入 API Key 后即可使用</p>
+                </div>
+                <input
+                  type="password"
+                  value={tempApiKey}
+                  onChange={e => setTempApiKey(e.target.value)}
+                  placeholder="粘贴你的 API Key..."
+                  className="w-full px-3 py-2.5 bg-slate-800 border border-slate-600 rounded-lg text-sm focus:outline-none focus:border-brand-500"
+                  autoFocus
+                />
+                <div className="flex gap-2">
+                  <button onClick={() => setShowApiKeyInput(null)} className="flex-1 py-2 text-sm text-slate-400 hover:text-slate-200">取消</button>
+                  <button
+                    onClick={() => {
+                      if (tempApiKey && provider) {
+                        updateConfig({
+                          providerKey: provider.key,
+                          modelId: provider.models[0]?.id || '',
+                          apiKey: tempApiKey,
+                          baseUrl: provider.baseUrl,
+                        });
+                        syncConfig(MODEL_PROVIDERS);
+                        setShowApiKeyInput(null);
+                      }
+                    }}
+                    disabled={!tempApiKey}
+                    className="flex-1 py-2 bg-brand-600 hover:bg-brand-500 disabled:bg-slate-700 text-white rounded-lg text-sm transition-colors"
+                  >
+                    保存并切换
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-5">

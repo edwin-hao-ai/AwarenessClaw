@@ -5,12 +5,11 @@ import Memory from './pages/Memory';
 import Channels from './pages/Channels';
 import Models from './pages/Models';
 import Skills from './pages/Skills';
+import Automation from './pages/Automation';
 import Settings from './pages/Settings';
-import Sidebar from './components/Sidebar';
+import Sidebar, { type Page } from './components/Sidebar';
 import UpdateBanner from './components/UpdateBanner';
 import logoUrl from './assets/logo.png';
-
-type Page = 'chat' | 'memory' | 'channels' | 'skills' | 'settings';
 
 export default function App() {
   const [setupComplete, setSetupComplete] = useState<boolean | null>(null);
@@ -54,6 +53,7 @@ export default function App() {
           {currentPage === 'memory' && <Memory />}
           {currentPage === 'channels' && <Channels />}
           {currentPage === 'skills' && <Skills />}
+          {currentPage === 'automation' && <Automation />}
           {currentPage === 'settings' && <Settings />}
         </main>
       </div>
