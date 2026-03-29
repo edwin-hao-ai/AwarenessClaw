@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ChevronRight, ChevronLeft, Loader2, Check, Globe } from 'lucide-react';
 import { useAppConfig, MODEL_PROVIDERS, type ModelProviderDef } from '../lib/store';
+import logoUrl from '../assets/logo.png';
 
 interface SetupProps {
   onComplete: () => void;
@@ -168,7 +169,7 @@ export default function SetupWizard({ onComplete }: SetupProps) {
           {/* ===== WELCOME ===== */}
           {step === 'welcome' && (
             <div className="text-center space-y-8">
-              <div className="text-6xl animate-pulse-soft">🧠</div>
+              <img src={logoUrl} alt="AwarenessClaw" className="w-20 h-20 mx-auto animate-pulse-soft" />
               <div>
                 <h1 className="text-3xl font-bold mb-3">
                   {t('欢迎使用 AwarenessClaw', 'Welcome to AwarenessClaw')}

@@ -15,9 +15,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openAuthUrl: (url: string) => ipcRenderer.invoke('setup:open-auth-url', url),
 
   // Chat
-  chatSend: (message: string) => ipcRenderer.invoke('chat:send', message),
+  chatSend: (message: string, sessionId?: string) => ipcRenderer.invoke('chat:send', message, sessionId),
   onChatStream: (callback: (chunk: string) => void) => {
     ipcRenderer.on('chat:stream', (_e: any, chunk: string) => callback(chunk));
+  },
+  onChatStatus: (callback: (status: { type: string; tool?: string }) => void) => {
+    ipcRenderer.on('chat:status', (_e: any, status: any) => callback(status));
   },
 
   // Cron management

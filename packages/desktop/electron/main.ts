@@ -470,70 +470,61 @@ function downloadFile(url: string, dest: string): Promise<void> {
  * Non-interactive, one message at a time, returns JSON response.
  * Streaming: read stdout line by line as response comes in.
  */
-ipcMain.handle('chat:send', async (_e, message: string) => {
+ipcMain.handle('chat:send', async (_e, message: string, sessionId?: string) => {
   return new Promise((resolve) => {
     let stdout = '';
-    let stderr = '';
-
-    // Use --local mode with unique session ID to avoid Gateway conflicts
-    // Use --norc to skip .bash_profile (avoids cargo/env errors)
-    const sessionId = `awarenessclaw-${Date.now()}`;
+    const sid = sessionId || `ac-${Date.now()}`;
     const escapedMsg = message.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\$/g, '\\$').replace(/`/g, '\\`');
-    const cmd = `openclaw agent --local --session-id "${sessionId}" -m "${escapedMsg}"`;
+    // Use --verbose on to get thinking/tool status events
+    const cmd = `openclaw agent --local --session-id "${sid}" -m "${escapedMsg}" --verbose on`;
 
-    const child = spawn('/bin/bash', ['--norc', '--noprofile', '-c', `export PATH="${getEnhancedPath()}"; ${cmd}`], {
+    const child = spawn('/bin/bash', ['--norc', '--noprofile', '-c',
+      `export PATH="${getEnhancedPath()}"; ${cmd}`
+    ], {
       cwd: os.homedir(),
       env: { ...process.env, PATH: getEnhancedPath() },
     });
 
-    // Stream stdout to renderer, filtering out [plugins]/[tools] noise lines
+    const send = (channel: string, data: any) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, data);
+    };
+
     child.stdout?.on('data', (data: Buffer) => {
       const chunk = data.toString();
       stdout += chunk;
 
-      // Filter: only send lines that are NOT [plugins]/[tools]/[agent] logs
-      const cleanLines = chunk.split('\n')
-        .filter(line => {
-          const trimmed = line.trimStart();
-          return trimmed &&
-            !trimmed.startsWith('[plugins]') &&
-            !trimmed.startsWith('[tools]') &&
-            !trimmed.startsWith('[agent/');
-        })
-        .join('\n');
-
-      if (cleanLines.trim() && mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('chat:stream', cleanLines);
+      for (const line of chunk.split('\n')) {
+        const t = line.trim();
+        // Parse status events from verbose output
+        if (t.includes('run agent start')) {
+          send('chat:status', { type: 'thinking' });
+        } else if (t.includes('run agent end') && t.includes('isError=false')) {
+          send('chat:status', { type: 'generating' });
+        } else if (t.includes('run agent end') && t.includes('isError=true')) {
+          send('chat:status', { type: 'error' });
+        }
       }
     });
 
-    child.stderr?.on('data', (data: Buffer) => {
-      stderr += data.toString();
+    child.stderr?.on('data', () => { /* ignore stderr */ });
+
+    child.on('exit', () => {
+      // Filter out ALL log/diagnostic lines, keep only the actual response
+      const isNoise = (line: string) => {
+        const t = line.trimStart();
+        return t.startsWith('[plugins]') || t.startsWith('[tools]') ||
+          t.startsWith('[agent/') || t.startsWith('[diagnostic]') ||
+          t.startsWith('Registered plugin') || t.startsWith('[context-diag]');
+      };
+      const cleanText = stdout.split('\n').filter(l => !isNoise(l)).join('\n').trim();
+      resolve({ success: true, text: cleanText || 'No response', sessionId: sid });
     });
 
-    child.on('exit', (code) => {
-      // Extract clean text (filter out log lines)
-      const cleanText = stdout.split('\n')
-        .filter(line => {
-          const trimmed = line.trimStart();
-          return !trimmed.startsWith('[plugins]') &&
-            !trimmed.startsWith('[tools]') &&
-            !trimmed.startsWith('[agent/');
-        })
-        .join('\n')
-        .trim();
+    child.on('error', (err) => resolve({ success: false, error: String(err), sessionId: sid }));
 
-      resolve({ success: true, text: cleanText || 'No response' });
-    });
-
-    child.on('error', (err) => {
-      resolve({ success: false, error: String(err) });
-    });
-
-    // Timeout after 120 seconds
     setTimeout(() => {
       try { child.kill(); } catch {}
-      resolve({ success: false, error: 'Response timeout (120s)' });
+      resolve({ success: false, error: '响应超时', sessionId: sid });
     }, 120000);
   });
 });

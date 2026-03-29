@@ -14,7 +14,10 @@
     "package:linux": "npm run build && electron-builder --linux"
   },
   "dependencies": {
-    "lucide-react": "^0.468.0"
+    "lucide-react": "^0.468.0",
+    "react-markdown": "^10.1.0",
+    "rehype-highlight": "^7.0.2",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@types/react": "^19.0.0",

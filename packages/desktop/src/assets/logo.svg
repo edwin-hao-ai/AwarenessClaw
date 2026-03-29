@@ -1,0 +1,26 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="outerStroke" x1="30" y1="50" x2="490" y2="500" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#E0F2FE"/>
+      <stop offset="0.35" stop-color="#7DD3FC"/>
+      <stop offset="0.7" stop-color="#38BDF8"/>
+      <stop offset="1" stop-color="#0EA5E9"/>
+    </linearGradient>
+    <linearGradient id="innerStroke" x1="120" y1="80" x2="300" y2="260" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F0F9FF"/>
+      <stop offset="0.4" stop-color="#BAE6FD"/>
+      <stop offset="1" stop-color="#38BDF8"/>
+    </linearGradient>
+    <radialGradient id="dotFill" cx="200" cy="168" r="20" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F0F9FF"/>
+      <stop offset="0.5" stop-color="#7DD3FC"/>
+      <stop offset="1" stop-color="#0EA5E9"/>
+    </radialGradient>
+  </defs>
+  <!-- Large outer circle -->
+  <circle cx="262" cy="275" r="218" stroke="url(#outerStroke)" stroke-width="16" fill="none"/>
+  <!-- Small inner circle (upper-left area) -->
+  <circle cx="198" cy="168" r="68" stroke="url(#innerStroke)" stroke-width="13" fill="none"/>
+  <!-- Center dot -->
+  <circle cx="198" cy="168" r="15" fill="url(#dotFill)"/>
+</svg>

@@ -1,4 +1,5 @@
 import { MessageCircle, Brain, Radio, Puzzle, Settings } from 'lucide-react';
+import logoUrl from '../assets/logo.png';
 
 type Page = 'chat' | 'memory' | 'channels' | 'skills' | 'settings';
 
@@ -19,7 +20,9 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
   return (
     <aside className="w-20 bg-slate-950 border-r border-slate-800 flex flex-col items-center pt-12 pb-4 gap-1">
       {/* Logo */}
-      <div className="mb-6 text-2xl">🧠</div>
+      <div className="mb-6">
+        <img src={logoUrl} alt="AwarenessClaw" className="w-8 h-8 rounded-lg" />
+      </div>
 
       {/* Nav items */}
       {navItems.map(({ id, icon: Icon, label }) => (
