@@ -59,9 +59,12 @@ async function syncToOpenClaw(config: AppConfig, providers: ModelProviderDef[]) 
   const provider = providers.find((p) => p.key === config.providerKey);
   if (!provider) return;
 
-  // Note: OpenClaw uses plugins.allow[] for plugin management, not a nested config object.
-  // Awareness plugin config is managed via the plugin's own config in extensions/.
-  const openclawConfig: Record<string, any> = {};
+  const openclawConfig: Record<string, any> = {
+    // Tell OpenClaw to trust our plugin (suppress plugins.allow warning)
+    plugins: {
+      allow: ['openclaw-memory'],
+    },
+  };
 
   if (config.modelId) {
     const finalBaseUrl = config.baseUrl || provider.baseUrl;

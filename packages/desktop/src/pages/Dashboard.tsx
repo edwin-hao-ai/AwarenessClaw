@@ -175,27 +175,37 @@ export default function Dashboard() {
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setShowModelSelector(false)} />
                 <div className="absolute top-full left-0 mt-1 w-80 bg-slate-900 border border-slate-700 rounded-xl shadow-xl z-50 max-h-[400px] overflow-y-auto">
-                  {MODEL_PROVIDERS.map(provider => (
-                    <div key={provider.key}>
-                      <div className="px-3 py-2 text-xs text-slate-500 font-medium border-b border-slate-800 sticky top-0 bg-slate-900">
-                        {provider.emoji} {provider.name}
-                      </div>
-                      {provider.models.map(model => (
-                        <button
-                          key={model.id}
-                          onClick={() => selectModel(provider.key, model.id)}
-                          className={`w-full text-left px-4 py-2 text-sm hover:bg-slate-800 transition-colors flex items-center justify-between ${
-                            config.providerKey === provider.key && config.modelId === model.id ? 'text-brand-400' : 'text-slate-300'
-                          }`}
-                        >
-                          <span>{model.label}</span>
-                          {config.providerKey === provider.key && config.modelId === model.id && (
-                            <Check size={14} className="text-brand-400" />
+                  {MODEL_PROVIDERS.map(provider => {
+                    const isConfigured = config.providerKey === provider.key && config.apiKey;
+                    return (
+                      <div key={provider.key}>
+                        <div className="px-3 py-2 text-xs font-medium border-b border-slate-800 sticky top-0 bg-slate-900 flex items-center justify-between">
+                          <span className="text-slate-500">{provider.emoji} {provider.name}</span>
+                          {isConfigured ? (
+                            <span className="text-emerald-500 text-[10px]">✅ 已配置</span>
+                          ) : provider.needsKey ? (
+                            <span className="text-amber-500 text-[10px]">🔑 需配置</span>
+                          ) : (
+                            <span className="text-slate-600 text-[10px]">免费</span>
                           )}
-                        </button>
-                      ))}
-                    </div>
-                  ))}
+                        </div>
+                        {provider.models.map(model => (
+                          <button
+                            key={model.id}
+                            onClick={() => selectModel(provider.key, model.id)}
+                            className={`w-full text-left px-4 py-2 text-sm hover:bg-slate-800 transition-colors flex items-center justify-between ${
+                              config.providerKey === provider.key && config.modelId === model.id ? 'text-brand-400' : 'text-slate-300'
+                            }`}
+                          >
+                            <span>{model.label}</span>
+                            {config.providerKey === provider.key && config.modelId === model.id && (
+                              <Check size={14} className="text-brand-400" />
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    );
+                  })}
                 </div>
               </>
             )}

@@ -373,15 +373,32 @@ ipcMain.handle('setup:save-config', async (_e, config: Record<string, unknown>) 
 
   fs.mkdirSync(configDir, { recursive: true });
 
-  let existing: Record<string, unknown> = {};
+  let existing: Record<string, any> = {};
   try {
     existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
   } catch { /* start fresh */ }
 
-  const merged = { ...existing, ...config };
-  // Deep merge plugins
-  if (config.plugins && existing.plugins) {
-    merged.plugins = { ...(existing.plugins as any), ...(config.plugins as any) };
+  // Deep merge: never overwrite user's existing providers, only add new ones
+  const merged = { ...existing };
+
+  for (const [key, value] of Object.entries(config)) {
+    if (key === 'models' && existing.models) {
+      // Deep merge providers: keep existing, add new
+      merged.models = { ...existing.models };
+      if ((value as any)?.providers) {
+        merged.models.providers = { ...existing.models.providers, ...(value as any).providers };
+      }
+    } else if (key === 'agents' && existing.agents) {
+      // Deep merge agents.defaults
+      merged.agents = JSON.parse(JSON.stringify(existing.agents));
+      if ((value as any)?.defaults?.model?.primary) {
+        if (!merged.agents.defaults) merged.agents.defaults = {};
+        if (!merged.agents.defaults.model) merged.agents.defaults.model = {};
+        merged.agents.defaults.model.primary = (value as any).defaults.model.primary;
+      }
+    } else {
+      merged[key] = value;
+    }
   }
 
   fs.writeFileSync(configPath, JSON.stringify(merged, null, 2));
@@ -458,7 +475,13 @@ ipcMain.handle('chat:send', async (_e, message: string) => {
     let stdout = '';
     let stderr = '';
 
-    const child = spawn('/bin/bash', ['-l', '-c', `openclaw agent -m "${message.replace(/"/g, '\\"')}" --json`], {
+    // Use --local mode with unique session ID to avoid Gateway conflicts
+    // Use --norc to skip .bash_profile (avoids cargo/env errors)
+    const sessionId = `awarenessclaw-${Date.now()}`;
+    const escapedMsg = message.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\$/g, '\\$').replace(/`/g, '\\`');
+    const cmd = `openclaw agent --local --session-id "${sessionId}" -m "${escapedMsg}" --json`;
+
+    const child = spawn('/bin/bash', ['--norc', '--noprofile', '-c', `export PATH="${getEnhancedPath()}"; ${cmd}`], {
       cwd: os.homedir(),
       env: { ...process.env, PATH: getEnhancedPath() },
     });
