@@ -1,0 +1,28 @@
+{
+  "name": "@awareness-sdk/claw",
+  "version": "0.1.0",
+  "description": "AwarenessClaw CLI — One-click setup for OpenClaw with Awareness memory",
+  "type": "module",
+  "bin": {
+    "awareness-claw": "./bin/awareness-claw.mjs"
+  },
+  "files": [
+    "bin/",
+    "src/"
+  ],
+  "scripts": {
+    "start": "node bin/awareness-claw.mjs",
+    "build": "echo 'No build step needed (pure ESM)'"
+  },
+  "keywords": [
+    "openclaw",
+    "awareness",
+    "ai-agent",
+    "memory",
+    "one-click-installer"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

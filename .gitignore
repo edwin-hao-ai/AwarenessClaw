@@ -1,0 +1,14 @@
+node_modules/
+dist/
+dist-electron/
+release/
+.next/
+out/
+build/
+*.log
+.DS_Store
+Thumbs.db
+.env.local
+.env.production
+*.tgz
+package-lock.json

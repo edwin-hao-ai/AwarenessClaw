@@ -1,0 +1,21 @@
+{
+  "name": "awareness-claw",
+  "private": true,
+  "description": "AwarenessClaw — One-click AI agent with persistent memory. Built on OpenClaw.",
+  "workspaces": [
+    "packages/cli",
+    "packages/desktop"
+  ],
+  "scripts": {
+    "dev:desktop": "cd packages/desktop && npm run dev",
+    "build:desktop": "cd packages/desktop && npm run build",
+    "build:cli": "cd packages/cli && npm run build",
+    "package:win": "cd packages/desktop && npm run package:win",
+    "package:mac": "cd packages/desktop && npm run package:mac",
+    "package:linux": "cd packages/desktop && npm run package:linux"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "license": "MIT"
+}
