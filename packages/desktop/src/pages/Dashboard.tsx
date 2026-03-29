@@ -81,18 +81,20 @@ export default function Dashboard() {
     setIsLoading(true);
     setStreamingText('');
 
-    // Send via IPC
+    // Send via IPC — streaming: chunks arrive via chat:stream events
     if (window.electronAPI) {
+      setStreamingText(''); // Reset streaming buffer
+
       const result = await (window.electronAPI as any).chatSend(fullMessage);
-      const responseText = result.text || result.error || 'No response';
-      const responseModel = result.model || config.modelId;
+      // Final text (after process exits) — use streaming text if available
+      const finalText = streamingText.trim() || result.text || result.error || 'No response';
 
       const assistantMsg: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: responseText,
+        content: finalText,
         timestamp: new Date(),
-        model: responseModel,
+        model: config.modelId,
       };
       setMessages(prev => [...prev, assistantMsg]);
     } else {

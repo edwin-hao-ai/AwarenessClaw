@@ -479,15 +479,32 @@ ipcMain.handle('chat:send', async (_e, message: string) => {
     // Use --norc to skip .bash_profile (avoids cargo/env errors)
     const sessionId = `awarenessclaw-${Date.now()}`;
     const escapedMsg = message.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\$/g, '\\$').replace(/`/g, '\\`');
-    const cmd = `openclaw agent --local --session-id "${sessionId}" -m "${escapedMsg}" --json`;
+    const cmd = `openclaw agent --local --session-id "${sessionId}" -m "${escapedMsg}"`;
 
     const child = spawn('/bin/bash', ['--norc', '--noprofile', '-c', `export PATH="${getEnhancedPath()}"; ${cmd}`], {
       cwd: os.homedir(),
       env: { ...process.env, PATH: getEnhancedPath() },
     });
 
+    // Stream stdout to renderer, filtering out [plugins]/[tools] noise lines
     child.stdout?.on('data', (data: Buffer) => {
-      stdout += data.toString();
+      const chunk = data.toString();
+      stdout += chunk;
+
+      // Filter: only send lines that are NOT [plugins]/[tools]/[agent] logs
+      const cleanLines = chunk.split('\n')
+        .filter(line => {
+          const trimmed = line.trimStart();
+          return trimmed &&
+            !trimmed.startsWith('[plugins]') &&
+            !trimmed.startsWith('[tools]') &&
+            !trimmed.startsWith('[agent/');
+        })
+        .join('\n');
+
+      if (cleanLines.trim() && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('chat:stream', cleanLines);
+      }
     });
 
     child.stderr?.on('data', (data: Buffer) => {
@@ -495,25 +512,18 @@ ipcMain.handle('chat:send', async (_e, message: string) => {
     });
 
     child.on('exit', (code) => {
-      // Parse JSON from stdout (skip any non-JSON lines like [plugins] logs)
-      const jsonStart = stdout.indexOf('{');
-      if (jsonStart >= 0) {
-        try {
-          const json = JSON.parse(stdout.substring(jsonStart));
-          // Extract the actual reply text
-          const text = json?.payloads?.[0]?.text
-            || json?.result?.payloads?.[0]?.text
-            || '';
-          const model = json?.meta?.agentMeta?.model
-            || json?.result?.meta?.agentMeta?.model
-            || '';
-          resolve({ success: true, text, model, raw: json });
-        } catch {
-          resolve({ success: true, text: stdout.trim() });
-        }
-      } else {
-        resolve({ success: true, text: stdout.trim() || stderr.trim() || 'No response' });
-      }
+      // Extract clean text (filter out log lines)
+      const cleanText = stdout.split('\n')
+        .filter(line => {
+          const trimmed = line.trimStart();
+          return !trimmed.startsWith('[plugins]') &&
+            !trimmed.startsWith('[tools]') &&
+            !trimmed.startsWith('[agent/');
+        })
+        .join('\n')
+        .trim();
+
+      resolve({ success: true, text: cleanText || 'No response' });
     });
 
     child.on('error', (err) => {
