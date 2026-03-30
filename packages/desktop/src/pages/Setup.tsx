@@ -52,7 +52,15 @@ export default function SetupWizard({ onComplete }: SetupProps) {
     setInstallSteps((prev) => prev.map((s) => s.key === key ? { ...s, status, ...(detail !== undefined ? { detail } : {}) } : s));
   };
 
+<<<<<<< HEAD
   const runInstallation = async (retryFromKey?: string) => {
+=======
+  const failInstallStep = (key: string, message: string) => {
+    updateInstallStep(key, 'error', message);
+  };
+
+  const runInstallation = async () => {
+>>>>>>> 1febe15 (Desktop: stop setup on plugin and daemon failures)
     setStep('installing');
     setInstallError(null);
     const api = window.electronAPI;
@@ -138,6 +146,7 @@ export default function SetupWizard({ onComplete }: SetupProps) {
     }
 
     // Step 4: Install plugin
+<<<<<<< HEAD
     if (startIdx <= stepKeys.indexOf('plugin')) {
       updateInstallStep('plugin', 'running');
       if (simulate) {
@@ -170,6 +179,32 @@ export default function SetupWizard({ onComplete }: SetupProps) {
         }
       }
     }
+=======
+    updateInstallStep('plugin', 'running');
+    if (simulate) {
+      await new Promise((r) => setTimeout(r, 1500));
+    } else {
+      const res = await api!.installPlugin();
+      if (!res?.success) {
+        failInstallStep('plugin', t('setup.install.pluginFailed'));
+        return;
+      }
+    }
+    updateInstallStep('plugin', 'done');
+
+    // Step 5: Start daemon
+    updateInstallStep('daemon', 'running');
+    if (simulate) {
+      await new Promise((r) => setTimeout(r, 1000));
+    } else {
+      const res = await api!.startDaemon();
+      if (!res?.success) {
+        failInstallStep('daemon', t('setup.install.daemonFailed'));
+        return;
+      }
+    }
+    updateInstallStep('daemon', 'done');
+>>>>>>> 1febe15 (Desktop: stop setup on plugin and daemon failures)
 
     // Check if user already has OpenClaw configured with models
     await new Promise((r) => setTimeout(r, 500));
