@@ -231,39 +231,57 @@ describe('Chat (user flows)', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // Memory Page Flows
 // ─────────────────────────────────────────────────────────────────────────────
+
+/** Helper: mock daemon as connected with standard health response */
+function mockDaemonOnline() {
+  getApi().memoryCheckHealth = vi.fn().mockResolvedValue({
+    status: 'ok', version: '0.4.1', search_mode: 'hybrid',
+    stats: { totalMemories: 10, totalKnowledge: 3, totalTasks: 0, totalSessions: 5 },
+  });
+  getApi().memoryGetEvents = vi.fn().mockResolvedValue({ items: [], total: 0 });
+}
+
 describe('Memory Page (user flows)', () => {
   beforeEach(() => {
     localStorage.setItem('awareness-claw-config', JSON.stringify({ language: 'en' }));
     vi.restoreAllMocks();
   });
 
-  it('flow: shows mock indicator + daemon command when daemon disconnected', async () => {
-    getApi().memoryGetCards = vi.fn().mockResolvedValue({ error: 'daemon not connected' });
+  it('flow: shows Start Daemon button + command when daemon disconnected', async () => {
+    getApi().memoryCheckHealth = vi.fn().mockResolvedValue({ error: 'Not running' });
     await act(async () => { render(<Memory />); });
-    await waitFor(() => expect(screen.getByText(/Showing example data/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Start Daemon')).toBeInTheDocument());
     // Daemon startup command should be shown
     expect(screen.getByText(/npx @awareness-sdk\/local start/i)).toBeInTheDocument();
   });
 
   it('flow: shows real knowledge cards when daemon is connected', async () => {
+    mockDaemonOnline();
     getApi().memoryGetCards = vi.fn().mockResolvedValue(mcpCardsResponse([
       { id: '1', title: 'Use async handlers', summary: 'Always async in Electron', category: 'pitfall', created_at: '2026-03-30T10:00:00Z' },
       { id: '2', title: 'Ship fast principle', summary: 'Release early iterate', category: 'insight', created_at: '2026-03-30T11:00:00Z' },
     ]));
     await act(async () => { render(<Memory />); });
+    // Switch to Knowledge Cards tab
+    await waitFor(() => expect(screen.getByText(/Knowledge Cards/)).toBeInTheDocument());
+    await act(async () => { fireEvent.click(screen.getByText(/Knowledge Cards/)); });
     await waitFor(() => expect(screen.getByText('Use async handlers')).toBeInTheDocument(), { timeout: 3000 });
     expect(screen.getByText('Ship fast principle')).toBeInTheDocument();
-    // No mock indicator
-    expect(screen.queryByText(/Showing example data/i)).not.toBeInTheDocument();
+    // No Start Daemon button
+    expect(screen.queryByText('Start Daemon')).not.toBeInTheDocument();
   });
 
   it('flow: search no results shows "No results for..." with the query', async () => {
+    mockDaemonOnline();
     getApi().memoryGetCards = vi.fn().mockResolvedValue(mcpCardsResponse([
       { id: '1', title: 'A card', summary: 'content', category: 'insight', created_at: '2026-03-30T10:00:00Z' },
     ]));
     getApi().memorySearch = vi.fn().mockResolvedValue(mcpSearchResponse([]));
 
     await act(async () => { render(<Memory />); });
+    // Switch to Knowledge Cards tab
+    await waitFor(() => expect(screen.getByText(/Knowledge Cards/)).toBeInTheDocument());
+    await act(async () => { fireEvent.click(screen.getByText(/Knowledge Cards/)); });
     await waitFor(() => expect(screen.getByText('A card')).toBeInTheDocument(), { timeout: 3000 });
 
     const searchInput = screen.getByPlaceholderText(/Search memories/i);
@@ -277,11 +295,15 @@ describe('Memory Page (user flows)', () => {
   });
 
   it('flow: category filter shows only matching cards', async () => {
+    mockDaemonOnline();
     getApi().memoryGetCards = vi.fn().mockResolvedValue(mcpCardsResponse([
       { id: '1', title: 'Pitfall card', summary: 'a pitfall', category: 'pitfall', created_at: '2026-03-30T10:00:00Z' },
       { id: '2', title: 'Insight card', summary: 'an insight', category: 'insight', created_at: '2026-03-30T11:00:00Z' },
     ]));
     await act(async () => { render(<Memory />); });
+    // Switch to Knowledge Cards tab
+    await waitFor(() => expect(screen.getByText(/Knowledge Cards/)).toBeInTheDocument());
+    await act(async () => { fireEvent.click(screen.getByText(/Knowledge Cards/)); });
     await waitFor(() => expect(screen.getByText('Pitfall card')).toBeInTheDocument(), { timeout: 3000 });
 
     // Click the Pitfall category tab
@@ -289,34 +311,34 @@ describe('Memory Page (user flows)', () => {
     expect(pitfallTab).toBeTruthy();
     await act(async () => { fireEvent.click(pitfallTab!); });
 
-    // Only pitfall card should be visible
     expect(screen.getByText('Pitfall card')).toBeInTheDocument();
     expect(screen.queryByText('Insight card')).not.toBeInTheDocument();
   });
 
   it('flow: clear filter button appears when category has no matches after search', async () => {
+    mockDaemonOnline();
     getApi().memoryGetCards = vi.fn().mockResolvedValue(mcpCardsResponse([
       { id: '1', title: 'Only insight', summary: 'insight only', category: 'insight', created_at: '2026-03-30T10:00:00Z' },
     ]));
     getApi().memorySearch = vi.fn().mockResolvedValue(mcpSearchResponse([]));
 
     await act(async () => { render(<Memory />); });
+    // Switch to Knowledge Cards tab
+    await waitFor(() => expect(screen.getByText(/Knowledge Cards/)).toBeInTheDocument());
+    await act(async () => { fireEvent.click(screen.getByText(/Knowledge Cards/)); });
     await waitFor(() => expect(screen.getByText('Only insight')).toBeInTheDocument(), { timeout: 3000 });
 
-    // Select insight filter then search with no results
     const insightTab = screen.getAllByRole('button').find(b => b.textContent?.includes('Insight'));
     if (insightTab) {
       await act(async () => { fireEvent.click(insightTab); });
     }
 
-    // Search for something that returns nothing
     const searchInput = screen.getByPlaceholderText(/Search memories/i);
     await act(async () => {
       fireEvent.change(searchInput, { target: { value: 'zzznomatch' } });
       fireEvent.keyDown(searchInput, { key: 'Enter' });
     });
 
-    // Either "No results" or "No cards in this category" + Clear filter button
     await waitFor(() => {
       const clearBtn = screen.queryByText(/Clear filter/i);
       const noResults = screen.queryByText(/No results/i);
@@ -325,11 +347,15 @@ describe('Memory Page (user flows)', () => {
   });
 
   it('flow: clicking All button after category filter restores all cards', async () => {
+    mockDaemonOnline();
     getApi().memoryGetCards = vi.fn().mockResolvedValue(mcpCardsResponse([
       { id: '1', title: 'Pitfall one', summary: 'p', category: 'pitfall', created_at: '2026-03-30T10:00:00Z' },
       { id: '2', title: 'Insight one', summary: 'i', category: 'insight', created_at: '2026-03-30T11:00:00Z' },
     ]));
     await act(async () => { render(<Memory />); });
+    // Switch to Knowledge Cards tab
+    await waitFor(() => expect(screen.getByText(/Knowledge Cards/)).toBeInTheDocument());
+    await act(async () => { fireEvent.click(screen.getByText(/Knowledge Cards/)); });
     await waitFor(() => expect(screen.getByText('Pitfall one')).toBeInTheDocument(), { timeout: 3000 });
 
     // Filter to pitfall
@@ -343,6 +369,171 @@ describe('Memory Page (user flows)', () => {
     await act(async () => { fireEvent.click(allTab!); });
     await waitFor(() => expect(screen.getByText('Insight one')).toBeInTheDocument());
     expect(screen.getByText('Pitfall one')).toBeInTheDocument();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Memory Page — Deep E2E Flows (P2.5 integration)
+// ─────────────────────────────────────────────────────────────────────────────
+describe('Memory Page — Timeline & Daemon (E2E)', () => {
+  beforeEach(() => {
+    localStorage.setItem('awareness-claw-config', JSON.stringify({ language: 'en' }));
+    vi.restoreAllMocks();
+  });
+
+  it('flow: Start Daemon button triggers startDaemon and refreshes page', async () => {
+    // Initial: daemon offline
+    getApi().memoryCheckHealth = vi.fn()
+      .mockResolvedValueOnce({ error: 'Not running' })  // initial check
+      .mockResolvedValue({  // after start
+        status: 'ok', version: '0.4.2', search_mode: 'hybrid',
+        stats: { totalMemories: 5, totalKnowledge: 2, totalTasks: 0, totalSessions: 1 },
+      });
+    getApi().startDaemon = vi.fn().mockResolvedValue({ success: true });
+    getApi().memoryGetCards = vi.fn().mockResolvedValue(mcpCardsResponse([
+      { id: '1', title: 'After start card', summary: 'Now visible', category: 'insight' },
+    ]));
+    getApi().memoryGetEvents = vi.fn().mockResolvedValue({
+      items: [{ id: 'mem1', type: 'turn_summary', title: 'First event', source: 'desktop', created_at: '2026-03-30T12:00:00Z' }],
+      total: 1,
+    });
+
+    await act(async () => { render(<Memory />); });
+    // Should show Start Daemon
+    await waitFor(() => expect(screen.getByText('Start Daemon')).toBeInTheDocument());
+
+    // Click Start Daemon
+    await act(async () => { fireEvent.click(screen.getByText('Start Daemon')); });
+
+    // Should call startDaemon
+    expect(getApi().startDaemon).toHaveBeenCalled();
+
+    // After daemon starts, timeline should show events
+    await waitFor(() => expect(screen.getAllByText('First event').length).toBeGreaterThan(0), { timeout: 3000 });
+    // Start Daemon button should be gone
+    expect(screen.queryByText('Start Daemon')).not.toBeInTheDocument();
+  });
+
+  it('flow: timeline tab shows real memory events with source and time', async () => {
+    mockDaemonOnline();
+    getApi().memoryGetEvents = vi.fn().mockResolvedValue({
+      items: [
+        { id: 'mem1', type: 'turn_brief', title: 'Debugging auth flow', source: 'claude-code', session_id: 'ses_abc123', created_at: '2026-03-30T14:30:00Z', fts_content: 'Investigated JWT token expiry issue in auth middleware' },
+        { id: 'mem2', type: 'code_change', title: 'Updated package.json', source: 'desktop', created_at: '2026-03-30T13:00:00Z', tags: 'npm,config' },
+      ],
+      total: 2,
+    });
+
+    await act(async () => { render(<Memory />); });
+
+    // Timeline is default tab — should show events
+    await waitFor(() => expect(screen.getByText('Debugging auth flow')).toBeInTheDocument());
+    // Source labels should be visible
+    expect(screen.getByText('Claude Code')).toBeInTheDocument();
+    expect(screen.getByText('Desktop')).toBeInTheDocument();
+    // Type badges
+    expect(screen.getByText('turn_brief')).toBeInTheDocument();
+    expect(screen.getByText('code_change')).toBeInTheDocument();
+    // Tags should render
+    expect(screen.getByText('npm')).toBeInTheDocument();
+    expect(screen.getByText('config')).toBeInTheDocument();
+  });
+
+  it('flow: clicking event expands full content, clicking again collapses', async () => {
+    mockDaemonOnline();
+    const longContent = 'A'.repeat(300); // Over 200 chars → should be collapsible
+    getApi().memoryGetEvents = vi.fn().mockResolvedValue({
+      items: [{ id: 'mem1', type: 'turn_brief', title: 'Long event', source: 'manual', created_at: '2026-03-30T10:00:00Z', fts_content: longContent }],
+      total: 1,
+    });
+
+    await act(async () => { render(<Memory />); });
+    await waitFor(() => expect(screen.getByText('Long event')).toBeInTheDocument());
+
+    // Should show expand button
+    const expandBtn = screen.getByText(/Show full content/i);
+    expect(expandBtn).toBeInTheDocument();
+
+    // Click to expand
+    await act(async () => { fireEvent.click(expandBtn); });
+    expect(screen.getByText(/Collapse/i)).toBeInTheDocument();
+
+    // Click to collapse
+    await act(async () => { fireEvent.click(screen.getByText(/Collapse/i)); });
+    expect(screen.getByText(/Show full content/i)).toBeInTheDocument();
+  });
+
+  it('flow: Load More button fetches next page of events', async () => {
+    mockDaemonOnline();
+    getApi().memoryGetEvents = vi.fn()
+      .mockResolvedValueOnce({
+        items: Array.from({ length: 50 }, (_, i) => ({
+          id: `mem${i}`, type: 'turn_brief', title: `Event ${i}`, source: 'manual',
+          created_at: `2026-03-30T${String(10 + Math.floor(i / 6)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}:00Z`,
+        })),
+        total: 75,
+      })
+      .mockResolvedValueOnce({
+        items: Array.from({ length: 25 }, (_, i) => ({
+          id: `mem${50 + i}`, type: 'turn_brief', title: `Event ${50 + i}`, source: 'manual',
+          created_at: '2026-03-30T08:00:00Z',
+        })),
+        total: 75,
+      });
+
+    await act(async () => { render(<Memory />); });
+    await waitFor(() => expect(screen.getAllByText('Event 0').length).toBeGreaterThan(0));
+
+    // Load More button should show count
+    const loadMore = screen.getByText(/Load More/i);
+    expect(loadMore).toBeInTheDocument();
+    expect(loadMore.textContent).toContain('50/75');
+
+    // Click Load More
+    await act(async () => { fireEvent.click(loadMore); });
+
+    // Second call should have been made with offset
+    expect(getApi().memoryGetEvents).toHaveBeenCalledTimes(2);
+  });
+
+  it('flow: daemon stats are displayed in subtitle', async () => {
+    getApi().memoryCheckHealth = vi.fn().mockResolvedValue({
+      status: 'ok', version: '0.4.2', search_mode: 'hybrid',
+      stats: { totalMemories: 427, totalKnowledge: 26, totalTasks: 0, totalSessions: 282 },
+    });
+    getApi().memoryGetCards = vi.fn().mockResolvedValue(mcpCardsResponse([]));
+    getApi().memoryGetEvents = vi.fn().mockResolvedValue({ items: [], total: 0 });
+
+    await act(async () => { render(<Memory />); });
+    await waitFor(() => expect(screen.getByText(/427 memories/)).toBeInTheDocument());
+    expect(screen.getByText(/26 knowledge cards/i)).toBeInTheDocument();
+    expect(screen.getByText(/282 sessions/i)).toBeInTheDocument();
+  });
+
+  it('flow: switching between Timeline and Knowledge Cards tabs works', async () => {
+    mockDaemonOnline();
+    getApi().memoryGetCards = vi.fn().mockResolvedValue(mcpCardsResponse([
+      { id: '1', title: 'My Decision', summary: 'chose X over Y', category: 'decision' },
+    ]));
+    getApi().memoryGetEvents = vi.fn().mockResolvedValue({
+      items: [{ id: 'mem1', type: 'turn_brief', title: 'Timeline Event', source: 'desktop', created_at: '2026-03-30T10:00:00Z' }],
+      total: 1,
+    });
+
+    await act(async () => { render(<Memory />); });
+
+    // Default tab = Timeline → should see timeline event
+    await waitFor(() => expect(screen.getAllByText('Timeline Event').length).toBeGreaterThan(0));
+    expect(screen.queryByText('My Decision')).not.toBeInTheDocument();
+
+    // Switch to Knowledge Cards
+    await act(async () => { fireEvent.click(screen.getByText(/Knowledge Cards/)); });
+    await waitFor(() => expect(screen.getByText('My Decision')).toBeInTheDocument());
+    expect(screen.queryAllByText('Timeline Event').length).toBe(0);
+
+    // Switch back to Timeline
+    await act(async () => { fireEvent.click(screen.getByText(/Timeline/)); });
+    await waitFor(() => expect(screen.getAllByText('Timeline Event').length).toBeGreaterThan(0));
   });
 });
 

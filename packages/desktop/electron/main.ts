@@ -556,8 +556,8 @@ ipcMain.handle('setup:start-daemon', async () => {
 
       const offlineTarball = resolveBundledCache('awareness-sdk-local.tgz');
       const execArgs = offlineTarball
-        ? ['exec', '--yes', offlineTarball, 'start', '--project', HOME]
-        : ['exec', '--yes', '@awareness-sdk/local', 'start', '--project', HOME];
+        ? ['exec', '--yes', offlineTarball, 'start', '--project', path.join(HOME, '.openclaw')]
+        : ['exec', '--yes', '@awareness-sdk/local', 'start', '--project', path.join(HOME, '.openclaw')];
 
       const child = spawn(process.execPath, [npmCli, ...execArgs], {
       detached: true,
@@ -570,7 +570,7 @@ ipcMain.handle('setup:start-daemon', async () => {
   // Start daemon
   // IMPORTANT: pass --project to avoid cwd=/ in packaged Electron (ENOENT: mkdir '/.awareness')
   const startWithNpx = () => new Promise<void>((resolve, reject) => {
-    const child = runSpawn('npx', ['@awareness-sdk/local', 'start', '--project', HOME], {
+    const child = runSpawn('npx', ['@awareness-sdk/local', 'start', '--project', path.join(HOME, '.openclaw')], {
       detached: true,
       stdio: 'ignore',
     });
@@ -781,8 +781,7 @@ ipcMain.handle('app:upgrade-component', async (_e, component: string) => {
       await new Promise(r => setTimeout(r, 1000));
       // Start new version — npx will fetch latest
       // IMPORTANT: Must pass --project to avoid cwd=/ in packaged Electron (ENOENT: mkdir '/.awareness')
-      const projectDir = HOME;
-      await runAsync(`npx -y @awareness-sdk/local@latest start --port 37800 --project "${projectDir}" --background`, 30000);
+      await runAsync(`npx -y @awareness-sdk/local@latest start --port 37800 --project "${path.join(HOME, '.openclaw')}" --background`, 30000);
       // Verify new version
       await new Promise(r => setTimeout(r, 2000));
       const health = await getLocalDaemonHealth(3000);
