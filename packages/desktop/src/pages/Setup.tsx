@@ -52,15 +52,11 @@ export default function SetupWizard({ onComplete }: SetupProps) {
     setInstallSteps((prev) => prev.map((s) => s.key === key ? { ...s, status, ...(detail !== undefined ? { detail } : {}) } : s));
   };
 
-<<<<<<< HEAD
-  const runInstallation = async (retryFromKey?: string) => {
-=======
   const failInstallStep = (key: string, message: string) => {
     updateInstallStep(key, 'error', message);
   };
 
-  const runInstallation = async () => {
->>>>>>> 1febe15 (Desktop: stop setup on plugin and daemon failures)
+  const runInstallation = async (retryFromKey?: string) => {
     setStep('installing');
     setInstallError(null);
     const api = window.electronAPI;
@@ -146,21 +142,20 @@ export default function SetupWizard({ onComplete }: SetupProps) {
     }
 
     // Step 4: Install plugin
-<<<<<<< HEAD
     if (startIdx <= stepKeys.indexOf('plugin')) {
       updateInstallStep('plugin', 'running');
       if (simulate) {
         await new Promise((r) => setTimeout(r, 1500));
-        updateInstallStep('plugin', 'done');
       } else {
         const res = await api!.installPlugin();
-        if (res && !res.success) {
-          updateInstallStep('plugin', 'error', res.error || t('setup.install.pluginFailed', 'Plugin install failed'));
-          setInstallError({ key: 'plugin', message: res.error || t('setup.install.pluginFailed', 'Plugin install failed') });
+        if (!res?.success) {
+          const message = res?.error || t('setup.install.pluginFailed', 'Plugin install failed');
+          failInstallStep('plugin', message);
+          setInstallError({ key: 'plugin', message });
           return;
         }
-        updateInstallStep('plugin', 'done');
       }
+      updateInstallStep('plugin', 'done');
     }
 
     // Step 5: Start daemon
@@ -168,43 +163,17 @@ export default function SetupWizard({ onComplete }: SetupProps) {
       updateInstallStep('daemon', 'running');
       if (simulate) {
         await new Promise((r) => setTimeout(r, 1000));
-        updateInstallStep('daemon', 'done');
       } else {
         const res = await api!.startDaemon();
-        if (res && !res.success) {
-          // Daemon start failure is non-fatal — warn but continue
-          updateInstallStep('daemon', 'done', t('setup.install.daemonOptional', 'Memory daemon will start on first use'));
-        } else {
-          updateInstallStep('daemon', 'done');
+        if (!res?.success) {
+          const message = res?.error || t('setup.install.daemonFailed', 'Daemon start failed');
+          failInstallStep('daemon', message);
+          setInstallError({ key: 'daemon', message });
+          return;
         }
       }
+      updateInstallStep('daemon', 'done');
     }
-=======
-    updateInstallStep('plugin', 'running');
-    if (simulate) {
-      await new Promise((r) => setTimeout(r, 1500));
-    } else {
-      const res = await api!.installPlugin();
-      if (!res?.success) {
-        failInstallStep('plugin', t('setup.install.pluginFailed'));
-        return;
-      }
-    }
-    updateInstallStep('plugin', 'done');
-
-    // Step 5: Start daemon
-    updateInstallStep('daemon', 'running');
-    if (simulate) {
-      await new Promise((r) => setTimeout(r, 1000));
-    } else {
-      const res = await api!.startDaemon();
-      if (!res?.success) {
-        failInstallStep('daemon', t('setup.install.daemonFailed'));
-        return;
-      }
-    }
-    updateInstallStep('daemon', 'done');
->>>>>>> 1febe15 (Desktop: stop setup on plugin and daemon failures)
 
     // Check if user already has OpenClaw configured with models
     await new Promise((r) => setTimeout(r, 500));

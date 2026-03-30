@@ -2486,6 +2486,11 @@ const doctor = createDoctor({
 ipcMain.handle('app:startup-ensure-runtime', async () => {
   const fixed: string[] = [];
   const warnings: string[] = [];
+  const sendStartupStatus = (message: string) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('app:startup-status', { message });
+    }
+  };
   const autoFixChecks = new Set([
     'openclaw-command-health',
     'openclaw-installed',
@@ -2498,17 +2503,20 @@ ipcMain.handle('app:startup-ensure-runtime', async () => {
     autoFixChecks.add('launchagent-path');
   }
 
+  sendStartupStatus('Checking your installation...');
   const initialReport = await doctor.runAllChecks();
   for (const check of initialReport.checks) {
     if (!autoFixChecks.has(check.id)) continue;
     if (check.fixable !== 'auto') continue;
     if (check.status !== 'fail' && check.status !== 'warn') continue;
 
+    sendStartupStatus(`Repairing ${check.label}...`);
     const fix = await doctor.runFix(check.id);
     if (fix.success) fixed.push(fix.message);
     else warnings.push(fix.message || check.message);
   }
 
+  sendStartupStatus('Finalizing startup...');
   const finalReport = await doctor.runAllChecks();
   const blocking = finalReport.checks.find((check) =>
     ['node-installed', 'openclaw-installed', 'plugin-installed', 'daemon-running'].includes(check.id)

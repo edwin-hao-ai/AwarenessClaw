@@ -9,6 +9,7 @@ export interface ElectronAPI {
     fixed: string[];
     warnings: string[];
   }>;
+  onStartupStatus: (callback: (status: { message: string }) => void) => void;
   detectEnvironment: () => Promise<EnvironmentInfo>;
   installNodeJs: () => Promise<{ success: boolean; alreadyInstalled?: boolean; method?: string; error?: string; hint?: string }>;
   installOpenClaw: () => Promise<{ success: boolean; alreadyInstalled?: boolean; error?: string }>;

@@ -39,6 +39,7 @@ export default function App() {
   const { config } = useAppConfig();
   const [setupComplete, setSetupComplete] = useState<boolean | null>(null);
   const [runtimeReady, setRuntimeReady] = useState<boolean | null>(null);
+  const [startupMessage, setStartupMessage] = useState('Preparing AwarenessClaw...');
   const [currentPage, setCurrentPage] = useState<Page>('chat');
 
   // Apply theme switching
@@ -50,6 +51,13 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!window.electronAPI?.onStartupStatus) return;
+    window.electronAPI.onStartupStatus((status) => {
+      if (status?.message) setStartupMessage(status.message);
+    });
+  }, []);
+
+  useEffect(() => {
     if (setupComplete !== true) {
       setRuntimeReady(setupComplete === false ? true : null);
       return;
@@ -57,6 +65,7 @@ export default function App() {
 
     let cancelled = false;
     setRuntimeReady(null);
+    setStartupMessage('Checking your installation...');
 
     const ensureRuntime = async () => {
       if (!window.electronAPI?.startupEnsureRuntime) {
@@ -88,8 +97,15 @@ export default function App() {
 
   if (setupComplete === null || runtimeReady === null) {
     return (
-      <div className="h-screen flex items-center justify-center bg-slate-900">
-        <img src={logoUrl} alt="" className="w-10 h-10 animate-pulse-soft" />
+      <div className="h-screen flex items-center justify-center bg-slate-900 px-6">
+        <div className="max-w-md text-center space-y-4">
+          <img src={logoUrl} alt="" className="w-12 h-12 animate-pulse-soft mx-auto" />
+          <div>
+            <h1 className="text-base font-semibold text-slate-100">Starting AwarenessClaw</h1>
+            <p className="text-sm text-slate-400 mt-2">{startupMessage}</p>
+          </div>
+          <p className="text-xs text-slate-500">First launch or auto-repair can take a little longer while the app checks OpenClaw, Gateway, and memory services.</p>
+        </div>
       </div>
     );
   }

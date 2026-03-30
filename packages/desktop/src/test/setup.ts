@@ -39,6 +39,7 @@ Object.defineProperty(window, 'electronAPI', {
     openExternal: () => Promise.resolve(),
     getDashboardUrl: () => Promise.resolve({ url: null }),
     startupEnsureRuntime: () => Promise.resolve({ ok: true, fixed: [], warnings: [] }),
+    onStartupStatus: () => {},
     detectEnvironment: () => Promise.resolve({
       platform: 'darwin',
       arch: 'arm64',
