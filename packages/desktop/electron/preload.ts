@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getPlatform: () => ipcRenderer.invoke('app:get-platform'),
   openExternal: (url: string) => ipcRenderer.invoke('app:open-external', url),
   getDashboardUrl: () => ipcRenderer.invoke('app:get-dashboard-url'),
+  startupEnsureRuntime: () => ipcRenderer.invoke('app:startup-ensure-runtime'),
   checkUpdates: () => ipcRenderer.invoke('app:check-updates'),
   upgradeComponent: (component: string) => ipcRenderer.invoke('app:upgrade-component', component),
 

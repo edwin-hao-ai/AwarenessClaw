@@ -2483,6 +2483,51 @@ const doctor = createDoctor({
   platform: process.platform,
 });
 
+ipcMain.handle('app:startup-ensure-runtime', async () => {
+  const fixed: string[] = [];
+  const warnings: string[] = [];
+  const autoFixChecks = new Set([
+    'openclaw-command-health',
+    'openclaw-installed',
+    'plugin-installed',
+    'daemon-running',
+    'gateway-running',
+  ]);
+
+  if (process.platform === 'darwin') {
+    autoFixChecks.add('launchagent-path');
+  }
+
+  const initialReport = await doctor.runAllChecks();
+  for (const check of initialReport.checks) {
+    if (!autoFixChecks.has(check.id)) continue;
+    if (check.fixable !== 'auto') continue;
+    if (check.status !== 'fail' && check.status !== 'warn') continue;
+
+    const fix = await doctor.runFix(check.id);
+    if (fix.success) fixed.push(fix.message);
+    else warnings.push(fix.message || check.message);
+  }
+
+  const finalReport = await doctor.runAllChecks();
+  const blocking = finalReport.checks.find((check) =>
+    ['node-installed', 'openclaw-installed', 'plugin-installed', 'daemon-running'].includes(check.id)
+    && check.status === 'fail'
+  );
+
+  const residualWarnings = finalReport.checks
+    .filter((check) => check.status === 'warn')
+    .map((check) => check.message);
+
+  return {
+    ok: !blocking,
+    needsSetup: !!blocking,
+    blockingMessage: blocking?.message,
+    fixed,
+    warnings: [...warnings, ...residualWarnings],
+  };
+});
+
 ipcMain.handle('doctor:run', async () => doctor.runAllChecks());
 ipcMain.handle('doctor:fix', async (_e: any, checkId: string) => doctor.runFix(checkId));
 

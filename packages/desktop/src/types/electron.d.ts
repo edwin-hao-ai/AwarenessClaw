@@ -2,6 +2,13 @@ export interface ElectronAPI {
   getPlatform: () => Promise<string>;
   openExternal: (url: string) => Promise<void>;
   getDashboardUrl: () => Promise<{ url: string | null }>;
+  startupEnsureRuntime: () => Promise<{
+    ok: boolean;
+    needsSetup?: boolean;
+    blockingMessage?: string;
+    fixed: string[];
+    warnings: string[];
+  }>;
   detectEnvironment: () => Promise<EnvironmentInfo>;
   installNodeJs: () => Promise<{ success: boolean; alreadyInstalled?: boolean; method?: string; error?: string; hint?: string }>;
   installOpenClaw: () => Promise<{ success: boolean; alreadyInstalled?: boolean; error?: string }>;

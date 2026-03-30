@@ -38,6 +38,7 @@ function useThemeEffect(theme: 'dark' | 'light' | 'system') {
 export default function App() {
   const { config } = useAppConfig();
   const [setupComplete, setSetupComplete] = useState<boolean | null>(null);
+  const [runtimeReady, setRuntimeReady] = useState<boolean | null>(null);
   const [currentPage, setCurrentPage] = useState<Page>('chat');
 
   // Apply theme switching
@@ -48,12 +49,44 @@ export default function App() {
     setSetupComplete(done === 'true');
   }, []);
 
+  useEffect(() => {
+    if (setupComplete !== true) {
+      setRuntimeReady(setupComplete === false ? true : null);
+      return;
+    }
+
+    let cancelled = false;
+    setRuntimeReady(null);
+
+    const ensureRuntime = async () => {
+      if (!window.electronAPI?.startupEnsureRuntime) {
+        if (!cancelled) setRuntimeReady(true);
+        return;
+      }
+
+      const result = await window.electronAPI.startupEnsureRuntime();
+      if (cancelled) return;
+
+      if (!result.ok && result.needsSetup) {
+        localStorage.setItem('awareness-claw-setup-done', 'false');
+        setSetupComplete(false);
+        setRuntimeReady(true);
+        return;
+      }
+
+      setRuntimeReady(true);
+    };
+
+    ensureRuntime();
+    return () => { cancelled = true; };
+  }, [setupComplete]);
+
   const handleSetupComplete = () => {
     localStorage.setItem('awareness-claw-setup-done', 'true');
     setSetupComplete(true);
   };
 
-  if (setupComplete === null) {
+  if (setupComplete === null || runtimeReady === null) {
     return (
       <div className="h-screen flex items-center justify-center bg-slate-900">
         <img src={logoUrl} alt="" className="w-10 h-10 animate-pulse-soft" />

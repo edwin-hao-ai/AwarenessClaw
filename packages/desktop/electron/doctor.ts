@@ -50,10 +50,22 @@ interface Ctx {
   nodePath: string | null;
   openclawVersion: string | null;
   openclawPath: string | null;
+  openclawCandidates: string[];
   npmPrefix: string | null;
   configPath: string;
   config: any | null;
   deps: DoctorDeps;
+}
+
+function pickFirstCommandPath(output: string | null): string | null {
+  if (!output) return null;
+  const lines = output.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  return lines[0] || null;
+}
+
+function parseCommandPaths(output: string | null): string[] {
+  if (!output) return [];
+  return Array.from(new Set(output.split(/\r?\n/).map(line => line.trim()).filter(Boolean)));
 }
 
 async function buildContext(deps: DoctorDeps): Promise<Ctx> {
@@ -61,17 +73,22 @@ async function buildContext(deps: DoctorDeps): Promise<Ctx> {
   let config: any = null;
   try { config = JSON.parse(fs.readFileSync(configPath, 'utf8')); } catch {}
 
-  const nodePath = await deps.shellExec('which node', 3000);
+  const findCommand = deps.platform === 'win32' ? 'where' : 'which -a';
+  const nodeLookup = await deps.shellExec(`${findCommand} node`, 3000);
+  const nodePath = pickFirstCommandPath(nodeLookup);
   const nodeVersion = nodePath ? await deps.shellExec('node --version', 3000) : null;
-  const openclawPath = await deps.shellExec('which openclaw', 3000);
-  const openclawVersion = openclawPath ? await deps.shellExec('openclaw --version 2>/dev/null | head -1', 8000) : null;
-  const npmPrefix = await deps.shellExec('npm config get prefix 2>/dev/null', 5000);
+  const openclawLookup = await deps.shellExec(`${findCommand} openclaw`, 3000);
+  const openclawCandidates = parseCommandPaths(openclawLookup);
+  const openclawPath = openclawCandidates[0] || null;
+  const openclawVersion = openclawPath ? await deps.shellExec('openclaw --version', 8000) : null;
+  const npmPrefix = await deps.shellExec('npm config get prefix', 5000);
 
   return {
     nodeVersion: nodeVersion?.trim() || null,
     nodePath: nodePath?.trim() || null,
     openclawVersion: openclawVersion?.trim() || null,
     openclawPath: openclawPath?.trim() || null,
+    openclawCandidates,
     npmPrefix: npmPrefix?.trim() || null,
     configPath, config, deps,
   };
@@ -92,6 +109,64 @@ async function checkOpenclawInstalled(ctx: Ctx): Promise<CheckResult> {
     return { id: 'openclaw-installed', label: 'OpenClaw', status: 'pass', message: `Installed (${ctx.openclawVersion.match(/\d+\.\d+\.\d+/)?.[0] || ctx.openclawVersion})`, fixable: 'none' };
   }
   return { id: 'openclaw-installed', label: 'OpenClaw', status: 'fail', message: 'OpenClaw is not installed', fixable: 'auto', fixDescription: 'Install OpenClaw via npm' };
+}
+
+async function checkOpenclawCommandHealth(ctx: Ctx): Promise<CheckResult> {
+  if (!ctx.openclawPath) {
+    return { id: 'openclaw-command-health', label: 'OpenClaw command path', status: 'skipped', message: 'Skipped (OpenClaw not installed)', fixable: 'none' };
+  }
+
+  const duplicates = ctx.openclawCandidates.filter(candidate => candidate !== ctx.openclawPath);
+  if (duplicates.length === 0) {
+    return { id: 'openclaw-command-health', label: 'OpenClaw command path', status: 'pass', message: 'Command path is healthy', fixable: 'none' };
+  }
+
+  if (ctx.deps.platform === 'win32') {
+    return {
+      id: 'openclaw-command-health',
+      label: 'OpenClaw command path',
+      status: 'warn',
+      message: 'Multiple OpenClaw command shims found. This can cause slow startup or launch the wrong version.',
+      fixable: 'auto',
+      fixDescription: 'Refresh the Windows OpenClaw command shims',
+      detail: ctx.openclawCandidates.join('; '),
+    };
+  }
+
+  return {
+    id: 'openclaw-command-health',
+    label: 'OpenClaw command path',
+    status: 'warn',
+    message: 'Multiple OpenClaw command paths found. The app may start the wrong version.',
+    fixable: 'manual',
+    fixDescription: 'Remove old OpenClaw installs so only one command path remains',
+    detail: ctx.openclawCandidates.join('; '),
+  };
+}
+
+async function fixOpenclawCommandHealth(ctx: Ctx): Promise<FixResult> {
+  if (ctx.deps.platform !== 'win32') {
+    return { id: 'openclaw-command-health', success: false, message: 'Automatic cleanup is only available on Windows' };
+  }
+
+  try {
+    const shimDir = path.join(process.env.APPDATA || path.join(ctx.deps.homedir, 'AppData', 'Roaming'), 'npm');
+    try {
+      await ctx.deps.shellRun('npm uninstall -g openclaw 2>&1', 60000);
+    } catch {
+      // Best-effort uninstall; stale shims can still be cleaned locally.
+    }
+
+    for (const fileName of ['openclaw', 'openclaw.cmd', 'openclaw.ps1']) {
+      const filePath = path.join(shimDir, fileName);
+      if (fs.existsSync(filePath)) fs.rmSync(filePath, { force: true });
+    }
+
+    await ctx.deps.shellRun('npm install -g openclaw 2>&1', 90000);
+    return { id: 'openclaw-command-health', success: true, message: 'OpenClaw command shims refreshed' };
+  } catch (err: any) {
+    return { id: 'openclaw-command-health', success: false, message: err.message?.slice(0, 200) || 'Cleanup failed' };
+  }
 }
 
 async function fixOpenclawInstall(ctx: Ctx): Promise<FixResult> {
@@ -195,8 +270,9 @@ async function fixLaunchAgentPath(ctx: Ctx): Promise<FixResult> {
     plist = plist.replace(/<string>[^<]*node_modules\/openclaw\/dist\/index\.js<\/string>/, `<string>${correctPath}</string>`);
     fs.writeFileSync(plistPath, plist);
     // Reload the LaunchAgent
-    await ctx.deps.shellExec('launchctl bootout gui/501/ai.openclaw.gateway 2>/dev/null', 5000);
-    await ctx.deps.shellExec(`launchctl bootstrap gui/501 "${plistPath}" 2>/dev/null`, 5000);
+    const uid = (await ctx.deps.shellExec('id -u', 3000))?.trim() || '501';
+    await ctx.deps.shellExec(`launchctl bootout gui/${uid}/ai.openclaw.gateway 2>/dev/null`, 5000);
+    await ctx.deps.shellExec(`launchctl bootstrap gui/${uid} "${plistPath}" 2>/dev/null`, 5000);
     return { id: 'launchagent-path', success: true, message: 'Gateway service path fixed and reloaded' };
   } catch (err: any) {
     return { id: 'launchagent-path', success: false, message: err.message?.slice(0, 200) || 'Fix failed' };
@@ -278,7 +354,7 @@ async function fixDaemonStart(ctx: Ctx): Promise<FixResult> {
         }
       } catch { /* best effort cleanup */ }
     }
-    await ctx.deps.shellRun('npx -y @awareness-sdk/local start 2>&1 &', 15000);
+      await ctx.deps.shellRun('npx -y @awareness-sdk/local start --port 37800 --background 2>&1', 30000);
     await new Promise(r => setTimeout(r, 5000));
     return { id: 'daemon-running', success: true, message: 'Daemon started' };
   } catch (err: any) {
@@ -363,6 +439,7 @@ async function checkNpmPrefixWritable(ctx: Ctx): Promise<CheckResult> {
 const CHECK_REGISTRY: Record<string, { check: (ctx: Ctx) => Promise<CheckResult>; fix?: (ctx: Ctx) => Promise<FixResult> }> = {
   'node-installed': { check: checkNodeInstalled },
   'openclaw-installed': { check: checkOpenclawInstalled, fix: fixOpenclawInstall },
+  'openclaw-command-health': { check: checkOpenclawCommandHealth, fix: fixOpenclawCommandHealth },
   'openclaw-version': { check: checkOpenclawVersion, fix: fixOpenclawUpdate },
   'openclaw-conflicts': { check: checkMultiVersionConflicts },
   'launchagent-path': { check: checkLaunchAgentPath, fix: fixLaunchAgentPath },
@@ -375,7 +452,7 @@ const CHECK_REGISTRY: Record<string, { check: (ctx: Ctx) => Promise<CheckResult>
 };
 
 const CHECK_ORDER = [
-  'node-installed', 'openclaw-installed', 'openclaw-version', 'openclaw-conflicts',
+  'node-installed', 'openclaw-installed', 'openclaw-command-health', 'openclaw-version', 'openclaw-conflicts',
   'launchagent-path', 'gateway-running', 'plugin-installed', 'daemon-running',
   'channel-bindings', 'config-permissions', 'npm-prefix-writable',
 ];
