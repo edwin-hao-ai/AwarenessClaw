@@ -96,19 +96,27 @@ export default function UpdateBanner() {
     setUpgrading(null);
 
     // Re-verify: check if updates are truly resolved
+    // Wait a bit for daemon to finish restarting before rechecking
     if (allSuccess) {
+      await new Promise(r => setTimeout(r, 3000));
       try {
         const recheck = await (window.electronAPI as any).checkUpdates();
         if (recheck.updates && recheck.updates.length > 0) {
-          // Still has updates — upgrade may not have taken effect
-          const remaining = recheck.updates.map((u: any) => u.label).join(', ');
-          setUpgradeResults(prev => ({
-            ...prev,
-            verify: {
-              success: false,
-              error: `${t('update.verifyFailed')} ${remaining}. ${t('update.verifyRestart')}`,
-            },
-          }));
+          // Filter out components that we already successfully upgraded
+          // (daemon may still be restarting when recheck runs)
+          const trulyRemaining = recheck.updates.filter(
+            (u: any) => !upgradeResults[u.component]?.success
+          );
+          if (trulyRemaining.length > 0) {
+            const remaining = trulyRemaining.map((u: any) => u.label).join(', ');
+            setUpgradeResults(prev => ({
+              ...prev,
+              verify: {
+                success: false,
+                error: `${t('update.verifyFailed')} ${remaining}. ${t('update.verifyRestart')}`,
+              },
+            }));
+          }
         }
       } catch { /* ignore recheck errors */ }
     }

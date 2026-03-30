@@ -776,16 +776,40 @@ ipcMain.handle('app:upgrade-component', async (_e, component: string) => {
       }
     } else if (component === 'daemon') {
       // Stop existing daemon, then restart with latest via npx
-      // The daemon runs via npx (not global install), so we just need to restart with @latest
       await shutdownLocalDaemon(3000);
-      await new Promise(r => setTimeout(r, 1000));
-      // Start new version — npx will fetch latest
+      await new Promise(r => setTimeout(r, 1500));
+
+      // Force-kill if still running (shutdown endpoint may not have worked)
+      const stillRunning = await getLocalDaemonHealth(2000);
+      if (stillRunning?.pid) {
+        try { process.kill(stillRunning.pid, 'SIGKILL'); } catch { /* already dead */ }
+        await new Promise(r => setTimeout(r, 1000));
+      }
+
+      // Clear npx cache for @awareness-sdk/local to force fresh download
+      // npx caches packages in ~/.npm/_npx/ — stale cache prevents version upgrade
+      try {
+        const npxCacheDir = path.join(HOME, '.npm', '_npx');
+        if (fs.existsSync(npxCacheDir)) {
+          const entries = fs.readdirSync(npxCacheDir);
+          for (const entry of entries) {
+            const pkgJsonPath = path.join(npxCacheDir, entry, 'node_modules', '@awareness-sdk', 'local', 'package.json');
+            if (fs.existsSync(pkgJsonPath)) {
+              fs.rmSync(path.join(npxCacheDir, entry), { recursive: true, force: true });
+            }
+          }
+        }
+      } catch { /* cache cleanup is best-effort */ }
+
+      // Start new version — npx -y @latest forces fresh fetch after cache clear
       // IMPORTANT: Must pass --project to avoid cwd=/ in packaged Electron (ENOENT: mkdir '/.awareness')
-      await runAsync(`npx -y @awareness-sdk/local@latest start --port 37800 --project "${path.join(HOME, '.openclaw')}" --background`, 30000);
-      // Verify new version
-      await new Promise(r => setTimeout(r, 2000));
-      const health = await getLocalDaemonHealth(3000);
-      if (health?.version) return { success: true, version: health.version };
+      await runAsync(`npx -y @awareness-sdk/local@latest start --port 37800 --project "${path.join(HOME, '.openclaw')}" --background`, 60000);
+      // Poll for readiness — npx download + daemon startup may take 10-20s
+      for (let i = 0; i < 20; i++) {
+        await new Promise(r => setTimeout(r, 1000));
+        const health = await getLocalDaemonHealth(3000);
+        if (health?.version) return { success: true, version: health.version };
+      }
       return { success: true, version: 'latest' };
     }
     return { success: false, error: 'Unknown component' };
