@@ -1358,32 +1358,68 @@ function downloadFile(url: string, dest: string): Promise<void> {
 
 /**
  * Ensure Gateway is running before sending chat messages.
- * Auto-starts if stopped. Returns true if gateway is ready.
+ * Auto-starts if stopped. Returns a user-facing error instead of crashing if
+ * OpenClaw is missing or the gateway cannot be started.
  */
-async function ensureGatewayRunning(): Promise<boolean> {
+async function ensureGatewayRunning(): Promise<{ ok: boolean; error?: string }> {
+  const send = (ch: string, data: any) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(ch, data);
+  };
+
   try {
-    const status = await safeShellExecAsync('openclaw status 2>/dev/null', 5000);
-    if (status?.includes('running')) return true;
-    // Gateway not running — auto-start it
-    const send = (ch: string, data: any) => {
-      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(ch, data);
-    };
+    const openclawVersion = await safeShellExecAsync('openclaw --version', 5000);
+    if (!openclawVersion) {
+      send('chat:status', { type: 'error', message: 'OpenClaw is not installed' });
+      return {
+        ok: false,
+        error: 'OpenClaw is not installed yet. Please finish Setup first, or reinstall OpenClaw in Settings before chatting.',
+      };
+    }
+
+    const status = await safeShellExecAsync('openclaw gateway status 2>&1', 15000);
+    if (status && (status.includes('running') || status.includes('active'))) {
+      return { ok: true };
+    }
+
     send('chat:status', { type: 'gateway', message: 'Starting Gateway...' });
-    const child = runSpawn('openclaw', ['up'], { detached: true, stdio: 'ignore' });
-    child.unref();
-    // Poll until gateway is ready (max 10s)
+
+    try {
+      await runAsync('openclaw gateway start 2>&1', 20000);
+    } catch (err: any) {
+      const message = err?.message || '';
+      send('chat:status', { type: 'error', message: 'Gateway failed to start' });
+      if (/not recognized|not found|ENOENT/i.test(message)) {
+        return {
+          ok: false,
+          error: 'OpenClaw could not be found on this computer. Please finish Setup first, or reinstall OpenClaw in Settings before chatting.',
+        };
+      }
+      return {
+        ok: false,
+        error: 'Gateway failed to start. Please check Settings → Gateway and try again.',
+      };
+    }
+
     for (let i = 0; i < 10; i++) {
       await sleep(1000);
-      const check = await safeShellExecAsync('openclaw status 2>/dev/null', 3000);
-      if (check?.includes('running')) {
+      const check = await safeShellExecAsync('openclaw gateway status 2>&1', 15000);
+      if (check && (check.includes('running') || check.includes('active'))) {
         send('chat:status', { type: 'gateway', message: 'Gateway started' });
-        return true;
+        return { ok: true };
       }
     }
-    send('chat:status', { type: 'gateway', message: 'Gateway failed to start' });
-    return false;
+
+    send('chat:status', { type: 'error', message: 'Gateway failed to start' });
+    return {
+      ok: false,
+      error: 'Gateway failed to start in time. Please check Settings → Gateway and try again.',
+    };
   } catch {
-    return false;
+    send('chat:status', { type: 'error', message: 'Gateway check failed' });
+    return {
+      ok: false,
+      error: 'Could not verify the OpenClaw environment. Please finish Setup first, then try again.',
+    };
   }
 }
 
@@ -1395,8 +1431,8 @@ async function ensureGatewayRunning(): Promise<boolean> {
 ipcMain.handle('chat:send', async (_e, message: string, sessionId?: string, options?: { thinkingLevel?: string; model?: string; files?: string[] }) => {
   // Auto-start Gateway if not running (users should never need to manually start it)
   const gatewayReady = await ensureGatewayRunning();
-  if (!gatewayReady) {
-    return { text: '', error: 'Gateway failed to start. Please check Settings → Gateway and try again.' };
+  if (!gatewayReady.ok) {
+    return { success: false, text: '', error: gatewayReady.error || 'Gateway failed to start. Please check Settings → Gateway and try again.' };
   }
 
   return new Promise((resolve) => {
