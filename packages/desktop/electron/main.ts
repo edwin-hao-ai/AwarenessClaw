@@ -16,6 +16,60 @@ let isQuitting = false;
 const isDev = !app.isPackaged;
 const HOME = os.homedir();
 
+type RuntimePreferences = {
+  preferUserSessionGateway?: boolean;
+};
+
+function getRuntimePreferencesPath() {
+  return path.join(HOME, '.awareness-claw', 'runtime-preferences.json');
+}
+
+function getManagedOpenClawPrefix() {
+  return path.join(HOME, '.awareness-claw', 'openclaw-runtime');
+}
+
+function getManagedOpenClawBinDir() {
+  const prefix = getManagedOpenClawPrefix();
+  return process.platform === 'win32' ? prefix : path.join(prefix, 'bin');
+}
+
+function getManagedOpenClawInstallCommand(packageName = 'openclaw') {
+  const npmCli = getBundledNpmBin('npm');
+  const prefix = getManagedOpenClawPrefix();
+  if (npmCli) {
+    return `"${process.execPath}" "${npmCli}" install -g --prefix "${prefix}" ${packageName}`;
+  }
+  return `npm install -g --prefix "${prefix}" ${packageName}`;
+}
+
+function readRuntimePreferences(): RuntimePreferences {
+  try {
+    const file = getRuntimePreferencesPath();
+    if (!fs.existsSync(file)) return {};
+    return JSON.parse(fs.readFileSync(file, 'utf8')) as RuntimePreferences;
+  } catch {
+    return {};
+  }
+}
+
+function writeRuntimePreferences(next: RuntimePreferences) {
+  try {
+    const file = getRuntimePreferencesPath();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(next, null, 2));
+  } catch {
+    // Best-effort preference cache only.
+  }
+}
+
+function wrapWindowsCommand(cmd: string) {
+  return process.platform === 'win32' ? `chcp 65001>nul & ${cmd}` : cmd;
+}
+
+function stripAnsi(text: string) {
+  return text.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '');
+}
+
 // --- Bundled Node.js path management ---
 // Electron bundles Node.js, but we need a system-accessible node/npm for OpenClaw.
 // Strategy: Use system node if available, otherwise auto-install via official installer.
@@ -26,7 +80,7 @@ function safeShellExec(cmd: string, timeoutMs = 5000): string | null {
   try {
     const enhancedPath = getEnhancedPath();
     if (process.platform === 'win32') {
-      return execSync(cmd, { encoding: 'utf8', timeout: timeoutMs, stdio: 'pipe', shell: 'cmd.exe', env: { ...process.env, PATH: enhancedPath } }).trim();
+      return execSync(wrapWindowsCommand(cmd), { encoding: 'utf8', timeout: timeoutMs, stdio: 'pipe', shell: 'cmd.exe', env: { ...process.env, PATH: enhancedPath, NO_COLOR: '1', FORCE_COLOR: '0' } }).trim();
     }
     return execSync(`/bin/bash --norc --noprofile -c 'export PATH="${enhancedPath}"; ${cmd.replace(/'/g, "'\\''")}'`, {
       encoding: 'utf8', timeout: timeoutMs, stdio: 'pipe', env: { ...process.env, PATH: enhancedPath },
@@ -41,9 +95,9 @@ function safeShellExec(cmd: string, timeoutMs = 5000): string | null {
 function safeShellExecAsync(cmd: string, timeoutMs = 5000): Promise<string | null> {
   return new Promise(resolve => {
     const enhancedPath = getEnhancedPath();
-    const shellCmd = process.platform === 'win32' ? cmd : `export PATH="${enhancedPath}"; ${cmd}`;
+    const shellCmd = process.platform === 'win32' ? wrapWindowsCommand(cmd) : `export PATH="${enhancedPath}"; ${cmd}`;
     const child = process.platform === 'win32'
-      ? spawn(cmd, [], { shell: 'cmd.exe', env: { ...process.env, PATH: enhancedPath }, stdio: 'pipe' })
+      ? spawn(shellCmd, [], { shell: 'cmd.exe', env: { ...process.env, PATH: enhancedPath, NO_COLOR: '1', FORCE_COLOR: '0' }, stdio: 'pipe' })
       : spawn('/bin/bash', ['--norc', '--noprofile', '-c', shellCmd], { env: { ...process.env, PATH: enhancedPath }, stdio: 'pipe' });
     let stdout = '';
     let settled = false;
@@ -53,6 +107,42 @@ function safeShellExecAsync(cmd: string, timeoutMs = 5000): Promise<string | nul
       if (!settled) { settled = true; clearTimeout(timer); resolve(code === 0 ? stdout.trim() : null); }
     });
     child.on('error', () => { if (!settled) { settled = true; clearTimeout(timer); resolve(null); } });
+  });
+}
+
+function readShellOutputAsync(cmd: string, timeoutMs = 5000): Promise<string | null> {
+  return new Promise(resolve => {
+    const enhancedPath = getEnhancedPath();
+    const shellCmd = process.platform === 'win32' ? wrapWindowsCommand(cmd) : `export PATH="${enhancedPath}"; ${cmd}`;
+    const child = process.platform === 'win32'
+      ? spawn(shellCmd, [], { shell: 'cmd.exe', env: { ...process.env, PATH: enhancedPath, NO_COLOR: '1', FORCE_COLOR: '0' }, stdio: 'pipe' })
+      : spawn('/bin/bash', ['--norc', '--noprofile', '-c', shellCmd], { env: { ...process.env, PATH: enhancedPath }, stdio: 'pipe' });
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        child.kill();
+        resolve((stdout + stderr).trim() || null);
+      }
+    }, timeoutMs);
+    child.stdout?.on('data', (d: Buffer) => { stdout += d.toString(); });
+    child.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); });
+    child.on('close', () => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        resolve((stdout + stderr).trim() || null);
+      }
+    });
+    child.on('error', () => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        resolve((stdout + stderr).trim() || null);
+      }
+    });
   });
 }
 
@@ -97,12 +187,15 @@ function getEnhancedPath(): string {
     }
   } else if (process.platform === 'win32') {
     extras.push(
+      getManagedOpenClawBinDir(),
       `${process.env.APPDATA}\\npm`,                      // npm default global
       `${process.env.LOCALAPPDATA}\\pnpm`,                 // pnpm global
       `${process.env.ProgramFiles}\\nodejs`,                // official installer
       `${process.env.ProgramFiles} (x86)\\nodejs`,          // 32-bit
       `${process.env.LOCALAPPDATA}\\fnm_multishells`,       // fnm on Windows
     );
+  } else {
+    extras.push(getManagedOpenClawBinDir());
   }
 
   return [...extras, base].join(path.delimiter);
@@ -224,10 +317,10 @@ function runAsync(cmd: string, timeoutMs = 180000): Promise<string> {
       return `${process.execPath} "${npxCli}" ${rest}`;
     };
 
-    const shellCmdRaw = process.platform === 'win32' ? cmd : `export PATH="${enhancedPath}"; ${cmd}`;
+    const shellCmdRaw = process.platform === 'win32' ? wrapWindowsCommand(cmd) : `export PATH="${enhancedPath}"; ${cmd}`;
     const shellCmd = rewriteNpx(shellCmdRaw);
     const child = process.platform === 'win32'
-      ? spawn(cmd, [], { shell: 'cmd.exe', env: { ...process.env, PATH: enhancedPath }, stdio: 'pipe' })
+      ? spawn(shellCmd, [], { shell: 'cmd.exe', env: { ...process.env, PATH: enhancedPath, NO_COLOR: '1', FORCE_COLOR: '0' }, stdio: 'pipe' })
       : spawn('/bin/bash', ['--norc', '--noprofile', '-c', shellCmd], { env: { ...process.env, PATH: enhancedPath }, stdio: 'pipe' });
     let stdout = '';
     let stderr = '';
@@ -461,15 +554,12 @@ ipcMain.handle('setup:install-openclaw', async () => {
     return { success: true, alreadyInstalled: true, version: existing };
   }
 
-  // Detect package manager preference
-  const hasPnpm = await safeShellExecAsync('pnpm --version', 3000);
-  const hasYarn = !hasPnpm ? await safeShellExecAsync('yarn --version', 3000) : null;
-  const pmBase = hasPnpm ? 'pnpm add -g' : hasYarn ? 'yarn global add' : 'npm install -g';
   const registries = ['', '--registry=https://registry.npmmirror.com'];
+  const managedInstallBase = getManagedOpenClawInstallCommand('openclaw');
 
   for (const reg of registries) {
     try {
-      await runAsync(`${pmBase} openclaw ${reg}`.trim(), 90000);
+      await runAsync(`${managedInstallBase} ${reg}`.trim(), 90000);
       return { success: true };
     } catch { continue; }
   }
@@ -522,17 +612,22 @@ ipcMain.handle('setup:install-plugin', async () => {
       try { config = JSON.parse(fs.readFileSync(configPath, 'utf8')); } catch {}
 
       if (!config.plugins) config.plugins = {};
-      config.plugins['openclaw-memory'] = {
-        enabled: true,
-        config: {
-          autoRecall: true,
-          autoCapture: true,
-          recallLimit: 8,
-          localUrl: 'http://localhost:37800',
-          baseUrl: 'https://awareness.market/api/v1',
-          embeddingLanguage: 'multilingual',
-        },
-      };
+      if (!config.plugins.entries) config.plugins.entries = {};
+      for (const pluginId of ['openclaw-memory', 'memory-awareness']) {
+        config.plugins.entries[pluginId] = {
+          ...(config.plugins.entries[pluginId] || {}),
+          enabled: true,
+          config: {
+            ...(config.plugins.entries[pluginId]?.config || {}),
+            autoRecall: true,
+            autoCapture: true,
+            recallLimit: 8,
+            localUrl: 'http://localhost:37800',
+            baseUrl: 'https://awareness.market/api/v1',
+            embeddingLanguage: 'multilingual',
+          },
+        };
+      }
       fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
       return { success: true, method: 'config-only', note: 'Plugin config written, will install on first run' };
     } catch (err) {
@@ -1356,6 +1451,164 @@ function downloadFile(url: string, dest: string): Promise<void> {
 
 // --- PTY Management (for embedded openclaw chat) ---
 
+function isGatewayRunningOutput(output: string | null) {
+  return !!output && (
+    output.includes('running') ||
+    output.includes('active') ||
+    output.includes('RPC probe: ok') ||
+    output.includes('Listening:')
+  );
+}
+
+function isWindowsGatewayServiceMissing(output: string | null) {
+  if (!output || process.platform !== 'win32') return false;
+  return output.includes('Scheduled Task (missing)') || output.includes('schtasks run failed');
+}
+
+function isGatewayPermissionError(output: string | null) {
+  if (!output) return false;
+  return /EACCES|Access is denied|permission denied|拒绝访问|schtasks create failed/i.test(output);
+}
+
+async function startGatewayInUserSession(send?: (ch: string, data: any) => void): Promise<{ ok: boolean; error?: string }> {
+  send?.('chat:status', { type: 'gateway', message: 'Starting temporary Gateway...' });
+
+  try {
+    if (process.platform === 'win32') {
+      const child = runSpawn('cmd.exe', ['/d', '/c', 'start', '', '/b', 'openclaw', 'gateway', 'run', '--force'], {
+        cwd: HOME,
+        detached: true,
+        stdio: 'ignore',
+      });
+      child.unref();
+    } else {
+      const child = runSpawn('openclaw', ['gateway', 'run', '--force'], {
+        cwd: HOME,
+        detached: true,
+        stdio: 'ignore',
+      });
+      child.unref();
+    }
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Could not launch the temporary Gateway process.' };
+  }
+
+  for (let i = 0; i < 20; i++) {
+    await sleep(1000);
+    const check = await readShellOutputAsync('openclaw gateway status 2>&1', 15000);
+    if (isGatewayRunningOutput(check)) {
+      if (process.platform === 'win32') {
+        writeRuntimePreferences({ ...readRuntimePreferences(), preferUserSessionGateway: true });
+      }
+      send?.('chat:status', { type: 'gateway', message: 'Gateway started in app session' });
+      return { ok: true };
+    }
+  }
+
+  return {
+    ok: false,
+    error: 'AwarenessClaw could not start the local Gateway automatically. Please check Settings → Gateway and try again.',
+  };
+}
+
+async function startGatewayWithRepair(send?: (ch: string, data: any) => void): Promise<{ ok: boolean; error?: string }> {
+  const statusOutput = await readShellOutputAsync('openclaw gateway status 2>&1', 15000);
+  if (isGatewayRunningOutput(statusOutput)) return { ok: true };
+
+  const emit = (message: string) => send?.('chat:status', { type: 'gateway', message });
+  const prefs = readRuntimePreferences();
+
+  if (process.platform === 'win32' && prefs.preferUserSessionGateway) {
+    emit('Starting Gateway in your Windows session...');
+    const fallback = await startGatewayInUserSession(send);
+    if (fallback.ok) return fallback;
+  }
+
+  let shouldInstallService = isWindowsGatewayServiceMissing(statusOutput);
+
+  if (shouldInstallService) {
+    emit('Installing local Gateway service...');
+    try {
+      await runAsync('openclaw gateway install 2>&1', 30000);
+    } catch (err: any) {
+      const message = err?.message || '';
+      if (process.platform === 'win32') {
+        const fallback = await startGatewayInUserSession(send);
+        if (fallback.ok) return fallback;
+        return {
+          ok: false,
+          error: isGatewayPermissionError(message)
+            ? 'AwarenessClaw could not install the Windows Gateway service because administrator permission was denied, and the temporary Gateway fallback also failed. Please reopen the app as administrator once, then try again.'
+            : 'AwarenessClaw could not install the Windows Gateway service automatically, and the temporary Gateway fallback also failed. Please reopen the app once and try again, or use Settings → Gateway for manual repair.',
+        };
+      }
+      return {
+        ok: false,
+        error: 'The local Gateway service could not be installed automatically. Please check Settings → Gateway and try again.',
+      };
+    }
+  }
+
+  emit('Starting Gateway...');
+  try {
+    await runAsync('openclaw gateway start 2>&1', 20000);
+    if (process.platform === 'win32' && prefs.preferUserSessionGateway) {
+      writeRuntimePreferences({ ...prefs, preferUserSessionGateway: false });
+    }
+  } catch (err: any) {
+    const message = err?.message || '';
+
+    if (process.platform === 'win32' && !shouldInstallService && message.includes('schtasks run failed')) {
+      shouldInstallService = true;
+      emit('Repairing local Gateway service...');
+      try {
+        await runAsync('openclaw gateway install 2>&1', 30000);
+        await runAsync('openclaw gateway start 2>&1', 20000);
+      } catch (repairErr: any) {
+        const repairMessage = repairErr?.message || '';
+        if (process.platform === 'win32') {
+          const fallback = await startGatewayInUserSession(send);
+          if (fallback.ok) return fallback;
+          return {
+            ok: false,
+            error: isGatewayPermissionError(repairMessage)
+              ? 'AwarenessClaw could not repair the Windows Gateway service because administrator permission was denied, and the temporary Gateway fallback also failed. Please reopen the app as administrator once, then try again.'
+              : 'AwarenessClaw could not repair the Windows Gateway service automatically, and the temporary Gateway fallback also failed. Please reopen the app once and try again, or use Settings → Gateway for manual repair.',
+          };
+        }
+        return {
+          ok: false,
+          error: 'AwarenessClaw could not repair the local Gateway service automatically. Please check Settings → Gateway and try again.',
+        };
+      }
+    } else if (/not recognized|not found|ENOENT/i.test(message)) {
+      return {
+        ok: false,
+        error: 'OpenClaw could not be found on this computer. Please finish Setup first, or reinstall OpenClaw in Settings before chatting.',
+      };
+    } else {
+      return {
+        ok: false,
+        error: 'Gateway failed to start. Please check Settings → Gateway and try again.',
+      };
+    }
+  }
+
+  for (let i = 0; i < 10; i++) {
+    await sleep(1000);
+    const check = await readShellOutputAsync('openclaw gateway status 2>&1', 15000);
+    if (isGatewayRunningOutput(check)) {
+      emit('Gateway started');
+      return { ok: true };
+    }
+  }
+
+  return {
+    ok: false,
+    error: 'Gateway failed to start in time. Please check Settings → Gateway and try again.',
+  };
+}
+
 /**
  * Ensure Gateway is running before sending chat messages.
  * Auto-starts if stopped. Returns a user-facing error instead of crashing if
@@ -1376,44 +1629,12 @@ async function ensureGatewayRunning(): Promise<{ ok: boolean; error?: string }> 
       };
     }
 
-    const status = await safeShellExecAsync('openclaw gateway status 2>&1', 15000);
-    if (status && (status.includes('running') || status.includes('active'))) {
-      return { ok: true };
-    }
-
-    send('chat:status', { type: 'gateway', message: 'Starting Gateway...' });
-
-    try {
-      await runAsync('openclaw gateway start 2>&1', 20000);
-    } catch (err: any) {
-      const message = err?.message || '';
+    const started = await startGatewayWithRepair(send);
+    if (!started.ok) {
       send('chat:status', { type: 'error', message: 'Gateway failed to start' });
-      if (/not recognized|not found|ENOENT/i.test(message)) {
-        return {
-          ok: false,
-          error: 'OpenClaw could not be found on this computer. Please finish Setup first, or reinstall OpenClaw in Settings before chatting.',
-        };
-      }
-      return {
-        ok: false,
-        error: 'Gateway failed to start. Please check Settings → Gateway and try again.',
-      };
+      return started;
     }
-
-    for (let i = 0; i < 10; i++) {
-      await sleep(1000);
-      const check = await safeShellExecAsync('openclaw gateway status 2>&1', 15000);
-      if (check && (check.includes('running') || check.includes('active'))) {
-        send('chat:status', { type: 'gateway', message: 'Gateway started' });
-        return { ok: true };
-      }
-    }
-
-    send('chat:status', { type: 'error', message: 'Gateway failed to start' });
-    return {
-      ok: false,
-      error: 'Gateway failed to start in time. Please check Settings → Gateway and try again.',
-    };
+    return started;
   } catch {
     send('chat:status', { type: 'error', message: 'Gateway check failed' });
     return {
@@ -1464,11 +1685,12 @@ ipcMain.handle('chat:send', async (_e, message: string, sessionId?: string, opti
     const cmd = `openclaw agent --local --session-id "${sid}" -m "${fullMsg}" --verbose on${thinkingFlag}`;
     const enhancedPath = getEnhancedPath();
 
+    const shellCmd = process.platform === 'win32' ? wrapWindowsCommand(cmd) : cmd;
     const child = process.platform === 'win32'
-      ? spawn(cmd, [], {
+      ? spawn(shellCmd, [], {
         cwd: os.homedir(),
         shell: 'cmd.exe',
-        env: { ...process.env, PATH: enhancedPath },
+        env: { ...process.env, PATH: enhancedPath, NO_COLOR: '1', FORCE_COLOR: '0' },
       })
       : spawn('/bin/bash', ['--norc', '--noprofile', '-c',
         `export PATH="${enhancedPath}"; ${cmd}`
@@ -1484,17 +1706,26 @@ ipcMain.handle('chat:send', async (_e, message: string, sessionId?: string, opti
     // Line buffer for handling partial lines across chunks
     let lineBuffer = '';
 
+    const normalizeStreamLine = (line: string) => stripAnsi(line).replace(/\r/g, '');
+
     const isNoiseLine = (line: string) => {
-      const t = line.trimStart();
+      const t = normalizeStreamLine(line).trimStart();
       return t.startsWith('[plugins]') || t.startsWith('[tools]') ||
         t.startsWith('[agent/') || t.startsWith('[agents/') ||
         t.startsWith('[diagnostic]') ||
+        t.startsWith('[gateway]') ||
+        t.startsWith('[health-monitor]') ||
+        t.startsWith('[heartbeat]') ||
+        t.startsWith('[bonjour]') ||
+        t.startsWith('[canvas]') ||
         t.startsWith('Registered plugin') || t.startsWith('[context-diag]') ||
         t.startsWith('[tool]') || t.startsWith('[tool update]') ||
         t.startsWith('[permission') || t.startsWith('[info]') ||
         t.startsWith('[warn]') || t.startsWith('[error]') ||
         t.startsWith('[acp-client]') || t.startsWith('[commands]') ||
-        t.startsWith('[reload]') || t.startsWith('Config warnings');
+        t.startsWith('[reload]') || t.startsWith('Config warnings') ||
+        t.includes('plugin disabled') || t.includes('bootstrap config fallback') ||
+        t.includes('Local daemon not running, attempting auto-start');
     };
 
     const parseStatusLine = (t: string) => {
@@ -1553,7 +1784,7 @@ ipcMain.handle('chat:send', async (_e, message: string, sessionId?: string, opti
     };
 
     child.stdout?.on('data', (data: Buffer) => {
-      const chunk = data.toString();
+      const chunk = normalizeStreamLine(data.toString());
       stdout += chunk;
 
       // Handle line buffering for proper parsing
@@ -1563,14 +1794,14 @@ ipcMain.handle('chat:send', async (_e, message: string, sessionId?: string, opti
       lineBuffer = parts.pop() || '';
 
       for (const line of parts) {
-        const t = line.trim();
+        const t = normalizeStreamLine(line).trim();
         if (!t) continue;
 
         if (isNoiseLine(line)) {
           parseStatusLine(t);
         } else {
           // Real content — stream it to frontend
-          send('chat:stream', line + '\n');
+          send('chat:stream', t + '\n');
         }
       }
     });
@@ -1579,13 +1810,19 @@ ipcMain.handle('chat:send', async (_e, message: string, sessionId?: string, opti
 
     child.on('exit', () => {
       // Flush remaining buffer
-      if (lineBuffer.trim() && !isNoiseLine(lineBuffer)) {
-        send('chat:stream', lineBuffer);
+      const normalizedBuffer = normalizeStreamLine(lineBuffer).trim();
+      if (normalizedBuffer && !isNoiseLine(normalizedBuffer)) {
+        send('chat:stream', normalizedBuffer);
       }
       send('chat:stream-end', {});
 
       // Also resolve with full clean text as fallback
-      const cleanText = stdout.split('\n').filter(l => !isNoiseLine(l)).join('\n').trim();
+      const cleanText = stdout
+        .split('\n')
+        .map(normalizeStreamLine)
+        .filter(l => l.trim() && !isNoiseLine(l))
+        .join('\n')
+        .trim();
       resolve({ success: true, text: cleanText || 'No response', sessionId: sid });
 
       // Fire-and-forget: write desktop chat to Awareness memory
@@ -1967,24 +2204,16 @@ ipcMain.handle('cron:remove', async (_e, id: string) => {
 
 ipcMain.handle('gateway:status', async () => {
   // `openclaw gateway status` is faster than `openclaw status` (skips full plugin load)
-  const output = await safeShellExecAsync('openclaw gateway status 2>&1', 15000);
-  const isRunning = output ? (output.includes('running') || output.includes('active')) : false;
+  const output = await readShellOutputAsync('openclaw gateway status 2>&1', 15000);
+  const isRunning = isGatewayRunningOutput(output);
   return { running: isRunning, output };
 });
 
 ipcMain.handle('gateway:start', async () => {
-  try {
-    // Use `openclaw gateway start` (not `openclaw up`)
-    const output = await runAsync('openclaw gateway start 2>&1', 20000);
-    return { success: true, output };
-  } catch (err: any) {
-    // May fail if already running — check status
-    const status = await safeShellExecAsync('openclaw gateway status 2>&1', 15000);
-    if (status && (status.includes('running') || status.includes('active'))) {
-      return { success: true, output: 'Gateway already running' };
-    }
-    return { success: false, error: err.message?.slice(0, 300) || String(err) };
-  }
+  const result = await startGatewayWithRepair();
+  return result.ok
+    ? { success: true, output: 'Gateway started' }
+    : { success: false, error: result.error || 'Gateway failed to start' };
 });
 
 ipcMain.handle('gateway:stop', async () => {
@@ -2486,9 +2715,9 @@ const doctor = createDoctor({
 ipcMain.handle('app:startup-ensure-runtime', async () => {
   const fixed: string[] = [];
   const warnings: string[] = [];
-  const sendStartupStatus = (message: string) => {
+  const sendStartupStatus = (message: string, progress: number) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('app:startup-status', { message });
+      mainWindow.webContents.send('app:startup-status', { message, progress });
     }
   };
   const autoFixChecks = new Set([
@@ -2503,20 +2732,27 @@ ipcMain.handle('app:startup-ensure-runtime', async () => {
     autoFixChecks.add('launchagent-path');
   }
 
-  sendStartupStatus('Checking your installation...');
+  sendStartupStatus('Checking your installation...', 10);
   const initialReport = await doctor.runAllChecks();
-  for (const check of initialReport.checks) {
-    if (!autoFixChecks.has(check.id)) continue;
-    if (check.fixable !== 'auto') continue;
-    if (check.status !== 'fail' && check.status !== 'warn') continue;
+  const checksToRepair = initialReport.checks.filter((check) =>
+    autoFixChecks.has(check.id)
+    && check.fixable === 'auto'
+    && (check.status === 'fail' || check.status === 'warn')
+  );
 
-    sendStartupStatus(`Repairing ${check.label}...`);
+  if (checksToRepair.length === 0) {
+    sendStartupStatus('Everything looks good. Finalizing startup...', 85);
+  }
+
+  for (const [index, check] of checksToRepair.entries()) {
+    const progress = Math.min(80, 20 + Math.round(((index + 1) / checksToRepair.length) * 55));
+    sendStartupStatus(`Repairing ${check.label}...`, progress);
     const fix = await doctor.runFix(check.id);
     if (fix.success) fixed.push(fix.message);
     else warnings.push(fix.message || check.message);
   }
 
-  sendStartupStatus('Finalizing startup...');
+  sendStartupStatus('Finalizing startup...', 92);
   const finalReport = await doctor.runAllChecks();
   const blocking = finalReport.checks.find((check) =>
     ['node-installed', 'openclaw-installed', 'plugin-installed', 'daemon-running'].includes(check.id)

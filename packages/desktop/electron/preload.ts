@@ -5,8 +5,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openExternal: (url: string) => ipcRenderer.invoke('app:open-external', url),
   getDashboardUrl: () => ipcRenderer.invoke('app:get-dashboard-url'),
   startupEnsureRuntime: () => ipcRenderer.invoke('app:startup-ensure-runtime'),
-  onStartupStatus: (callback: (status: { message: string }) => void) => {
-    ipcRenderer.on('app:startup-status', (_e: any, status: { message: string }) => callback(status));
+  onStartupStatus: (callback: (status: { message: string; progress?: number }) => void) => {
+    ipcRenderer.on('app:startup-status', (_e: any, status: { message: string; progress?: number }) => callback(status));
   },
   checkUpdates: () => ipcRenderer.invoke('app:check-updates'),
   upgradeComponent: (component: string) => ipcRenderer.invoke('app:upgrade-component', component),

@@ -77,8 +77,10 @@
       "category": "Utility"
     },
     "nsis": {
-      "oneClick": true,
-      "allowToChangeInstallationDirectory": false
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "include": "build/installer.nsh"
     },
     "publish": {
       "provider": "github",

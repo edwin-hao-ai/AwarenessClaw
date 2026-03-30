@@ -13,6 +13,15 @@ import UpdateBanner from './components/UpdateBanner';
 import { useAppConfig } from './lib/store';
 import logoUrl from './assets/logo.png';
 
+function estimateStartupProgress(message: string) {
+  const text = message.toLowerCase();
+  if (text.includes('checking')) return 10;
+  if (text.includes('repairing')) return 45;
+  if (text.includes('everything looks good')) return 85;
+  if (text.includes('finalizing')) return 92;
+  return 18;
+}
+
 /** Apply theme to document root */
 function useThemeEffect(theme: 'dark' | 'light' | 'system') {
   useEffect(() => {
@@ -40,6 +49,7 @@ export default function App() {
   const [setupComplete, setSetupComplete] = useState<boolean | null>(null);
   const [runtimeReady, setRuntimeReady] = useState<boolean | null>(null);
   const [startupMessage, setStartupMessage] = useState('Preparing AwarenessClaw...');
+  const [startupProgress, setStartupProgress] = useState(8);
   const [currentPage, setCurrentPage] = useState<Page>('chat');
 
   // Apply theme switching
@@ -54,6 +64,8 @@ export default function App() {
     if (!window.electronAPI?.onStartupStatus) return;
     window.electronAPI.onStartupStatus((status) => {
       if (status?.message) setStartupMessage(status.message);
+      if (typeof status?.progress === 'number') setStartupProgress(status.progress);
+      else if (status?.message) setStartupProgress(estimateStartupProgress(status.message));
     });
   }, []);
 
@@ -66,10 +78,14 @@ export default function App() {
     let cancelled = false;
     setRuntimeReady(null);
     setStartupMessage('Checking your installation...');
+    setStartupProgress(10);
 
     const ensureRuntime = async () => {
       if (!window.electronAPI?.startupEnsureRuntime) {
-        if (!cancelled) setRuntimeReady(true);
+        if (!cancelled) {
+          setStartupProgress(100);
+          setRuntimeReady(true);
+        }
         return;
       }
 
@@ -79,10 +95,13 @@ export default function App() {
       if (!result.ok && result.needsSetup) {
         localStorage.setItem('awareness-claw-setup-done', 'false');
         setSetupComplete(false);
+        setStartupProgress(100);
         setRuntimeReady(true);
         return;
       }
 
+      setStartupMessage('Startup complete');
+      setStartupProgress(100);
       setRuntimeReady(true);
     };
 
@@ -103,6 +122,18 @@ export default function App() {
           <div>
             <h1 className="text-base font-semibold text-slate-100">Starting AwarenessClaw</h1>
             <p className="text-sm text-slate-400 mt-2">{startupMessage}</p>
+          </div>
+          <div className="space-y-2">
+            <div className="h-2 overflow-hidden rounded-full bg-slate-800 ring-1 ring-slate-700/80">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-sky-500 via-blue-500 to-cyan-400 transition-all duration-500 ease-out"
+                style={{ width: `${Math.max(8, Math.min(100, startupProgress))}%` }}
+              />
+            </div>
+            <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.16em] text-slate-500">
+              <span>Startup progress</span>
+              <span>{Math.round(Math.max(8, Math.min(100, startupProgress)))}%</span>
+            </div>
           </div>
           <p className="text-xs text-slate-500">First launch or auto-repair can take a little longer while the app checks OpenClaw, Gateway, and memory services.</p>
         </div>

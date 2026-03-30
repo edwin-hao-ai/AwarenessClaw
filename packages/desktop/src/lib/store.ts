@@ -67,7 +67,7 @@ async function syncToOpenClaw(config: AppConfig, providers: ModelProviderDef[]) 
   const openclawConfig: Record<string, any> = {
     // Tell OpenClaw to trust our plugin (suppress plugins.allow warning)
     plugins: {
-      allow: ['openclaw-memory'],
+      allow: ['openclaw-memory', 'memory-awareness'],
     },
     // Ensure all Awareness tools are whitelisted (agent needs explicit permission)
     tools: {
@@ -87,6 +87,15 @@ async function syncToOpenClaw(config: AppConfig, providers: ModelProviderDef[]) 
     slots: { memory: 'openclaw-memory' },
     entries: {
       'openclaw-memory': {
+        enabled: true,
+        config: {
+          autoRecall: config.autoRecall,
+          autoCapture: config.autoCapture,
+          recallLimit: config.recallLimit,
+          ...(config.memoryMode === 'local' ? { localUrl: 'http://localhost:37800' } : {}),
+        },
+      },
+      'memory-awareness': {
         enabled: true,
         config: {
           autoRecall: config.autoRecall,

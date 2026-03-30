@@ -193,6 +193,7 @@
 - [ ] **OpenClaw 安装脚本供应链风险**：当前 Windows 用 `irm ... | iex`、mac/Linux 用 `curl ... | bash`，缺少签名/校验。需要改为下载后校验 hash/signature 再执行
 - [x] **配置导入/导出含敏感信息**：导出前增加敏感信息提示，支持脱敏导出；导入改为按真实 `models.providers` 结构深合并，并忽略脱敏占位值（2026-03-30）
 - [x] **安全审计覆盖不足**：新增 Windows ACL 检查、离线 tgz manifest/checksum 检查、升级回滚准备状态提示（2026-03-30）
+- [x] **Windows 安装器进度可视化**：NSIS 改为引导式安装，强制当前用户安装并显示明确安装进度页，避免用户误以为卡死（2026-03-31）
 
 ### 技术债务（已知 · 待后续处理）
 - [x] **Agents 创建修复**：创建前先 `mkdirSync` workspace 目录，避免 `openclaw agents add` 因目录不存在失败（2026-03-30）

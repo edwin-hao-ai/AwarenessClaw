@@ -57,6 +57,14 @@ interface Ctx {
   deps: DoctorDeps;
 }
 
+function getManagedOpenClawPrefix(homedir: string) {
+  return path.join(homedir, '.awareness-claw', 'openclaw-runtime');
+}
+
+function getManagedOpenClawInstallCommand(homedir: string, packageName = 'openclaw') {
+  return `npm install -g --prefix "${getManagedOpenClawPrefix(homedir)}" ${packageName}`;
+}
+
 function pickFirstCommandPath(output: string | null): string | null {
   if (!output) return null;
   const lines = output.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
@@ -151,6 +159,7 @@ async function fixOpenclawCommandHealth(ctx: Ctx): Promise<FixResult> {
 
   try {
     const shimDir = path.join(process.env.APPDATA || path.join(ctx.deps.homedir, 'AppData', 'Roaming'), 'npm');
+    const managedPrefix = getManagedOpenClawPrefix(ctx.deps.homedir);
     try {
       await ctx.deps.shellRun('npm uninstall -g openclaw 2>&1', 60000);
     } catch {
@@ -160,9 +169,11 @@ async function fixOpenclawCommandHealth(ctx: Ctx): Promise<FixResult> {
     for (const fileName of ['openclaw', 'openclaw.cmd', 'openclaw.ps1']) {
       const filePath = path.join(shimDir, fileName);
       if (fs.existsSync(filePath)) fs.rmSync(filePath, { force: true });
+      const managedFilePath = path.join(managedPrefix, fileName);
+      if (fs.existsSync(managedFilePath)) fs.rmSync(managedFilePath, { force: true });
     }
 
-    await ctx.deps.shellRun('npm install -g openclaw 2>&1', 90000);
+    await ctx.deps.shellRun(`${getManagedOpenClawInstallCommand(ctx.deps.homedir)} 2>&1`, 90000);
     return { id: 'openclaw-command-health', success: true, message: 'OpenClaw command shims refreshed' };
   } catch (err: any) {
     return { id: 'openclaw-command-health', success: false, message: err.message?.slice(0, 200) || 'Cleanup failed' };
@@ -171,7 +182,7 @@ async function fixOpenclawCommandHealth(ctx: Ctx): Promise<FixResult> {
 
 async function fixOpenclawInstall(ctx: Ctx): Promise<FixResult> {
   try {
-    await ctx.deps.shellRun('npm install -g openclaw 2>&1', 60000);
+    await ctx.deps.shellRun(`${getManagedOpenClawInstallCommand(ctx.deps.homedir)} 2>&1`, 60000);
     return { id: 'openclaw-installed', success: true, message: 'OpenClaw installed successfully' };
   } catch (err: any) {
     return { id: 'openclaw-installed', success: false, message: err.message?.slice(0, 200) || 'Installation failed' };
@@ -195,7 +206,7 @@ async function checkOpenclawVersion(ctx: Ctx): Promise<CheckResult> {
 
 async function fixOpenclawUpdate(ctx: Ctx): Promise<FixResult> {
   try {
-    await ctx.deps.shellRun('npm update -g openclaw 2>&1', 60000);
+    await ctx.deps.shellRun(`${getManagedOpenClawInstallCommand(ctx.deps.homedir)} 2>&1`, 60000);
     return { id: 'openclaw-version', success: true, message: 'Updated successfully' };
   } catch (err: any) {
     return { id: 'openclaw-version', success: false, message: err.message?.slice(0, 200) || 'Update failed' };
@@ -282,7 +293,7 @@ async function fixLaunchAgentPath(ctx: Ctx): Promise<FixResult> {
 async function checkGatewayRunning(ctx: Ctx): Promise<CheckResult> {
   if (!ctx.openclawPath) return { id: 'gateway-running', label: 'Gateway', status: 'skipped', message: 'Skipped (OpenClaw not installed)', fixable: 'none' };
   const output = await ctx.deps.shellExec('openclaw gateway status 2>&1', 15000);
-  if (output && (output.includes('running') || output.includes('active'))) {
+  if (output && (output.includes('running') || output.includes('active') || output.includes('RPC probe: ok') || output.includes('Listening:'))) {
     return { id: 'gateway-running', label: 'Gateway', status: 'pass', message: 'Running', fixable: 'none' };
   }
   return { id: 'gateway-running', label: 'Gateway', status: 'fail', message: 'Gateway is not running', fixable: 'auto', fixDescription: 'Start the Gateway' };
@@ -292,7 +303,34 @@ async function fixGatewayStart(ctx: Ctx): Promise<FixResult> {
   try {
     await ctx.deps.shellRun('openclaw gateway start 2>&1', 20000);
     return { id: 'gateway-running', success: true, message: 'Gateway started' };
-  } catch {
+  } catch (err: any) {
+    const message = err?.message || '';
+    if (ctx.deps.platform === 'win32' && /schtasks run failed/i.test(message)) {
+      try {
+        await ctx.deps.shellRun('openclaw gateway install 2>&1', 30000);
+        await ctx.deps.shellRun('openclaw gateway start 2>&1', 20000);
+        return { id: 'gateway-running', success: true, message: 'Gateway service installed and started' };
+      } catch (installErr: any) {
+        const installMessage = installErr?.message || '';
+        if (/EACCES|Access is denied|permission denied|拒绝访问|schtasks create failed/i.test(installMessage)) {
+          try {
+            await ctx.deps.shellRun('start "" /B openclaw gateway run --force', 10000);
+            return {
+              id: 'gateway-running',
+              success: true,
+              message: 'Gateway started in the current Windows session without installing a service',
+            };
+          } catch {
+            return {
+              id: 'gateway-running',
+              success: false,
+              message: 'Windows blocked Gateway service installation. Reopen AwarenessClaw as administrator once, then run Doctor again.',
+            };
+          }
+        }
+        return { id: 'gateway-running', success: false, message: installMessage.slice(0, 200) || 'Could not repair Gateway service' };
+      }
+    }
     return { id: 'gateway-running', success: false, message: 'Could not start Gateway. Check logs in Settings.' };
   }
 }

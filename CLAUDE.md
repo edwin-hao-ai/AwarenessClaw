@@ -304,3 +304,12 @@ AwarenessClaw/
 - `openclaw gateway status` 比 `openclaw status` 快得多（跳过完整插件加载）
 - Gateway 操作超时至少 15s（插件多的环境加载慢）
 - `openclaw gateway start` 如果已在运行会报错，需要检查 status 判断"already running"
+
+### Windows Gateway 计划任务缺失（严重踩坑，影响普通用户）
+- **现象**：前端只看到 `Gateway failed to start. Please check Settings → Gateway and try again.`，容易误以为是模型 API Key 或 Qwen 配置问题
+- **真实含义**：这通常不是模型层问题，而是 OpenClaw Gateway 的 Windows Scheduled Task 没装好或没有权限创建
+- `openclaw gateway status` 若显示 `Service: Scheduled Task (missing)`，说明本地服务根本不存在，`openclaw gateway start` 一定失败
+- `openclaw gateway install` 若报 `schtasks create failed` / `Access is denied` / `拒绝访问`，说明需要管理员权限创建本地服务
+- **产品规则**：桌面端检测到 Gateway 缺失时，必须先自动执行 `openclaw gateway install` 再 `openclaw gateway start`，不能直接报泛化错误
+- **降级规则**：如果 Windows 拒绝创建计划任务，桌面端必须 fallback 到 `openclaw gateway run --force` 的当前用户会话模式，保证用户先能聊天，再提示后续可选的管理员修复
+- **用户文案规则**：提示里必须明确“这是本地服务安装权限问题，不是 Qwen/OpenAI API Key 配置问题”
