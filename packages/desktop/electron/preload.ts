@@ -110,4 +110,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   memoryGetContext: () => ipcRenderer.invoke('memory:get-context'),
   memoryGetPerception: () => ipcRenderer.invoke('memory:get-perception'),
   memoryGetDailySummary: () => ipcRenderer.invoke('memory:get-daily-summary'),
+
+  // App Doctor (System Health)
+  doctorRun: () => ipcRenderer.invoke('doctor:run'),
+  doctorFix: (checkId: string) => ipcRenderer.invoke('doctor:fix', checkId),
 });

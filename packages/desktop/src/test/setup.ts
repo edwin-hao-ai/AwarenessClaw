@@ -123,6 +123,8 @@ Object.defineProperty(window, 'electronAPI', {
     agentsWriteFile: () => Promise.resolve({ success: true }),
     modelsReadProviders: () => Promise.resolve({ success: true, providers: [], primaryModel: '' }),
     securityCheck: () => Promise.resolve({ issues: [] }),
+    doctorRun: () => Promise.resolve({ timestamp: Date.now(), checks: [], summary: { pass: 0, warn: 0, fail: 0, skipped: 0 } }),
+    doctorFix: () => Promise.resolve({ id: 'test', success: true, message: 'Fixed' }),
   },
   writable: true,
 });

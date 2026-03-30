@@ -253,7 +253,48 @@ AwarenessClaw/
 - **`hooks` 是嵌套对象**：`{ "internal": { "enabled": true, "entries": { "boot-md": { "enabled": true } } } }`，不是 `Record<event, Array<cmd>>`
 - **教训**：写 IPC handler 和前端代码前，必须先 `cat ~/.openclaw/openclaw.json | python3 -c "import json,sys; ..."` 看真实数据结构，不要猜
 
+### 通道连接三大坑（严重踩坑，反复出现）
+
+#### 1. OpenClaw 非 TTY 模式不输出（最致命）
+- **问题**：`spawn` 或 `runAsync` 执行 `openclaw channels login` 时，OpenClaw 检测到 stdout 不是 TTY（终端），直接不输出 QR 码和任何交互内容。stdout/stderr 都是空的
+- **根因**：OpenClaw CLI 用了类似 `ora`/`ink` 的 TTY 检测，非 TTY 模式下抑制输出
+- **修复**：**必须加 `--verbose` 标志**。`openclaw channels login --channel xxx --verbose` 才会在 pipe 模式下输出完整内容（包括 QR 码和 URL）
+- **规则**：所有 `openclaw channels login` 调用必须带 `--verbose`
+
+#### 2. QR 链接被内部 URL 抢先匹配
+- **问题**：stdout 中 `http://localhost:37800`（Awareness daemon URL）先于 QR 链接出现，正则 `https?://\S+` 先匹配到 localhost → `shell.openExternal` 打开了 localhost 而不是扫码页
+- **修复**：URL 过滤跳过 `localhost`、`127.0.0.1`、`docs.openclaw`、`github.com`
+- **规则**：URL 检测必须排除内部/文档 URL
+
+#### 3. 通道配置成功但消息不回复（绑定缺失）
+- **问题**：通道 login 成功后（`configured, enabled`），用户发消息无回复
+- **根因**：Agent 的 `bindings` 为 0 — 通道没有绑定到任何 Agent，消息无法路由
+- **修复**：`channel:setup` 成功后自动执行 `openclaw agents bind --agent main --bind <channel>`
+- **规则**：**每个通道连接成功后必须自动绑定到 main agent**
+
+#### 4. 微信通道 ID 是 `openclaw-weixin`（不是 `wechat`）
+- **问题**：前端用 `wechat`，但 OpenClaw 的 channel ID 是 `openclaw-weixin`（插件 ID）
+- 写 `channels.wechat` 到 openclaw.json 会导致 `unknown channel id: wechat` 错误，整个配置无效
+- **正确**：openclaw.json 中用 `channels["openclaw-weixin"]`，CLI 用 `--channel openclaw-weixin`
+- `channel:list-configured` 需要映射 `openclaw-weixin` → `wechat` 给前端
+
+#### 5. `runAsync` 超时错误字符串不匹配
+- `runAsync` 抛 `"Command timed out"`，但检查用 `msg.includes('timeout')` — `"timed out"` 不包含连续的 `"timeout"`
+- **必须**同时检查 `msg.includes('timed out')`
+
+#### 6. `openclaw channels add --channel` 枚举
+- 真实支持：`telegram|whatsapp|discord|irc|googlechat|slack|signal|imessage|line`
+- **Matrix 不在枚举中**，需要直接写 openclaw.json
+- **WeChat 是插件通道**，不在 `channels add` 枚举中
+
 ### electron-builder 用独立 tsconfig
 - `npm run build:package` 先跑 `tsc -p tsconfig.electron.json`，这和前端的 `npx tsc --noEmit`（用默认 tsconfig.json）是**两个不同的编译**
 - 前端 `npx tsc --noEmit` 通过不代表 Electron 端也通过！打包前必须确认 `npm run build` 也能通过
 - 踩坑：编辑 `main.ts` 时多了一个 `});` 闭合括号，前端编译没报错但 electron 编译失败
+
+### Gateway 命令踩坑
+- **正确命令**：`openclaw gateway start/stop/status/restart`
+- **错误命令**：`openclaw up`（不存在）、`openclaw status`（加载全部插件 = 15s+，5s 超时必失败）
+- `openclaw gateway status` 比 `openclaw status` 快得多（跳过完整插件加载）
+- Gateway 操作超时至少 15s（插件多的环境加载慢）
+- `openclaw gateway start` 如果已在运行会报错，需要检查 status 判断"already running"

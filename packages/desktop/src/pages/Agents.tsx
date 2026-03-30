@@ -46,6 +46,7 @@ export default function Agents() {
   // Binding
   const [bindingAgentId, setBindingAgentId] = useState<string | null>(null);
   const [bindChannel, setBindChannel] = useState('');
+  const [availableChannels, setAvailableChannels] = useState<string[]>([]);
 
   // Workspace file editing
   const [fileEditAgentId, setFileEditAgentId] = useState<string | null>(null);
@@ -75,7 +76,23 @@ export default function Agents() {
     setLoading(false);
   };
 
-  useEffect(() => { loadAgents(); }, []);
+  // Load available channels for binding dropdown
+  const loadChannels = async () => {
+    if (!window.electronAPI) return;
+    try {
+      const result = await (window.electronAPI as any).channelListConfigured();
+      const supported = await (window.electronAPI as any).channelListSupported?.();
+      // Merge configured + supported, dedupe
+      const all = new Set<string>([
+        ...(result?.configured || []),
+        ...(supported?.channels || []),
+      ]);
+      all.delete('local');
+      setAvailableChannels(Array.from(all).sort());
+    } catch { /* fallback to empty */ }
+  };
+
+  useEffect(() => { loadAgents(); loadChannels(); }, []);
 
   const handleDelete = async (agentId: string) => {
     if (!window.electronAPI || agentId === 'main') return;
@@ -340,16 +357,26 @@ export default function Agents() {
 
                   {/* Inline bind input */}
                   {bindingAgentId === agent.id && (
-                    <div className="space-y-1.5 pl-11 pt-1 border-t border-slate-700/30">
-                      <div className="flex items-center gap-2">
-                        <input value={bindChannel} onChange={(e) => setBindChannel(e.target.value)}
-                          onKeyDown={(e) => e.key === 'Enter' && handleBind(agent.id)}
-                          placeholder="telegram, discord:12345, whatsapp:default"
-                          className="flex-1 px-2 py-1 bg-slate-900 border border-slate-600 rounded text-sm" />
-                        <button onClick={() => handleBind(agent.id)} disabled={!bindChannel.trim()} className="p-1 text-emerald-400 hover:text-emerald-300"><Check size={14} /></button>
-                        <button onClick={() => setBindingAgentId(null)} className="p-1 text-slate-500 hover:text-slate-300"><X size={14} /></button>
-                      </div>
-                      <p className="text-[10px] text-slate-500">Format: channel or channel:accountId — e.g. telegram, slack, whatsapp:default</p>
+                    <div className="flex items-center gap-2 pl-11 pt-1 border-t border-slate-700/30">
+                      <select value={bindChannel} onChange={(e) => setBindChannel(e.target.value)}
+                        className="flex-1 px-2 py-1.5 bg-slate-900 border border-slate-600 rounded text-sm text-slate-300">
+                        <option value="">{t('agents.selectChannel', 'Select a channel...')}</option>
+                        {availableChannels.length > 0 ? (
+                          availableChannels
+                            .filter(ch => !agent.bindings?.includes(ch))
+                            .map(ch => <option key={ch} value={ch}>{ch}</option>)
+                        ) : (
+                          // Fallback: common channel names if API not available
+                          ['telegram', 'discord', 'whatsapp', 'slack', 'signal', 'openclaw-weixin', 'feishu', 'line', 'imessage']
+                            .filter(ch => !agent.bindings?.includes(ch))
+                            .map(ch => <option key={ch} value={ch}>{ch}</option>)
+                        )}
+                      </select>
+                      <button onClick={() => handleBind(agent.id)} disabled={!bindChannel}
+                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-700 text-white rounded text-xs">
+                        {t('agents.bind', 'Bind')}
+                      </button>
+                      <button onClick={() => setBindingAgentId(null)} className="p-1 text-slate-500 hover:text-slate-300"><X size={14} /></button>
                     </div>
                   )}
                 </div>

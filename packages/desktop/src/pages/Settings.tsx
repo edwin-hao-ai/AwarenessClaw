@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Moon, Sun, Monitor, ChevronRight, X, Check, ChevronDown, Play, Square, RotateCw, Loader2, Plus, Trash2, Download, Upload, Shield, AlertTriangle, Puzzle, Webhook, CheckCircle } from 'lucide-react';
+import { Moon, Sun, Monitor, ChevronRight, X, Check, ChevronDown, Play, Square, RotateCw, RefreshCw, Loader2, Plus, Trash2, Download, Upload, Shield, AlertTriangle, Puzzle, Webhook, CheckCircle } from 'lucide-react';
 import { useAppConfig, MODEL_PROVIDERS, useDynamicProviders } from '../lib/store';
 import { getUsageStats, clearUsage, type UsageStats } from '../lib/usage';
 import { useI18n } from '../lib/i18n';
@@ -37,6 +37,11 @@ export default function Settings() {
 
   // Security audit
   const [securityIssues, setSecurityIssues] = useState<Array<{ level: string; message: string; fix?: string }>>([]);
+
+  // Doctor (System Health)
+  const [doctorReport, setDoctorReport] = useState<any>(null);
+  const [doctorLoading, setDoctorLoading] = useState(false);
+  const [fixingId, setFixingId] = useState<string | null>(null);
 
   // Usage stats
   const [usageStats, setUsageStats] = useState<UsageStats | null>(null);
@@ -90,7 +95,28 @@ export default function Settings() {
       if (res?.issues) setSecurityIssues(res.issues);
     }).catch(() => {});
     setUsageStats(getUsageStats());
+    // Run doctor on mount
+    runDoctor();
   }, []);
+
+  const runDoctor = async () => {
+    setDoctorLoading(true);
+    try {
+      const report = await (window.electronAPI as any).doctorRun?.();
+      if (report) setDoctorReport(report);
+    } catch {}
+    setDoctorLoading(false);
+  };
+
+  const handleFix = async (checkId: string) => {
+    setFixingId(checkId);
+    try {
+      await (window.electronAPI as any).doctorFix?.(checkId);
+      // Re-run all checks after fix (fixing one may affect others)
+      await runDoctor();
+    } catch {}
+    setFixingId(null);
+  };
 
   const savePermissions = async (changes: { alsoAllow?: string[]; denied?: string[] }) => {
     if (!window.electronAPI || !permissions) return;
@@ -452,6 +478,61 @@ export default function Settings() {
             </div>
           </Section>
         )}
+
+        {/* System Health (Doctor) */}
+        <Section title={`🩺 ${t('settings.health', 'System Health')}`}>
+          <div className="p-4 space-y-2">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-xs text-slate-500">{t('settings.health.desc', 'Automatic diagnostics for OpenClaw and AwarenessClaw')}</p>
+              <button onClick={runDoctor} disabled={doctorLoading}
+                className="flex items-center gap-1 px-2.5 py-1 text-xs bg-slate-700 hover:bg-slate-600 disabled:opacity-50 rounded text-slate-300">
+                {doctorLoading ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}
+                {t('settings.health.recheck', 'Re-check')}
+              </button>
+            </div>
+            {doctorLoading && !doctorReport && (
+              <div className="flex items-center gap-2 text-xs text-slate-400 py-4 justify-center">
+                <Loader2 size={14} className="animate-spin" />
+                {t('settings.health.checking', 'Running diagnostics...')}
+              </div>
+            )}
+            {doctorReport && (
+              <>
+                {doctorReport.summary.fail === 0 && doctorReport.summary.warn === 0 && (
+                  <div className="flex items-center gap-2 text-xs p-2 rounded-lg bg-emerald-500/10 text-emerald-400">
+                    <CheckCircle size={14} className="shrink-0" />
+                    <p>{t('settings.health.allGood', 'All systems operational')}</p>
+                  </div>
+                )}
+                {doctorReport.checks.map((check: any) => (
+                  <div key={check.id} className={`flex items-center gap-3 p-2.5 rounded-lg text-xs ${
+                    check.status === 'pass' ? 'bg-emerald-500/5 text-emerald-400' :
+                    check.status === 'warn' ? 'bg-amber-500/10 text-amber-400' :
+                    check.status === 'fail' ? 'bg-red-500/10 text-red-400' :
+                    'bg-slate-800/50 text-slate-500'
+                  }`}>
+                    <span className="shrink-0">
+                      {check.status === 'pass' ? '✅' : check.status === 'warn' ? '⚠️' : check.status === 'fail' ? '❌' : '⏭️'}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <span className="font-medium">{check.label}</span>
+                      <span className="ml-2 text-slate-400">{check.message}</span>
+                      {check.fixable === 'manual' && check.fixDescription && (
+                        <p className="text-[10px] text-slate-500 mt-0.5 font-mono break-all">{check.fixDescription}</p>
+                      )}
+                    </div>
+                    {check.fixable === 'auto' && (
+                      <button onClick={() => handleFix(check.id)} disabled={fixingId === check.id}
+                        className="shrink-0 px-2.5 py-1 bg-brand-600 hover:bg-brand-500 disabled:bg-slate-700 text-white rounded text-[10px] font-medium">
+                        {fixingId === check.id ? <Loader2 size={10} className="animate-spin" /> : t('settings.health.fix', 'Fix')}
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+        </Section>
 
         {/* Security Audit */}
         <Section title={`🔒 ${t('settings.security') || 'Security Audit'}`}>

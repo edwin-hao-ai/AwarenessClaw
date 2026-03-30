@@ -53,9 +53,11 @@ export default function Channels() {
   const [testError, setTestError] = useState<string | null>(null);
   const [configuredChannels, setConfiguredChannels] = useState<Set<string>>(new Set());
   const [channels, setChannels] = useState<Channel[]>(CHANNELS);
+  const [loadingChannels, setLoadingChannels] = useState(true);
 
   const loadConfiguredChannels = async () => {
-    if (!window.electronAPI) return;
+    if (!window.electronAPI) { setLoadingChannels(false); return; }
+    setLoadingChannels(true);
     try {
       const result = await (window.electronAPI as any).channelListConfigured();
       const configured = new Set<string>(result.configured || []);
@@ -75,6 +77,7 @@ export default function Channels() {
         if (extra.length > 0) setChannels([...CHANNELS, ...extra]);
       }
     } catch { /* fallback */ }
+    setLoadingChannels(false);
   };
 
   useEffect(() => { loadConfiguredChannels(); }, []);
@@ -329,6 +332,14 @@ export default function Channels() {
       </div>
 
       <div className="flex-1 overflow-y-auto p-6">
+        {/* Loading indicator */}
+        {loadingChannels && (
+          <div className="flex items-center gap-2 mb-4 p-3 bg-slate-800/30 rounded-lg text-xs text-slate-400">
+            <Loader2 size={12} className="animate-spin" />
+            {t('channels.loading', 'Loading channel status...')}
+          </div>
+        )}
+
         {/* Connected */}
         <div className="mb-6">
           <h3 className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-3">{t('channels.connected')}</h3>

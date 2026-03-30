@@ -7,6 +7,7 @@ import os from 'os';
 import https from 'https';
 import http from 'http';
 import crypto from 'crypto';
+import { createDoctor } from './doctor';
 
 let mainWindow: typeof BrowserWindow.prototype | null = null;
 let tray: typeof Tray.prototype | null = null;
@@ -1725,42 +1726,47 @@ ipcMain.handle('channel:setup', async (_e: any, channelId: string) => {
   return channelLoginWithQR(`openclaw channels login --channel ${channelId}`);
 });
 
-// Read ACTUALLY connected channels via `openclaw channels list` (not just enabled in config)
-ipcMain.handle('channel:list-configured', async () => {
-  // Map CLI channel names to frontend card IDs
-  const keyToFrontend: Record<string, string> = {
-    'openclaw-weixin': 'wechat', 'googlechat': 'google-chat',
-  };
-  try {
-    // Use CLI to get real status — "configured" or "linked" means truly connected
-    const output = await safeShellExecAsync('openclaw channels list 2>/dev/null', 10000);
-    if (output) {
-      const configured: string[] = [];
-      for (const line of output.split('\n')) {
-        // Lines like: "- WhatsApp default: not linked, enabled" or "- Feishu default: configured, enabled"
-        const match = line.match(/^-\s+(\S+)\s+.*?:\s*(configured|linked)/i);
-        if (match) {
-          const rawName = match[1].toLowerCase();
-          configured.push(keyToFrontend[rawName] || rawName);
-        }
-      }
-      return { success: true, configured };
-    }
-  } catch { /* fallback to config file */ }
+// Channel status: fast config read first, then CLI check cached for 60s
+const _channelStatusCache: { configured: string[]; ts: number } = { configured: [], ts: 0 };
+const _keyToFrontend: Record<string, string> = { 'openclaw-weixin': 'wechat', 'googlechat': 'google-chat' };
 
-  // Fallback: read config file (less accurate but works offline)
+function readConfiguredFromFile(): string[] {
   try {
     const configPath = path.join(HOME, '.openclaw', 'openclaw.json');
     const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     const channels = existing?.channels || {};
     const configured: string[] = [];
     for (const [id, cfg] of Object.entries(channels)) {
-      if ((cfg as any)?.enabled) configured.push(keyToFrontend[id] || id);
+      if ((cfg as any)?.enabled) configured.push(_keyToFrontend[id] || id);
     }
-    return { success: true, configured };
-  } catch {
-    return { success: true, configured: [] };
+    return configured;
+  } catch { return []; }
+}
+
+ipcMain.handle('channel:list-configured', async () => {
+  // Return instantly from config file (fast — no CLI call)
+  const fromFile = readConfiguredFromFile();
+
+  // If cache is fresh (< 60s), use it
+  if (Date.now() - _channelStatusCache.ts < 60000 && _channelStatusCache.configured.length > 0) {
+    return { success: true, configured: _channelStatusCache.configured };
   }
+
+  // Return file-based result immediately, refresh cache in background
+  safeShellExecAsync('openclaw channels list 2>/dev/null', 15000).then((output) => {
+    if (!output) return;
+    const configured: string[] = [];
+    for (const line of output.split('\n')) {
+      const match = line.match(/^-\s+(\S+)\s+.*?:\s*(configured|linked)/i);
+      if (match) configured.push(_keyToFrontend[match[1].toLowerCase()] || match[1].toLowerCase());
+    }
+    if (configured.length > 0) {
+      _channelStatusCache.configured = configured;
+      _channelStatusCache.ts = Date.now();
+    }
+  }).catch(() => {});
+
+  return { success: true, configured: fromFile };
 });
 
 // Dynamically detect supported channels from OpenClaw
@@ -1812,44 +1818,69 @@ ipcMain.handle('cron:remove', async (_e, id: string) => {
 });
 
 // --- Gateway Management ---
+// Correct commands: `openclaw gateway start/stop/status/restart`
+// NOT `openclaw up` (doesn't exist) or `openclaw status` (loads all plugins = 15s+)
 
 ipcMain.handle('gateway:status', async () => {
-  const output = await safeShellExecAsync('openclaw status', 5000);
-  const isRunning = output?.includes('running') || false;
+  // `openclaw gateway status` is faster than `openclaw status` (skips full plugin load)
+  const output = await safeShellExecAsync('openclaw gateway status 2>&1', 15000);
+  const isRunning = output ? (output.includes('running') || output.includes('active')) : false;
   return { running: isRunning, output };
 });
 
 ipcMain.handle('gateway:start', async () => {
   try {
-    const child = runSpawn('openclaw', ['up'], { detached: true, stdio: 'ignore' });
-    child.unref();
-    await sleep(3000);
-    const status = await safeShellExecAsync('openclaw status', 5000);
-    return { success: true, output: status };
-  } catch (err) {
-    return { success: false, error: String(err) };
+    // Use `openclaw gateway start` (not `openclaw up`)
+    const output = await runAsync('openclaw gateway start 2>&1', 20000);
+    return { success: true, output };
+  } catch (err: any) {
+    // May fail if already running — check status
+    const status = await safeShellExecAsync('openclaw gateway status 2>&1', 15000);
+    if (status && (status.includes('running') || status.includes('active'))) {
+      return { success: true, output: 'Gateway already running' };
+    }
+    return { success: false, error: err.message?.slice(0, 300) || String(err) };
   }
 });
 
 ipcMain.handle('gateway:stop', async () => {
-  const result = await safeShellExecAsync('openclaw stop', 10000);
-  return { success: true, output: result };
+  try {
+    const result = await runAsync('openclaw gateway stop 2>&1', 15000);
+    return { success: true, output: result };
+  } catch (err: any) {
+    return { success: false, error: err.message?.slice(0, 300) };
+  }
 });
 
 ipcMain.handle('gateway:restart', async () => {
-  await safeShellExecAsync('openclaw stop', 10000);
-  await sleep(1000);
-  const child = runSpawn('openclaw', ['up'], { detached: true, stdio: 'ignore' });
-  child.unref();
-  await sleep(3000);
-  return { success: true };
+  try {
+    const result = await runAsync('openclaw gateway restart 2>&1', 20000);
+    return { success: true, output: result };
+  } catch (err: any) {
+    return { success: false, error: err.message?.slice(0, 300) };
+  }
 });
 
 // --- Log Viewer ---
 
 ipcMain.handle('logs:recent', async () => {
-  const output = await safeShellExecAsync('openclaw logs --lines 100', 10000);
-  return { logs: output || 'No logs available' };
+  // Try gateway logs first (most relevant), fallback to general logs
+  let output = await safeShellExecAsync('openclaw gateway logs --lines 100 2>&1', 10000);
+  if (!output || output.includes('not found')) {
+    output = await safeShellExecAsync('openclaw logs --lines 100 2>&1', 10000);
+  }
+  // Also include the app's own log file if exists
+  const appLogPath = path.join(HOME, '.openclaw', 'gateway.log');
+  let appLog = '';
+  try {
+    if (fs.existsSync(appLogPath)) {
+      const content = fs.readFileSync(appLogPath, 'utf8');
+      const lines = content.split('\n');
+      appLog = lines.slice(-50).join('\n'); // Last 50 lines
+    }
+  } catch {}
+  const combined = [output || '', appLog ? `\n--- gateway.log (last 50 lines) ---\n${appLog}` : ''].join('').trim();
+  return { logs: combined || 'No logs available' };
 });
 
 // --- Skills / ClawHub ---
@@ -2256,6 +2287,18 @@ ipcMain.handle('file:select', async (_e: any, options?: { filters?: Array<{ name
   if (result.canceled || result.filePaths.length === 0) return { filePath: null };
   return { filePath: result.filePaths[0] };
 });
+
+// --- App Doctor (System Health) ---
+
+const doctor = createDoctor({
+  shellExec: safeShellExecAsync,
+  shellRun: runAsync,
+  homedir: HOME,
+  platform: process.platform,
+});
+
+ipcMain.handle('doctor:run', async () => doctor.runAllChecks());
+ipcMain.handle('doctor:fix', async (_e: any, checkId: string) => doctor.runFix(checkId));
 
 // --- System Tray ---
 
