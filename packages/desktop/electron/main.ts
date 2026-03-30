@@ -6,6 +6,7 @@ import fs from 'fs';
 import os from 'os';
 import https from 'https';
 import http from 'http';
+import crypto from 'crypto';
 
 let mainWindow: typeof BrowserWindow.prototype | null = null;
 let tray: typeof Tray.prototype | null = null;
@@ -106,6 +107,66 @@ function getEnhancedPath(): string {
   return [...extras, base].join(path.delimiter);
 }
 
+function getBundledNpmBin(binName: 'npx' | 'npm') {
+  const candidates = [
+    path.join(app.getPath('exe'), '..', '..', 'resources', 'app.asar.unpacked', 'node_modules', 'npm', 'bin', `${binName}-cli.js`),
+    path.join(app.getAppPath(), 'node_modules', 'npm', 'bin', `${binName}-cli.js`),
+    path.join(__dirname, '..', 'node_modules', 'npm', 'bin', `${binName}-cli.js`),
+  ];
+  return candidates.find(p => fs.existsSync(p)) || null;
+}
+
+function resolveBundledCache(fileName: string) {
+  const candidates = [
+    path.join(app.getPath('exe'), '..', '..', 'resources', 'app.asar.unpacked', 'cache', fileName),
+    path.join(app.getAppPath(), 'cache', fileName),
+    path.join(__dirname, '..', 'cache', fileName),
+  ];
+  return candidates.find(p => fs.existsSync(p)) || null;
+}
+
+function requestLocalDaemon(pathname: string, method: 'GET' | 'POST' = 'GET', timeoutMs = 2000): Promise<{ statusCode: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const req = http.request({
+      hostname: '127.0.0.1',
+      port: 37800,
+      path: pathname,
+      method,
+      timeout: timeoutMs,
+    }, (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => { body += chunk; });
+      res.on('end', () => resolve({ statusCode: res.statusCode || 0, body }));
+    });
+
+    req.on('error', reject);
+    req.on('timeout', () => {
+      req.destroy(new Error('Local daemon request timed out'));
+    });
+    req.end();
+  });
+}
+
+async function getLocalDaemonHealth(timeoutMs = 2000): Promise<any | null> {
+  try {
+    const response = await requestLocalDaemon('/healthz', 'GET', timeoutMs);
+    if (response.statusCode !== 200 || !response.body) return null;
+    return JSON.parse(response.body);
+  } catch {
+    return null;
+  }
+}
+
+async function shutdownLocalDaemon(timeoutMs = 3000): Promise<boolean> {
+  try {
+    const response = await requestLocalDaemon('/shutdown', 'POST', timeoutMs);
+    return response.statusCode >= 200 && response.statusCode < 300;
+  } catch {
+    return false;
+  }
+}
+
 /** Run a command with enhanced PATH and explicit shell (critical for packaged Electron).
  *  Uses --norc --noprofile on macOS/Linux to avoid .bashrc errors. */
 function run(cmd: string, opts: Record<string, unknown> = {}): string {
@@ -119,34 +180,14 @@ function run(cmd: string, opts: Record<string, unknown> = {}): string {
 }
 
 function runSpawn(cmd: string, args: string[], opts: Record<string, unknown> = {}) {
-  const getBundledNpmBin = (binName: 'npx' | 'npm') => {
-    const candidates = [
-      path.join(app.getPath('exe'), '..', '..', 'resources', 'app.asar.unpacked', 'node_modules', 'npm', 'bin', `${binName}-cli.js`),
-      path.join(app.getAppPath(), 'node_modules', 'npm', 'bin', `${binName}-cli.js`),
-      path.join(__dirname, '..', 'node_modules', 'npm', 'bin', `${binName}-cli.js`),
-    ];
-    return candidates.find(p => fs.existsSync(p)) || null;
+  const tryBundledNpx = () => {
+    const npxCli = getBundledNpmBin('npx');
+    if (!npxCli) return null;
+    return spawn(process.execPath, [npxCli, ...args], {
+      env: { ...process.env, PATH: getEnhancedPath() },
+      ...opts,
+    });
   };
-
-  const resolveBundledCache = (fileName: string) => {
-    const candidates = [
-      path.join(app.getPath('exe'), '..', '..', 'resources', 'app.asar.unpacked', 'cache', fileName),
-      path.join(app.getAppPath(), 'cache', fileName),
-      path.join(__dirname, '..', 'cache', fileName),
-      path.join(process.resourcesPath || '', 'cache', fileName),
-    ].filter(Boolean);
-    return candidates.find(p => fs.existsSync(p)) || null;
-  };
-
-    // If system npx is missing, fall back to bundled npm's npx-cli.js (installed via devDependency "npm")
-    const tryBundledNpx = () => {
-      const npxCli = getBundledNpmBin('npx');
-      if (!npxCli) return null;
-      return spawn(process.execPath, [npxCli, ...args], {
-        env: { ...process.env, PATH: getEnhancedPath() },
-        ...opts,
-      });
-    };
 
   if (cmd === 'npx') {
     try {
@@ -330,16 +371,13 @@ ipcMain.handle('setup:detect-environment', async () => {
     }
   } catch { /* ignore */ }
 
-  // Check local daemon status
-  try {
-    const resp = execSync('curl -s --max-time 2 http://localhost:37800/healthz 2>/dev/null', {
-      encoding: 'utf8', timeout: 3000, stdio: 'pipe',
-    }).trim();
-    const health = JSON.parse(resp);
+  // Check local daemon status via Node-native HTTP to avoid curl/platform differences
+  const health = await getLocalDaemonHealth(2000);
+  if (health) {
     result.daemonRunning = health.status === 'ok';
     result.daemonVersion = health.version || null;
     result.daemonStats = { memories: health.stats?.totalMemories, knowledge: health.stats?.totalKnowledge, sessions: health.stats?.totalSessions };
-  } catch {
+  } else {
     result.daemonRunning = false;
   }
 
@@ -577,55 +615,7 @@ ipcMain.handle('setup:save-config', async (_e, config: Record<string, unknown>) 
     existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
   } catch { /* start fresh */ }
 
-  // Deep merge: never overwrite user's existing providers, only add new ones
-  const merged = { ...existing };
-
-  for (const [key, value] of Object.entries(config)) {
-    if (key === 'models' && existing.models) {
-      // Deep merge providers: keep existing, add new
-      merged.models = { ...existing.models };
-      if ((value as any)?.providers) {
-        merged.models.providers = { ...existing.models.providers, ...(value as any).providers };
-      }
-    } else if (key === 'agents' && existing.agents) {
-      // Deep merge agents.defaults
-      merged.agents = JSON.parse(JSON.stringify(existing.agents));
-      if ((value as any)?.defaults?.model?.primary) {
-        if (!merged.agents.defaults) merged.agents.defaults = {};
-        if (!merged.agents.defaults.model) merged.agents.defaults.model = {};
-        merged.agents.defaults.model.primary = (value as any).defaults.model.primary;
-      }
-    } else if (key === 'plugins' && existing.plugins) {
-      // Deep merge plugins: preserve existing entries, merge new ones
-      merged.plugins = JSON.parse(JSON.stringify(existing.plugins));
-      const incoming = value as any;
-      if (incoming.allow) merged.plugins.allow = incoming.allow;
-      if (incoming.slots) merged.plugins.slots = { ...merged.plugins.slots, ...incoming.slots };
-      if (incoming.entries) {
-        if (!merged.plugins.entries) merged.plugins.entries = {};
-        for (const [eid, ecfg] of Object.entries(incoming.entries)) {
-          const prev = merged.plugins.entries[eid] || {};
-          merged.plugins.entries[eid] = { ...prev, ...(ecfg as any) };
-          // Deep merge config within entry
-          if ((ecfg as any)?.config && prev?.config) {
-            merged.plugins.entries[eid].config = { ...prev.config, ...(ecfg as any).config };
-          }
-        }
-      }
-    } else if (key === 'tools' && existing.tools) {
-      // Deep merge tools: merge alsoAllow arrays (deduplicate)
-      merged.tools = JSON.parse(JSON.stringify(existing.tools));
-      const incoming = value as any;
-      if (incoming.alsoAllow) {
-        const existingAllow = new Set(merged.tools.alsoAllow || []);
-        for (const t of incoming.alsoAllow) existingAllow.add(t);
-        merged.tools.alsoAllow = [...existingAllow];
-      }
-      if (incoming.profile) merged.tools.profile = incoming.profile;
-    } else {
-      merged[key] = value;
-    }
-  }
+  const merged = mergeOpenClawConfig(existing, config as Record<string, any>);
 
   fs.writeFileSync(configPath, JSON.stringify(merged, null, 2));
   return { success: true };
@@ -693,20 +683,17 @@ ipcMain.handle('app:check-updates', async () => {
 
   // Check local daemon (@awareness-sdk/local) version
   try {
-    const daemonResp = await safeShellExecAsync('curl -s --max-time 2 http://localhost:37800/healthz', 3000);
-    if (daemonResp) {
-      const health = JSON.parse(daemonResp);
-      const daemonCurrent = health.version;
-      if (daemonCurrent) {
-        const latestDaemon = await safeShellExecAsync('npm view @awareness-sdk/local version', 10000);
-        if (latestDaemon && latestDaemon.trim() !== daemonCurrent) {
-          updates.push({
-            component: 'daemon',
-            label: 'Awareness Local Daemon',
-            currentVersion: daemonCurrent,
-            latestVersion: latestDaemon.trim(),
-          });
-        }
+    const health = await getLocalDaemonHealth(2000);
+    const daemonCurrent = health?.version;
+    if (daemonCurrent) {
+      const latestDaemon = await safeShellExecAsync('npm view @awareness-sdk/local version', 10000);
+      if (latestDaemon && latestDaemon.trim() !== daemonCurrent) {
+        updates.push({
+          component: 'daemon',
+          label: 'Awareness Local Daemon',
+          currentVersion: daemonCurrent,
+          latestVersion: latestDaemon.trim(),
+        });
       }
     }
   } catch { /* daemon not running or check failed */ }
@@ -788,19 +775,14 @@ ipcMain.handle('app:upgrade-component', async (_e, component: string) => {
     } else if (component === 'daemon') {
       // Stop existing daemon, then restart with latest via npx
       // The daemon runs via npx (not global install), so we just need to restart with @latest
-      await safeShellExecAsync('curl -s -X POST http://localhost:37800/shutdown 2>/dev/null', 3000);
+      await shutdownLocalDaemon(3000);
       await new Promise(r => setTimeout(r, 1000));
       // Start new version — npx will fetch latest
       await runAsync('npx -y @awareness-sdk/local@latest start --port 37800 --background', 30000);
       // Verify new version
       await new Promise(r => setTimeout(r, 2000));
-      const health = await safeShellExecAsync('curl -s --max-time 3 http://localhost:37800/healthz', 5000);
-      if (health) {
-        try {
-          const h = JSON.parse(health);
-          return { success: true, version: h.version };
-        } catch { /* ignore */ }
-      }
+      const health = await getLocalDaemonHealth(3000);
+      if (health?.version) return { success: true, version: health.version };
       return { success: true, version: 'latest' };
     }
     return { success: false, error: 'Unknown component' };
@@ -905,8 +887,22 @@ ipcMain.handle('security:check', async () => {
   const configPath = path.join(HOME, '.openclaw', 'openclaw.json');
   const issues: Array<{ level: 'warning' | 'info'; message: string; fix?: string }> = [];
 
-  // Check file permissions (Unix only)
-  if (process.platform !== 'win32') {
+  // Check file permissions / ACLs
+  if (process.platform === 'win32') {
+    try {
+      const acl = safeShellExec(`icacls "${configPath}"`, 5000);
+      if (acl) {
+        const broadAccess = /(Everyone|BUILTIN\\Users|Users):\([^\n]*[FMW]/i.test(acl);
+        if (broadAccess) {
+          issues.push({
+            level: 'warning',
+            message: 'openclaw.json appears accessible to broad Windows user groups',
+            fix: 'Restrict the file so only your current Windows account can read and modify it.',
+          });
+        }
+      }
+    } catch { /* ignore if icacls is unavailable */ }
+  } else {
     try {
       const stat = fs.statSync(configPath);
       const mode = (stat.mode & 0o777).toString(8);
@@ -946,6 +942,62 @@ ipcMain.handle('security:check', async () => {
     }
   } catch { /* ignore */ }
 
+  // Check offline bundles for manifest and checksum coverage
+  try {
+    const cacheDirCandidates = [
+      path.join(app.getPath('exe'), '..', '..', 'resources', 'app.asar.unpacked', 'cache'),
+      path.join(app.getAppPath(), 'cache'),
+      path.join(__dirname, '..', 'cache'),
+    ];
+    const cacheDir = cacheDirCandidates.find((dir) => fs.existsSync(dir));
+    if (cacheDir) {
+      const manifestPath = path.join(cacheDir, 'manifest.json');
+      const bundleNames = ['awareness-sdk-local.tgz', 'awareness-memory.tgz'];
+      const presentBundles = bundleNames.filter((name) => fs.existsSync(path.join(cacheDir, name)));
+
+      if (presentBundles.length > 0 && !fs.existsSync(manifestPath)) {
+        issues.push({
+          level: 'warning',
+          message: 'Offline bundles are missing manifest.json version metadata',
+          fix: 'Ship cache/manifest.json with version and checksum entries for every offline bundle.',
+        });
+      }
+
+      for (const bundleName of presentBundles) {
+        const bundlePath = path.join(cacheDir, bundleName);
+        const checksumPath = `${bundlePath}.sha256`;
+        if (!fs.existsSync(checksumPath)) {
+          issues.push({
+            level: 'warning',
+            message: `Offline bundle ${bundleName} has no SHA256 checksum file`,
+            fix: `Add ${bundleName}.sha256 so packaged bundles can be verified before use.`,
+          });
+          continue;
+        }
+
+        const expected = fs.readFileSync(checksumPath, 'utf8').trim().split(/\s+/)[0]?.toLowerCase();
+        const actual = computeSha256(bundlePath).toLowerCase();
+        if (!expected || expected !== actual) {
+          issues.push({
+            level: 'warning',
+            message: `Offline bundle ${bundleName} failed checksum verification`,
+            fix: 'Rebuild the offline bundle and regenerate its .sha256 file before release.',
+          });
+        }
+      }
+    }
+  } catch { /* ignore cache audit errors */ }
+
+  // Upgrade rollback readiness
+  const rollbackDir = path.join(HOME, '.openclaw', '.upgrade-backups');
+  if (!fs.existsSync(rollbackDir)) {
+    issues.push({
+      level: 'info',
+      message: 'No local upgrade rollback snapshots found yet',
+      fix: 'Keep the previous installer until automatic rollback snapshots are implemented for all components.',
+    });
+  }
+
   return { issues };
 });
 
@@ -953,7 +1005,7 @@ ipcMain.handle('security:check', async () => {
 
 ipcMain.handle('agents:list', async () => {
   try {
-    const output = await safeShellExecAsync('openclaw agents list --json --bindings 2>/dev/null', 8000);
+    const output = await safeShellExecAsync('openclaw agents list --json --bindings', 8000);
     if (output) {
       try {
         const parsed = JSON.parse(output);
@@ -1066,6 +1118,102 @@ function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+const REDACTED_VALUE = '__REDACTED__';
+
+function mergeOpenClawConfig(existing: Record<string, any>, incoming: Record<string, any>) {
+  const merged = JSON.parse(JSON.stringify(existing || {}));
+
+  for (const [key, value] of Object.entries(incoming || {})) {
+    if (key === 'models') {
+      merged.models = { ...(merged.models || {}) };
+      const incomingModels = value as any;
+      if (incomingModels?.providers) {
+        merged.models.providers = { ...(merged.models.providers || {}) };
+        for (const [providerKey, providerValue] of Object.entries(incomingModels.providers)) {
+          merged.models.providers[providerKey] = {
+            ...(merged.models.providers[providerKey] || {}),
+            ...(providerValue as any),
+          };
+        }
+      }
+    } else if (key === 'agents') {
+      merged.agents = JSON.parse(JSON.stringify(merged.agents || {}));
+      const incomingAgents = value as any;
+      if (incomingAgents?.defaults?.model?.primary) {
+        if (!merged.agents.defaults) merged.agents.defaults = {};
+        if (!merged.agents.defaults.model) merged.agents.defaults.model = {};
+        merged.agents.defaults.model.primary = incomingAgents.defaults.model.primary;
+      }
+    } else if (key === 'plugins') {
+      merged.plugins = JSON.parse(JSON.stringify(merged.plugins || {}));
+      const incomingPlugins = value as any;
+      if (incomingPlugins.allow) merged.plugins.allow = incomingPlugins.allow;
+      if (incomingPlugins.slots) merged.plugins.slots = { ...(merged.plugins.slots || {}), ...incomingPlugins.slots };
+      if (incomingPlugins.entries) {
+        if (!merged.plugins.entries) merged.plugins.entries = {};
+        for (const [entryId, entryConfig] of Object.entries(incomingPlugins.entries)) {
+          const previous = merged.plugins.entries[entryId] || {};
+          merged.plugins.entries[entryId] = { ...previous, ...(entryConfig as any) };
+          if ((entryConfig as any)?.config && previous?.config) {
+            merged.plugins.entries[entryId].config = { ...previous.config, ...(entryConfig as any).config };
+          }
+        }
+      }
+    } else if (key === 'tools') {
+      merged.tools = JSON.parse(JSON.stringify(merged.tools || {}));
+      const incomingTools = value as any;
+      if (incomingTools.alsoAllow) {
+        const existingAllow = new Set(merged.tools.alsoAllow || []);
+        for (const tool of incomingTools.alsoAllow) existingAllow.add(tool);
+        merged.tools.alsoAllow = [...existingAllow];
+      }
+      if (incomingTools.denied) merged.tools.denied = incomingTools.denied;
+      if (incomingTools.profile) merged.tools.profile = incomingTools.profile;
+    } else {
+      merged[key] = value;
+    }
+  }
+
+  return merged;
+}
+
+function redactSensitiveValues(value: any): any {
+  if (Array.isArray(value)) return value.map(redactSensitiveValues);
+  if (!value || typeof value !== 'object') return value;
+
+  const redacted: Record<string, any> = {};
+  const sensitiveKeyPattern = /(api.?key|token|secret|password|appsecret|bot.?token|webhook|authorization)/i;
+
+  for (const [key, child] of Object.entries(value)) {
+    if (sensitiveKeyPattern.test(key)) redacted[key] = REDACTED_VALUE;
+    else redacted[key] = redactSensitiveValues(child);
+  }
+
+  return redacted;
+}
+
+function stripRedactedValues(value: any): any {
+  if (Array.isArray(value)) {
+    return value.map(stripRedactedValues).filter((item) => item !== undefined);
+  }
+  if (!value || typeof value !== 'object') {
+    return value === REDACTED_VALUE ? undefined : value;
+  }
+
+  const cleaned: Record<string, any> = {};
+  for (const [key, child] of Object.entries(value)) {
+    const next = stripRedactedValues(child);
+    if (next !== undefined) cleaned[key] = next;
+  }
+  return cleaned;
+}
+
+function computeSha256(filePath: string) {
+  const hash = crypto.createHash('sha256');
+  hash.update(fs.readFileSync(filePath));
+  return hash.digest('hex');
+}
+
 function downloadFile(url: string, dest: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const file = fs.createWriteStream(dest);
@@ -1124,13 +1272,20 @@ ipcMain.handle('chat:send', async (_e, message: string, sessionId?: string, opti
       fullMsg = `${parts.join('\\n')}\\n\\n${escapedMsg}`;
     }
     const cmd = `openclaw agent --local --session-id "${sid}" -m "${fullMsg}" --verbose on${thinkingFlag}`;
+    const enhancedPath = getEnhancedPath();
 
-    const child = spawn('/bin/bash', ['--norc', '--noprofile', '-c',
-      `export PATH="${getEnhancedPath()}"; ${cmd}`
-    ], {
-      cwd: os.homedir(),
-      env: { ...process.env, PATH: getEnhancedPath() },
-    });
+    const child = process.platform === 'win32'
+      ? spawn(cmd, [], {
+        cwd: os.homedir(),
+        shell: 'cmd.exe',
+        env: { ...process.env, PATH: enhancedPath },
+      })
+      : spawn('/bin/bash', ['--norc', '--noprofile', '-c',
+        `export PATH="${enhancedPath}"; ${cmd}`
+      ], {
+        cwd: os.homedir(),
+        env: { ...process.env, PATH: enhancedPath },
+      });
 
     const send = (channel: string, data: any) => {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, data);
@@ -1421,7 +1576,7 @@ ipcMain.handle('channel:list-configured', async () => {
 // Dynamically detect supported channels from OpenClaw
 ipcMain.handle('channel:list-supported', async () => {
   try {
-    const output = await safeShellExecAsync('openclaw channels list 2>/dev/null', 8000);
+    const output = await safeShellExecAsync('openclaw channels list', 8000);
     if (output) {
       // Parse output lines — each line like "telegram default: configured, enabled" or "discord: not configured"
       const channels: string[] = [];
@@ -1442,15 +1597,18 @@ ipcMain.handle('channel:list-supported', async () => {
 // --- Cron Management ---
 
 ipcMain.handle('cron:list', async () => {
-  const output = await safeShellExecAsync('openclaw cron list --json 2>/dev/null || openclaw cron list', 10000);
-  if (!output) return { jobs: [], error: 'OpenClaw not available' };
-
-  try {
-    return { jobs: JSON.parse(output) };
-  } catch {
-    const lines = output.split('\n').filter(l => l.trim());
-    return { jobs: lines, raw: true };
+  const jsonOutput = await safeShellExecAsync('openclaw cron list --json', 10000);
+  if (jsonOutput) {
+    try {
+      return { jobs: JSON.parse(jsonOutput) };
+    } catch { /* fall through to plain text mode */ }
   }
+
+  const plainOutput = await safeShellExecAsync('openclaw cron list', 10000);
+  if (!plainOutput) return { jobs: [], error: 'OpenClaw not available' };
+
+  const lines = plainOutput.split('\n').filter(l => l.trim());
+  return { jobs: lines, raw: true };
 });
 
 ipcMain.handle('cron:add', async (_e, expression: string, command: string) => {
@@ -1500,7 +1658,7 @@ ipcMain.handle('gateway:restart', async () => {
 // --- Log Viewer ---
 
 ipcMain.handle('logs:recent', async () => {
-  const output = await safeShellExecAsync('openclaw logs --lines 100 2>/dev/null || echo "No logs available"', 10000);
+  const output = await safeShellExecAsync('openclaw logs --lines 100', 10000);
   return { logs: output || 'No logs available' };
 });
 
@@ -1801,6 +1959,19 @@ ipcMain.handle('config:export', async () => {
   const configPath = path.join(HOME, '.openclaw', 'openclaw.json');
   if (!fs.existsSync(configPath)) return { success: false, error: 'No config found' };
 
+  const exportChoice = await dialog.showMessageBox(mainWindow!, {
+    type: 'warning',
+    buttons: ['Export with secrets', 'Export safe copy', 'Cancel'],
+    cancelId: 2,
+    defaultId: 1,
+    title: 'Export Configuration',
+    message: 'This file may contain API keys, tokens, and other private settings.',
+    detail: 'Choose "Export safe copy" to hide sensitive values before saving.',
+  });
+
+  if (exportChoice.response === 2) return { success: false, error: 'Cancelled' };
+  const redactSecrets = exportChoice.response === 1;
+
   const result = await dialog.showSaveDialog(mainWindow!, {
     title: 'Export Configuration',
     defaultPath: 'awareness-config.json',
@@ -1810,15 +1981,15 @@ ipcMain.handle('config:export', async () => {
   if (result.canceled || !result.filePath) return { success: false, error: 'Cancelled' };
 
   try {
-    const config = fs.readFileSync(configPath, 'utf8');
-    // Also bundle localStorage-based settings
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     const exportData = {
       _exportVersion: 1,
       _exportDate: new Date().toISOString(),
-      openclawConfig: JSON.parse(config),
+      _redacted: redactSecrets,
+      openclawConfig: redactSecrets ? redactSensitiveValues(config) : config,
     };
     fs.writeFileSync(result.filePath, JSON.stringify(exportData, null, 2));
-    return { success: true, path: result.filePath };
+    return { success: true, path: result.filePath, redacted: redactSecrets };
   } catch (err: any) {
     return { success: false, error: err.message };
   }
@@ -1848,14 +2019,11 @@ ipcMain.handle('config:import', async () => {
     let existing: Record<string, unknown> = {};
     try { existing = JSON.parse(fs.readFileSync(configPath, 'utf8')); } catch {}
 
-    const merged = { ...existing, ...data.openclawConfig };
-    // Deep merge providers
-    if (data.openclawConfig.providers && existing.providers) {
-      merged.providers = { ...(existing.providers as Record<string, unknown>), ...data.openclawConfig.providers };
-    }
+    const sanitizedImport = stripRedactedValues(data.openclawConfig || {});
+    const merged = mergeOpenClawConfig(existing as Record<string, any>, sanitizedImport as Record<string, any>);
 
     fs.writeFileSync(configPath, JSON.stringify(merged, null, 2));
-    return { success: true, config: data.openclawConfig };
+    return { success: true, config: sanitizedImport, redactedImport: !!data._redacted };
   } catch (err: any) {
     return { success: false, error: err.message };
   }

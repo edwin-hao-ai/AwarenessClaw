@@ -149,10 +149,10 @@
 - [ ] Windows / Linux 打包未测试
 - [x] **macOS 无法退出应用**：`close` 事件中 `if (tray)` 永远为 true 导致 `preventDefault()` 阻止所有关窗。修复：`isQuitting` 标志 + `before-quit` 事件设置（2026-03-30）
 - [x] **Daemon 升级失败（Exit code 1）**：daemon 通过 `npx` 运行不是全局安装，`npm install -g` 无效。改为先 shutdown → `npx -y @latest start`（2026-03-30）
-- [ ] **Setup 向导假成功**：`installPlugin()` / `startDaemon()` 失败时前端仍显示 done，普通用户会误以为安装成功。需要像 Node/OpenClaw 步骤一样检查 success 并显示友好错误
+- [x] **Setup 向导假成功**：`installPlugin()` / `startDaemon()` 失败时前端不再误显示 done，改为检查 success 并显示友好错误（2026-03-30）
 - [ ] **OpenClaw 安装脚本供应链风险**：当前 Windows 用 `irm ... | iex`、mac/Linux 用 `curl ... | bash`，缺少签名/校验。需要改为下载后校验 hash/signature 再执行
-- [ ] **配置导入/导出含敏感信息**：导出文件可能包含 API Key，导入逻辑也未按真实 `models.providers` 结构做深合并。需要增加敏感信息提醒、可选脱敏导出、正确的结构化 merge
-- [ ] **安全审计覆盖不足**：当前只检查 Unix 文件权限，未检查 Windows ACL，也未校验离线 tgz 包 hash/version，需要补齐 Windows/mac 双平台审计规则
+- [x] **配置导入/导出含敏感信息**：导出前增加敏感信息提示，支持脱敏导出；导入改为按真实 `models.providers` 结构深合并，并忽略脱敏占位值（2026-03-30）
+- [x] **安全审计覆盖不足**：新增 Windows ACL 检查、离线 tgz manifest/checksum 检查、升级回滚准备状态提示（2026-03-30）
 
 ### 技术债务（已知 · 待后续处理）
 - [x] **Agents 创建修复**：创建前先 `mkdirSync` workspace 目录，避免 `openclaw agents add` 因目录不存在失败（2026-03-30）
