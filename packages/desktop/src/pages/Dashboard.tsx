@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Send, Paperclip, ChevronDown, ChevronRight, ExternalLink, Loader2, Copy, Check, X, File, Image, Plus, Brain, Key, Wrench, Search, BookOpen, Save, Zap, CheckCircle2, Terminal, AlertTriangle } from 'lucide-react';
+import { Send, Paperclip, ChevronDown, ChevronRight, ExternalLink, Loader2, Copy, Check, X, File, Image, Plus, Brain, Key, Wrench, Search, BookOpen, Save, Zap, CheckCircle2, Terminal, AlertTriangle, FolderOpen } from 'lucide-react';
 import PasswordInput from '../components/PasswordInput';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -109,6 +109,7 @@ function ToolCallsBlock({ toolCalls }: { toolCalls: ToolCallInfo[] }) {
 
 const SESSIONS_KEY = 'awareness-claw-sessions';
 const ACTIVE_SESSION_KEY = 'awareness-claw-active-session';
+const PROJECT_ROOT_KEY = 'awareness-claw-project-root';
 
 function loadSessions(): ChatSession[] {
   try {
@@ -210,6 +211,7 @@ export default function Dashboard() {
   const [tempApiKey, setTempApiKey] = useState('');
   const [showSidebar, setShowSidebar] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
+  const [projectRoot, setProjectRoot] = useState(() => localStorage.getItem(PROJECT_ROOT_KEY) || '');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
@@ -229,6 +231,7 @@ export default function Dashboard() {
 
   const { providers: allProviders } = useDynamicProviders();
   const currentProvider = allProviders.find(p => p.key === config.providerKey);
+  const projectRootName = projectRoot.split(/[/\\]/).filter(Boolean).pop() || '';
 
   // Ensure active session exists
   useEffect(() => {
@@ -302,6 +305,11 @@ export default function Dashboard() {
     if (activeSessionId) localStorage.setItem(ACTIVE_SESSION_KEY, activeSessionId);
   }, [activeSessionId]);
 
+  useEffect(() => {
+    if (projectRoot) localStorage.setItem(PROJECT_ROOT_KEY, projectRoot);
+    else localStorage.removeItem(PROJECT_ROOT_KEY);
+  }, [projectRoot]);
+
   // Auto-scroll
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -319,6 +327,11 @@ export default function Dashboard() {
     setSessions(prev => [s, ...prev]);
     setActiveSessionId(s.id);
     setShowSidebar(false);
+  };
+
+  const handleSelectProjectRoot = async () => {
+    const result = await (window.electronAPI as any)?.selectDirectory?.();
+    if (result?.directoryPath) setProjectRoot(result.directoryPath);
   };
 
   const handleSend = async () => {
@@ -361,6 +374,7 @@ export default function Dashboard() {
       const result = await (window.electronAPI as any).chatSend(fullMessage, activeSessionId, {
         thinkingLevel: config.thinkingLevel || 'low',
         files: filePaths,
+        workspacePath: projectRoot || undefined,
       });
       // Prefer streamed content if available, fallback to full response
       const responseText = streamingRef.current.trim() || result.text || result.error || t('chat.noResponse') || 'No response';
@@ -508,6 +522,8 @@ export default function Dashboard() {
                       if (e.key === 'Escape') { setRenamingId(null); }
                     }}
                     onClick={e => e.stopPropagation()}
+                    aria-label="Rename session"
+                    title="Rename session"
                     className="flex-1 bg-slate-700 px-1.5 py-0.5 rounded text-xs focus:outline-none focus:ring-1 focus:ring-brand-500"
                     autoFocus
                   />
@@ -519,6 +535,8 @@ export default function Dashboard() {
                     e.stopPropagation();
                     setConfirmDialog({ message: t('chat.deleteSession', 'Delete this session?'), onConfirm: () => deleteSession(s.id) });
                   }}
+                  aria-label={t('chat.deleteSession', 'Delete this session?')}
+                  title={t('chat.deleteSession', 'Delete this session?')}
                   className="opacity-0 group-hover:opacity-100 text-slate-600 hover:text-red-400 p-0.5 ml-1"
                 >
                   <X size={12} />
@@ -552,6 +570,19 @@ export default function Dashboard() {
 
           <img src={logoUrl} alt="AwarenessClaw" className="w-6 h-6 rounded" />
           <h1 className="text-sm font-semibold">AwarenessClaw</h1>
+
+          <button
+            onClick={handleSelectProjectRoot}
+            aria-label={projectRoot ? t('chat.workspace.change', 'Change folder') : t('chat.workspace.select', 'Choose folder')}
+            className="ml-2 flex min-w-0 max-w-[280px] items-center gap-2 rounded-lg border border-slate-700/70 bg-slate-900 px-2.5 py-1.5 text-left transition-colors hover:border-slate-500 hover:bg-slate-800"
+            title={projectRoot || t('chat.workspace.select', 'Choose folder')}
+          >
+            <FolderOpen size={12} className="shrink-0 text-sky-400" />
+            <div className="min-w-0">
+              <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">{t('chat.workspace.current', 'Project folder')}</div>
+              <div className="truncate text-xs text-slate-200">{projectRootName || t('chat.workspace.none', 'No project folder selected')}</div>
+            </div>
+          </button>
 
           {/* Model selector */}
           <div className="relative ml-2">
@@ -679,6 +710,24 @@ export default function Dashboard() {
                   <div className="text-center">
                     <p className="text-base mb-1">{t('chat.empty.title')}</p>
                     <p className="text-xs text-slate-600">{t('chat.empty.subtitle')}</p>
+                  </div>
+                  <div className="w-full max-w-lg rounded-2xl border border-slate-800 bg-slate-900/70 p-4 text-left">
+                    <div className="flex items-start gap-3">
+                      <div className="rounded-xl bg-sky-500/10 p-2 text-sky-400">
+                        <FolderOpen size={18} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs uppercase tracking-[0.16em] text-slate-500">{t('chat.workspace.current', 'Project folder')}</div>
+                        <div className="mt-1 truncate text-sm text-slate-200">{projectRoot || t('chat.workspace.none', 'No project folder selected')}</div>
+                        <p className="mt-1 text-xs text-slate-500">{t('chat.workspace.hint', 'AI file edits will run inside this local project folder')}</p>
+                      </div>
+                      <button
+                        onClick={handleSelectProjectRoot}
+                        className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs text-slate-200 transition-colors hover:bg-slate-700"
+                      >
+                        {projectRoot ? t('chat.workspace.change', 'Change folder') : t('chat.workspace.select', 'Choose folder')}
+                      </button>
+                    </div>
                   </div>
                   <div className="flex flex-wrap gap-2 max-w-lg justify-center">
                     {[t('chat.suggest.plan'), t('chat.suggest.review'), t('chat.suggest.analyze')].map(q => (
@@ -856,7 +905,14 @@ export default function Dashboard() {
                     {f.preview?.type === 'image' ? <Image size={10} className="text-brand-400" /> : <File size={10} className="text-slate-400" />}
                     <span className="text-[10px] text-slate-300 truncate flex-1">{f.name}</span>
                     {f.preview?.size && <span className="text-[9px] text-slate-600">{(f.preview.size / 1024).toFixed(0)}KB</span>}
-                    <button onClick={() => setAttachedFiles(prev => prev.filter((_, j) => j !== i))} className="text-slate-500 hover:text-red-400 flex-shrink-0"><X size={10} /></button>
+                    <button
+                      onClick={() => setAttachedFiles(prev => prev.filter((_, j) => j !== i))}
+                      aria-label={`Remove ${f.name}`}
+                      title={`Remove ${f.name}`}
+                      className="text-slate-500 hover:text-red-400 flex-shrink-0"
+                    >
+                      <X size={10} />
+                    </button>
                   </div>
                 </div>
               ))}
@@ -868,11 +924,12 @@ export default function Dashboard() {
         <div className="px-4 py-3 border-t border-slate-800">
           <div className="flex items-end gap-2 max-w-3xl mx-auto">
             <button onClick={() => fileInputRef.current?.click()}
+              aria-label={t('chat.attachFile', 'Attach file')}
               className="p-2.5 text-slate-500 hover:text-slate-300 hover:bg-slate-800 rounded-xl transition-colors" title={t('chat.attachFile', 'Attach file')}
             >
               <Paperclip size={16} />
             </button>
-            <input ref={fileInputRef} type="file" multiple className="hidden"
+            <input ref={fileInputRef} type="file" multiple className="hidden" aria-label={t('chat.attachFile', 'Attach file')}
               onChange={e => { const files = Array.from(e.target.files || []).map(f => ({ name: f.name, path: (f as any).path || f.name })); attachFiles(files); }}
             />
 

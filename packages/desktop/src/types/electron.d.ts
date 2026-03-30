@@ -17,6 +17,13 @@ export interface ElectronAPI {
   startDaemon: () => Promise<{ success: boolean; alreadyRunning?: boolean; error?: string }>;
   saveConfig: (config: Record<string, unknown>) => Promise<{ success: boolean }>;
   openAuthUrl: (url: string) => Promise<void>;
+  chatSend?: (message: string, sessionId?: string, options?: { thinkingLevel?: string; model?: string; files?: string[]; workspacePath?: string }) => Promise<{ success: boolean; text?: string; error?: string; sessionId?: string }>;
+  onChatStream?: (callback: (chunk: string) => void) => void;
+  onChatStreamEnd?: (callback: () => void) => void;
+  onChatStatus?: (callback: (status: { type: string; tool?: string; toolStatus?: string; toolId?: string; message?: string }) => void) => void;
+  filePreview?: (filePath: string) => Promise<unknown>;
+  selectFile?: (options?: { filters?: Array<{ name: string; extensions: string[] }> }) => Promise<{ filePath: string | null }>;
+  selectDirectory?: () => Promise<{ directoryPath: string | null }>;
 }
 
 export interface EnvironmentInfo {

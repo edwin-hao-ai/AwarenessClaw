@@ -94,6 +94,33 @@ describe('Dashboard (Chat)', () => {
     });
   });
 
+  it('passes the selected project folder to chatSend', async () => {
+    const api = window.electronAPI as any;
+    api.selectDirectory = vi.fn().mockResolvedValue({ directoryPath: 'E:\\Projects\\DemoApp' });
+    api.chatSend = vi.fn().mockResolvedValue({ success: true, text: 'ok', sessionId: 'test-session' });
+
+    await act(async () => { render(<Dashboard />); });
+
+    await act(async () => {
+      fireEvent.click(screen.getAllByText(/Project folder|项目目录/)[0].closest('button') as HTMLButtonElement);
+    });
+
+    const textarea = screen.getByPlaceholderText(/输入消息|Type a message/);
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'edit local files' } });
+    });
+
+    const buttons = screen.getAllByRole('button');
+    const sendBtn = buttons[buttons.length - 1];
+    await act(async () => { fireEvent.click(sendBtn); });
+
+    await waitFor(() => {
+      expect(api.chatSend).toHaveBeenCalledWith('edit local files', expect.any(String), expect.objectContaining({
+        workspacePath: 'E:\\Projects\\DemoApp',
+      }));
+    });
+  });
+
   it('displays streaming content during response', async () => {
     let streamCallback: ((chunk: string) => void) | null = null;
     let statusCallback: ((status: any) => void) | null = null;

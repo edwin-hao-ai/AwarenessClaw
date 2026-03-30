@@ -23,7 +23,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   bootstrap: () => ipcRenderer.invoke('setup:bootstrap'),
 
   // Chat
-  chatSend: (message: string, sessionId?: string, options?: { thinkingLevel?: string; model?: string; files?: string[] }) => ipcRenderer.invoke('chat:send', message, sessionId, options),
+  chatSend: (message: string, sessionId?: string, options?: { thinkingLevel?: string; model?: string; files?: string[]; workspacePath?: string }) => ipcRenderer.invoke('chat:send', message, sessionId, options),
   onChatStream: (callback: (chunk: string) => void) => {
     ipcRenderer.on('chat:stream', (_e: any, chunk: string) => callback(chunk));
   },
@@ -63,6 +63,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // File preview
   filePreview: (filePath: string) => ipcRenderer.invoke('file:preview', filePath),
   selectFile: (options?: { filters?: Array<{ name: string; extensions: string[] }> }) => ipcRenderer.invoke('file:select', options),
+  selectDirectory: () => ipcRenderer.invoke('directory:select'),
 
   // Tray events
   onTrayNewChat: (callback: () => void) => {

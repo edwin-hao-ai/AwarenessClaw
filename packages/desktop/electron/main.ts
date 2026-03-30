@@ -1649,7 +1649,7 @@ async function ensureGatewayRunning(): Promise<{ ok: boolean; error?: string }> 
  * Non-interactive, one message at a time, returns JSON response.
  * Streaming: read stdout line by line as response comes in.
  */
-ipcMain.handle('chat:send', async (_e, message: string, sessionId?: string, options?: { thinkingLevel?: string; model?: string; files?: string[] }) => {
+ipcMain.handle('chat:send', async (_e, message: string, sessionId?: string, options?: { thinkingLevel?: string; model?: string; files?: string[]; workspacePath?: string }) => {
   // Auto-start Gateway if not running (users should never need to manually start it)
   const gatewayReady = await ensureGatewayRunning();
   if (!gatewayReady.ok) {
@@ -1684,18 +1684,41 @@ ipcMain.handle('chat:send', async (_e, message: string, sessionId?: string, opti
     }
     const cmd = `openclaw agent --local --session-id "${sid}" -m "${fullMsg}" --verbose on${thinkingFlag}`;
     const enhancedPath = getEnhancedPath();
+    const requestedWorkspace = options?.workspacePath?.trim();
+    const chatWorkingDirectory = requestedWorkspace || os.homedir();
+
+    if (requestedWorkspace) {
+      try {
+        const stat = fs.statSync(requestedWorkspace);
+        if (!stat.isDirectory()) {
+          return resolve({
+            success: false,
+            text: '',
+            error: 'The selected project folder is not available. Please choose a valid local folder and try again.',
+            sessionId: sid,
+          });
+        }
+      } catch {
+        return resolve({
+          success: false,
+          text: '',
+          error: 'The selected project folder could not be found. Please choose it again and try again.',
+          sessionId: sid,
+        });
+      }
+    }
 
     const shellCmd = process.platform === 'win32' ? wrapWindowsCommand(cmd) : cmd;
     const child = process.platform === 'win32'
       ? spawn(shellCmd, [], {
-        cwd: os.homedir(),
+        cwd: chatWorkingDirectory,
         shell: 'cmd.exe',
         env: { ...process.env, PATH: enhancedPath, NO_COLOR: '1', FORCE_COLOR: '0' },
       })
       : spawn('/bin/bash', ['--norc', '--noprofile', '-c',
         `export PATH="${enhancedPath}"; ${cmd}`
       ], {
-        cwd: os.homedir(),
+        cwd: chatWorkingDirectory,
         env: { ...process.env, PATH: enhancedPath },
       });
 
@@ -2709,6 +2732,14 @@ ipcMain.handle('file:select', async (_e: any, options?: { filters?: Array<{ name
   });
   if (result.canceled || result.filePaths.length === 0) return { filePath: null };
   return { filePath: result.filePaths[0] };
+});
+
+ipcMain.handle('directory:select', async () => {
+  const result = await dialog.showOpenDialog({
+    properties: ['openDirectory'],
+  });
+  if (result.canceled || result.filePaths.length === 0) return { directoryPath: null };
+  return { directoryPath: result.filePaths[0] };
 });
 
 // --- App Doctor (System Health) ---

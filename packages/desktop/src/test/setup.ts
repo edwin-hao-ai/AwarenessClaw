@@ -101,6 +101,7 @@ Object.defineProperty(window, 'electronAPI', {
     workspaceReadFile: () => Promise.resolve({ success: true, content: '', exists: false }),
     workspaceWriteFile: () => Promise.resolve({ success: true }),
     filePreview: () => Promise.resolve({ type: 'text', content: 'mock', size: 4 }),
+    selectDirectory: () => Promise.resolve({ directoryPath: null }),
     onTrayNewChat: () => {},
     configExport: () => Promise.resolve({ success: true }),
     configImport: () => Promise.resolve({ success: true }),
