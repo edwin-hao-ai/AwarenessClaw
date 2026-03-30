@@ -19,7 +19,7 @@ export default function UpdateBanner() {
   const [dismissed, setDismissed] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [upgrading, setUpgrading] = useState<string | null>(null);
-  const [upgradeResult, setUpgradeResult] = useState<{ component: string; success: boolean; error?: string } | null>(null);
+  const [upgradeResults, setUpgradeResults] = useState<Record<string, { success: boolean; error?: string }>>({});
 
   useEffect(() => {
     // Don't check if "never remind" is set
@@ -71,22 +71,24 @@ export default function UpdateBanner() {
 
   const handleUpgrade = async () => {
     if (!window.electronAPI) return;
-    setUpgradeResult(null);
+
+    // Only upgrade components that haven't already succeeded
+    const pending = updates.filter(u => !upgradeResults[u.component]?.success);
 
     let allSuccess = true;
-    for (const update of updates) {
+    for (const update of pending) {
       setUpgrading(update.component);
       try {
         const result = await (window.electronAPI as any).upgradeComponent(update.component);
         if (result.success) {
-          setUpgradeResult({ component: update.component, success: true });
+          setUpgradeResults(prev => ({ ...prev, [update.component]: { success: true } }));
         } else {
-          setUpgradeResult({ component: update.component, success: false, error: result.error });
+          setUpgradeResults(prev => ({ ...prev, [update.component]: { success: false, error: result.error } }));
           allSuccess = false;
           break; // Stop on first failure
         }
       } catch (err: any) {
-        setUpgradeResult({ component: update.component, success: false, error: err.message });
+        setUpgradeResults(prev => ({ ...prev, [update.component]: { success: false, error: err.message } }));
         allSuccess = false;
         break;
       }
@@ -100,17 +102,19 @@ export default function UpdateBanner() {
         if (recheck.updates && recheck.updates.length > 0) {
           // Still has updates — upgrade may not have taken effect
           const remaining = recheck.updates.map((u: any) => u.label).join(', ');
-          setUpgradeResult({
-            component: 'verify',
-            success: false,
-            error: `${t('update.verifyFailed')} ${remaining}. ${t('update.verifyRestart')}`,
-          });
+          setUpgradeResults(prev => ({
+            ...prev,
+            verify: {
+              success: false,
+              error: `${t('update.verifyFailed')} ${remaining}. ${t('update.verifyRestart')}`,
+            },
+          }));
         }
       } catch { /* ignore recheck errors */ }
     }
   };
 
-  const allUpgraded = upgradeResult?.success && !upgrading;
+  const allUpgraded = updates.length > 0 && updates.every(u => upgradeResults[u.component]?.success === true);
 
   // Don't render if no updates or dismissed
   if (updates.length === 0 || dismissed) return null;
@@ -161,11 +165,13 @@ export default function UpdateBanner() {
                     <div className="flex items-center gap-2">
                       {upgrading === u.component ? (
                         <Loader2 size={14} className="animate-spin text-brand-400" />
-                      ) : upgradeResult?.component === u.component && upgradeResult.success ? (
+                      ) : upgradeResults[u.component]?.success === true ? (
                         <Check size={14} className="text-emerald-400" />
-                      ) : upgradeResult?.component === u.component && !upgradeResult.success ? (
+                      ) : upgradeResults[u.component]?.success === false ? (
                         <AlertCircle size={14} className="text-red-400" />
-                      ) : null}
+                      ) : (
+                        <span className="inline-block w-3.5 h-3.5 rounded-full bg-slate-600" />
+                      )}
                       <span className="text-sm">{u.label}</span>
                     </div>
                     <span className="text-xs text-slate-400">
@@ -175,12 +181,12 @@ export default function UpdateBanner() {
                 ))}
               </div>
 
-              {/* Error message */}
-              {upgradeResult && !upgradeResult.success && (
-                <div className="p-3 bg-red-600/10 border border-red-600/20 rounded-xl text-xs text-red-400">
-                  {t('update.failed')}: {upgradeResult.error || 'Unknown error'}
+              {/* Error messages */}
+              {Object.entries(upgradeResults).filter(([, r]) => !r.success).map(([component, r]) => (
+                <div key={component} className="p-3 bg-red-600/10 border border-red-600/20 rounded-xl text-xs text-red-400">
+                  {t('update.failed')}: {r.error || 'Unknown error'}
                 </div>
-              )}
+              ))}
 
               {/* Success message */}
               {allUpgraded && (
@@ -222,7 +228,8 @@ export default function UpdateBanner() {
                     <button
                       onClick={handleNeverRemind}
                       disabled={!!upgrading}
-                      className="w-full py-2 text-slate-600 hover:text-slate-400 text-xs transition-colors"
+                      className="w-full py-2 text-slate-700 hover:text-slate-500 text-xs transition-colors"
+                      title="You can re-enable this in Settings"
                     >
                       {t('update.neverRemind')}
                     </button>

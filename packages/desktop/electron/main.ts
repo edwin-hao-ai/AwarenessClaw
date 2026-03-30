@@ -556,8 +556,8 @@ ipcMain.handle('setup:start-daemon', async () => {
 
       const offlineTarball = resolveBundledCache('awareness-sdk-local.tgz');
       const execArgs = offlineTarball
-        ? ['exec', '--yes', offlineTarball, 'start']
-        : ['exec', '--yes', '@awareness-sdk/local', 'start'];
+        ? ['exec', '--yes', offlineTarball, 'start', '--project', HOME]
+        : ['exec', '--yes', '@awareness-sdk/local', 'start', '--project', HOME];
 
       const child = spawn(process.execPath, [npmCli, ...execArgs], {
       detached: true,
@@ -568,8 +568,9 @@ ipcMain.handle('setup:start-daemon', async () => {
   };
 
   // Start daemon
+  // IMPORTANT: pass --project to avoid cwd=/ in packaged Electron (ENOENT: mkdir '/.awareness')
   const startWithNpx = () => new Promise<void>((resolve, reject) => {
-    const child = runSpawn('npx', ['@awareness-sdk/local', 'start'], {
+    const child = runSpawn('npx', ['@awareness-sdk/local', 'start', '--project', HOME], {
       detached: true,
       stdio: 'ignore',
     });
@@ -779,7 +780,9 @@ ipcMain.handle('app:upgrade-component', async (_e, component: string) => {
       await shutdownLocalDaemon(3000);
       await new Promise(r => setTimeout(r, 1000));
       // Start new version — npx will fetch latest
-      await runAsync('npx -y @awareness-sdk/local@latest start --port 37800 --background', 30000);
+      // IMPORTANT: Must pass --project to avoid cwd=/ in packaged Electron (ENOENT: mkdir '/.awareness')
+      const projectDir = HOME;
+      await runAsync(`npx -y @awareness-sdk/local@latest start --port 37800 --project "${projectDir}" --background`, 30000);
       // Verify new version
       await new Promise(r => setTimeout(r, 2000));
       const health = await getLocalDaemonHealth(3000);
@@ -1010,19 +1013,35 @@ ipcMain.handle('agents:list', async () => {
     if (output) {
       try {
         const parsed = JSON.parse(output);
-        const list = Array.isArray(parsed) ? parsed : (parsed.agents || [parsed]);
-        const agents = list.map((a: any) => ({
-          id: a.id || a.name || 'main',
-          name: a.identityName || a.name || a.id,
-          emoji: a.identityEmoji || '🤖',
-          model: a.model || null,
-          bindings: a.bindingDetails || (typeof a.bindings === 'number' ? [] : a.bindings) || [],
-          isDefault: a.isDefault === true || a.id === 'main',
-          workspace: a.workspace || null,
-          routes: a.routes || [],
-        }));
-        return { success: true, agents };
-      } catch { /* parse failed, try text mode */ }
+        // Handle multiple known JSON schemas:
+        // - array directly: [{id, name, ...}]
+        // - {agents: [...]}
+        // - {data: [...]}
+        // - single object (wrapped in array)
+        let list: any[] = [];
+        if (Array.isArray(parsed)) {
+          list = parsed;
+        } else if (Array.isArray(parsed.agents)) {
+          list = parsed.agents;
+        } else if (Array.isArray(parsed.data)) {
+          list = parsed.data;
+        } else if (parsed && typeof parsed === 'object' && (parsed.id || parsed.name)) {
+          list = [parsed]; // single agent object
+        }
+        if (list.length > 0) {
+          const agents = list.map((a: any) => ({
+            id: a.id || a.name || 'main',
+            name: a.identityName || a.displayName || a.name || a.id,
+            emoji: a.identityEmoji || a.emoji || '🤖',
+            model: a.model || a.defaultModel || null,
+            bindings: Array.isArray(a.bindingDetails) ? a.bindingDetails : Array.isArray(a.bindings) ? a.bindings : [],
+            isDefault: a.isDefault === true || a.default === true || a.id === 'main',
+            workspace: a.workspace || a.workspacePath || null,
+            routes: a.routes || a.channels || [],
+          }));
+          return { success: true, agents };
+        }
+      } catch { /* parse failed, fall through to fallback */ }
     }
     // Fallback: default agent
     return { success: true, agents: [{ id: 'main', name: 'Main Agent', emoji: '🦞', isDefault: true, bindings: [] }] };
@@ -1161,8 +1180,17 @@ ipcMain.handle('app:get-dashboard-url', async () => {
   const output = await safeShellExecAsync('openclaw dashboard --no-open', 10000);
   if (!output) return { url: null };
 
-  const match = output.match(/Dashboard URL:\s*(http[^\s]+)/);
-  if (match) return { url: match[1] };
+  // Try multiple patterns — OpenClaw may change the label text across versions
+  const patterns = [
+    /Dashboard URL:\s*(http[^\s]+)/i,
+    /dashboard:\s*(http[^\s]+)/i,
+    /url:\s*(http[^\s]+)/i,
+    /(http:\/\/localhost:\d+[^\s]*)/,   // any localhost URL as fallback
+  ];
+  for (const pattern of patterns) {
+    const match = output.match(pattern);
+    if (match) return { url: match[1] };
+  }
 
   return { url: null };
 });
@@ -1500,6 +1528,18 @@ ipcMain.handle('chat:send', async (_e, message: string, sessionId?: string, opti
       // Also resolve with full clean text as fallback
       const cleanText = stdout.split('\n').filter(l => !isNoiseLine(l)).join('\n').trim();
       resolve({ success: true, text: cleanText || 'No response', sessionId: sid });
+
+      // Fire-and-forget: write desktop chat to Awareness memory
+      if (cleanText && cleanText !== 'No response') {
+        const userSnippet = message.slice(0, 300);
+        const assistantSnippet = cleanText.slice(0, 400);
+        const brief = `Request: ${userSnippet}\nResult: ${assistantSnippet}`;
+        callMcp('awareness_record', {
+          content: brief,
+          event_type: 'turn_brief',
+          source: 'desktop',
+        }).catch(() => { /* daemon may not be running */ });
+      }
     });
 
     child.on('error', (err) => resolve({ success: false, error: String(err), sessionId: sid }));
@@ -1755,10 +1795,38 @@ ipcMain.handle('channel:list-configured', async () => {
   // Return file-based result immediately, refresh cache in background
   safeShellExecAsync('openclaw channels list 2>/dev/null', 15000).then((output) => {
     if (!output) return;
+    // First try JSON output (more stable across versions)
+    try {
+      const jsonParsed = JSON.parse(output);
+      const arr = Array.isArray(jsonParsed) ? jsonParsed : (jsonParsed.channels || jsonParsed.items || []);
+      const jsonConfigured: string[] = arr
+        .filter((ch: any) => {
+          const s = (ch.status || ch.state || '').toLowerCase();
+          return s.includes('configured') || s.includes('linked') || s.includes('active') || s.includes('enabled');
+        })
+        .map((ch: any) => {
+          const id = (ch.id || ch.name || '').toLowerCase();
+          return _keyToFrontend[id] || id;
+        })
+        .filter(Boolean);
+      if (jsonConfigured.length > 0) {
+        _channelStatusCache.configured = jsonConfigured;
+        _channelStatusCache.ts = Date.now();
+        return;
+      }
+    } catch { /* not JSON, fall through to text parsing */ }
+    // Text parsing — try multiple patterns in order of likelihood
     const configured: string[] = [];
     for (const line of output.split('\n')) {
-      const match = line.match(/^-\s+(\S+)\s+.*?:\s*(configured|linked)/i);
-      if (match) configured.push(_keyToFrontend[match[1].toLowerCase()] || match[1].toLowerCase());
+      // Pattern 1: "- telegram default: configured, enabled" (current format)
+      const m1 = line.match(/^-\s+(\S+)\s+.*?:\s*(configured|linked|active)/i);
+      if (m1) { configured.push(_keyToFrontend[m1[1].toLowerCase()] || m1[1].toLowerCase()); continue; }
+      // Pattern 2: "telegram: configured" (simplified format)
+      const m2 = line.match(/^\s*(\w[\w-]*)\s*:\s*(configured|linked|active|enabled)/i);
+      if (m2 && m2[1] !== 'Channels') { configured.push(_keyToFrontend[m2[1].toLowerCase()] || m2[1].toLowerCase()); continue; }
+      // Pattern 3: "telegram [configured]" (bracket format)
+      const m3 = line.match(/^\s*(\w[\w-]*)\s+\[(configured|linked|active)\]/i);
+      if (m3) { configured.push(_keyToFrontend[m3[1].toLowerCase()] || m3[1].toLowerCase()); }
     }
     if (configured.length > 0) {
       _channelStatusCache.configured = configured;
@@ -1774,12 +1842,22 @@ ipcMain.handle('channel:list-supported', async () => {
   try {
     const output = await safeShellExecAsync('openclaw channels list', 8000);
     if (output) {
-      // Parse output lines — each line like "telegram default: configured, enabled" or "discord: not configured"
+      // Try JSON first
+      try {
+        const parsed = JSON.parse(output);
+        const arr = Array.isArray(parsed) ? parsed : (parsed.channels || parsed.items || []);
+        const channels = arr.map((ch: any) => (ch.id || ch.name || '').toLowerCase()).filter(Boolean);
+        if (channels.length > 0) return { success: true, channels };
+      } catch { /* not JSON */ }
+      // Text fallback — extract channel names from various line formats
+      const SKIP_WORDS = new Set(['channels', 'no', 'available', 'configured', 'status', 'list']);
       const channels: string[] = [];
       for (const line of output.split('\n')) {
-        const match = line.match(/^\s*(\w[\w-]*)/);
-        if (match && !line.startsWith(' ') && match[1] !== 'Channels' && match[1] !== 'No') {
-          channels.push(match[1].toLowerCase());
+        // Match channel name at start of line (with optional bullet or indent)
+        const match = line.match(/^[-*\s]*(\w[\w-]+)/);
+        if (match) {
+          const name = match[1].toLowerCase();
+          if (!SKIP_WORDS.has(name) && name.length > 1) channels.push(name);
         }
       }
       if (channels.length > 0) return { success: true, channels };

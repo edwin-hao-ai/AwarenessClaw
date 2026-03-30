@@ -142,7 +142,12 @@ export default function Channels() {
       // One-click: backend handles install + login + config
       const result = await (window.electronAPI as any).channelSetup(activeWizard);
       setTestStatus(result.success ? 'success' : 'error');
-      if (!result.success) setTestError(result.error || t('channels.setupFailed', 'Setup failed. Make sure Gateway is running in Settings.'));
+      if (!result.success) {
+        const errorMsg = result.error
+          ? result.error
+          : t('channels.setupFailed', 'Setup failed. Check Gateway in Settings.');
+        setTestError(errorMsg);
+      }
     } else {
       // Save config via CLI, then test
       const config = buildConfig()!;
@@ -400,6 +405,11 @@ export default function Channels() {
               <h2 className="text-lg font-semibold flex items-center gap-2">
                 <ChannelIcon channelId={activeWizard} size={24} />
                 {t('channels.connectPrefix')} {t(`channels.channel.${activeWizard}`)}
+                {configuredChannels.has(activeWizard) && (
+                  <span className="text-xs font-normal px-2 py-0.5 bg-amber-600/20 border border-amber-600/30 text-amber-400 rounded-full">
+                    ✏️ {t('channels.editingBadge', 'Editing')}
+                  </span>
+                )}
               </h2>
               <button onClick={closeWizard} className="text-slate-500 hover:text-slate-300"><X size={20} /></button>
             </div>
@@ -425,7 +435,7 @@ export default function Channels() {
                       className="px-5 py-2.5 bg-brand-600 hover:bg-brand-500 text-white rounded-xl text-sm font-medium transition-colors flex items-center gap-1.5"
                     >
                       {isOneClick
-                        ? <>{t('channels.connectBtn', 'Connect')} <Loader2 size={0} /></>
+                        ? t('channels.connectBtn', 'Connect')
                         : <>{t('channels.next')} <ChevronRight size={14} /></>}
                     </button>
                   </div>
@@ -435,6 +445,15 @@ export default function Channels() {
               {/* Step 2: Credentials (only for non one-click channels) */}
               {wizardStep === 'token' && (
                 <>
+                  {lastError && (
+                    <div className="p-3 bg-red-900/20 border border-red-600/30 rounded-lg text-xs text-red-400 break-words">
+                      <span className="font-medium">{t('channels.lastErrorPrefix', 'Last attempt failed:')}</span>{' '}
+                      {lastError}
+                      {!lastError.trim() || lastError === t('channels.setupFailed', 'Setup failed. Check Gateway in Settings.') ? null : (
+                        <span className="block mt-1 text-red-400/70">{t('channels.checkGatewayHint', 'If the issue persists, check Gateway in Settings.')}</span>
+                      )}
+                    </div>
+                  )}
                   {getTokenForm()}
                   <div className="flex justify-between">
                     <button onClick={() => setWizardStep('intro')} className="px-4 py-2 text-slate-400 hover:text-slate-200 flex items-center gap-1 text-sm">
@@ -476,7 +495,11 @@ export default function Channels() {
                             {testError}
                           </p>
                         )}
-                        <button onClick={() => { setTestError(null); setWizardStep(isOneClick ? 'intro' : 'token'); }}
+                        <button onClick={() => {
+                          if (!isOneClick && testError) setLastError(testError);
+                          setTestError(null);
+                          setWizardStep(isOneClick ? 'intro' : 'token');
+                        }}
                           className="text-sm text-brand-400 hover:text-brand-300">
                           {t('channels.tryAgain', 'Try again')}
                         </button>

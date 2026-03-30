@@ -132,26 +132,24 @@
 > **目标**：让 Awareness 记忆成为 OpenClaw 的**唯一记忆源**，覆盖所有通道（微信/WhatsApp/Telegram/桌面聊天），深度替代 OpenClaw 的 `memory-core` + `memory-lancedb` 原生记忆，并超越 QMD 插件的功能。
 
 ### 记忆页重写（去 mock，真实数据）
-- [ ] **去掉所有 mock fallback**：daemon 没连接时显示空状态 + "Start Daemon" Fix 按钮（一键拉起）
-- [ ] **记忆时间线视图**：展示实际记忆事件（不只是知识卡），包含时间、内容摘要、来源通道、会话 ID
-- [ ] **记忆详情展开**：点击卡片/事件展开完整内容（当前只显示 title + summary，缺少详情）
+- [x] **去掉所有 mock fallback**：daemon 没连接时显示空状态 + "Start Daemon" Fix 按钮（一键拉起）（2026-03-30）
+- [x] **记忆时间线视图**：展示实际记忆事件（不只是知识卡），包含时间、内容摘要、来源通道、会话 ID（2026-03-30）
+- [x] **记忆详情展开**：点击事件展开完整内容，超过 200 字自动折叠（2026-03-30）
 - [ ] **记忆搜索结果高亮**：语义搜索返回的结果在内容中高亮匹配片段
 
 ### 全通道记忆捕获
-- [ ] **微信/WhatsApp/Telegram 消息自动写入 Awareness 记忆**：从 OpenClaw Gateway session 数据中捕获所有通道对话
-  - 方案 A：Gateway 侧 hook — 在 `openclaw.json → hooks → command:new` 中注册 Awareness 记录
-  - 方案 B：轮询 session 文件 — 定时读 `~/.openclaw/agents/main/sessions/` 新数据写入记忆
-  - 方案 C：Awareness 插件的 `auto-capture` 模式已有此能力（需要验证 Gateway 模式是否生效）
-- [ ] **桌面聊天消息也写入记忆**：当前 `chat:send` 只调 `openclaw agent` CLI，返回的对话不经过记忆系统
-- [ ] **通道来源标记**：记忆事件标记 `source: "wechat"` / `"whatsapp"` / `"desktop"` / `"telegram"`
+- [x] **微信/WhatsApp/Telegram 消息自动写入 Awareness 记忆**：验证确认 OpenClaw 插件 `agent_end` hook 在 Gateway 模式下已生效（Agent 绑定到通道时触发），添加通道来源检测（2026-03-30）
+  - 方案 C 确认：`agent_end` hook 在 Gateway 模式下自动触发（Agent 处理通道消息后），source 从 context 动态提取通道名
+- [x] **桌面聊天消息也写入记忆**：`chat:send` 完成后 fire-and-forget 调 `awareness_record`，source 标记为 `desktop`（2026-03-30）
+- [x] **通道来源标记**：`agent_end` hook 中从 context 提取 channel/channelId/source，生成 `openclaw-{channel}` 格式的 source 标记（2026-03-30）
 - [ ] **桌面端可查看所有通道的对话历史**：读 OpenClaw session 数据，在桌面聊天 UI 或记忆页中展示
 
 ### 本地向量搜索
-- [ ] **本地 embedding 模型自动下载**：daemon 首次启动时自动下载小型 embedding 模型（如 `all-MiniLM-L6-v2` ~22MB），不依赖在线 API
-  - 当前 `@awareness-sdk/local` 用 `better-sqlite3` FTS5 做全文搜索，不是真正的向量搜索
-  - 需要集成 `onnxruntime-node` + 小模型实现本地 embedding
-  - Doctor 检查项：验证 embedding 模型是否已下载
-- [ ] **混合搜索**：本地向量搜索 + FTS5 全文搜索混合排序
+- [x] **本地 embedding 模型自动下载**：已实现，使用 `@huggingface/transformers` (ONNX WASM) + `Xenova/all-MiniLM-L6-v2` (23MB)，daemon 启动时后台预热+下载，改进了诊断日志和 healthz 返回 embedding 状态（2026-03-30）
+  - 当前 daemon healthz 确认 `search_mode: "hybrid"`，模型正常工作
+  - healthz 新增 `embedding` 字段返回可用状态和模型名
+  - 失败时输出清晰的诊断信息（常见原因 + 修复命令）
+- [x] **混合搜索**：已实现，向量搜索 + FTS5 全文搜索混合排序（search.mjs），daemon healthz 显示 `search_mode: "hybrid"`（2026-03-30）
 
 ### 超越 QMD 插件的差异化功能
 - [ ] **知识卡片自动提炼**：从对话中自动提取决策、问题解决、工作流等结构化知识（已有后端能力，需要前端展示优化）

@@ -69,6 +69,12 @@ function cronToHuman(expr: string): string {
   return `${days} ${timeStr}`;
 }
 
+// Validate a custom cron expression: must have exactly 5 non-empty space-separated fields
+function isValidCron(expr: string): boolean {
+  const parts = expr.trim().split(/\s+/);
+  return parts.length === 5 && parts.every(p => p.length > 0);
+}
+
 const PRESETS = [
   { label: 'Daily 9 AM', freq: 'daily' as FrequencyType, hour: 9, minute: 0, weekdays: [] as number[], cmd: 'Check my to-do list and give me a summary' },
   { label: 'Every hour', freq: 'hourly' as FrequencyType, hour: 0, minute: 0, weekdays: [] as number[], cmd: 'Check if there are new messages to reply' },
@@ -106,6 +112,10 @@ export default function Automation() {
   const [newCommand, setNewCommand] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [customCron, setCustomCron] = useState('');
+
+  // Delete confirmation state
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null); // job id pending delete
+  const [removeError, setRemoveError] = useState<string | null>(null);
 
   useEffect(() => {
     loadJobs();
@@ -161,10 +171,15 @@ export default function Automation() {
     setShowAddForm(false);
   };
 
-  const removeJob = async (id: string) => {
-    if (!confirm('Delete this task?')) return;
+  // Performs the actual removal after confirmation
+  const doRemoveJob = async (id: string) => {
+    setRemoveError(null);
     if (window.electronAPI) {
-      await (window.electronAPI as any).cronRemove(id);
+      const result = await (window.electronAPI as any).cronRemove(id);
+      if (result && result.error) {
+        setRemoveError(result.error);
+        return;
+      }
       loadJobs();
     }
   };
@@ -188,8 +203,34 @@ export default function Automation() {
   const hours = Array.from({ length: 24 }, (_, i) => i);
   const minutes = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
 
+  // Determine if the Create button should be disabled
+  const isCreateDisabled = !cronExpression || !newCommand || (frequency === 'custom' && !isValidCron(customCron));
+
   return (
     <div className="h-full flex flex-col">
+      {/* Delete confirmation modal */}
+      {deleteConfirm && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-8">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-xs p-5 space-y-4">
+            <p className="text-sm text-slate-200">{t('auto.deleteConfirm', 'Delete this scheduled task?')}</p>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setDeleteConfirm(null)}
+                className="px-4 py-1.5 text-sm text-slate-400 hover:text-slate-200"
+              >
+                {t('auto.cancel')}
+              </button>
+              <button
+                onClick={() => { doRemoveJob(deleteConfirm); setDeleteConfirm(null); }}
+                className="px-4 py-1.5 text-sm bg-red-600 hover:bg-red-500 text-white rounded-lg transition-colors"
+              >
+                {t('common.delete', 'Delete')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="px-6 py-4 border-b border-slate-800">
         <div className="flex items-center justify-between">
@@ -381,7 +422,11 @@ export default function Automation() {
                     placeholder="0 9 * * * (daily at 9 AM)"
                     className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-sm font-mono focus:outline-none focus:border-brand-500"
                   />
-                  <p className="text-[10px] text-slate-600 mt-1">Format: minute hour day month weekday</p>
+                  {customCron && !isValidCron(customCron) ? (
+                    <p className="text-[10px] text-amber-400 mt-1">Needs 5 fields: minute hour day month weekday</p>
+                  ) : (
+                    <p className="text-[10px] text-slate-600 mt-1">Format: minute hour day month weekday</p>
+                  )}
                 </div>
               )}
 
@@ -433,12 +478,19 @@ export default function Automation() {
                 <button onClick={() => { resetForm(); setAddError(null); }} className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200">{t('auto.cancel')}</button>
                 <button
                   onClick={addJob}
-                  disabled={!cronExpression || !newCommand}
+                  disabled={isCreateDisabled}
                   className="px-4 py-1.5 text-xs bg-brand-600 hover:bg-brand-500 disabled:bg-slate-700 text-white rounded-lg transition-colors"
                 >
                   {t('auto.create')}
                 </button>
               </div>
+            </div>
+          )}
+
+          {/* Remove error */}
+          {removeError && (
+            <div className="text-xs text-red-400 bg-red-600/10 border border-red-600/20 rounded-lg px-3 py-2">
+              {removeError}
             </div>
           )}
 
@@ -467,7 +519,7 @@ export default function Automation() {
                 )}
               </div>
               <button
-                onClick={() => job.id && removeJob(job.id)}
+                onClick={() => job.id && setDeleteConfirm(job.id)}
                 className="opacity-0 group-hover:opacity-100 text-slate-600 hover:text-red-400 transition-all p-1"
               >
                 <Trash2 size={14} />

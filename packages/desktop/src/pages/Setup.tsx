@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronRight, ChevronLeft, Loader2, Check, Globe } from 'lucide-react';
+import { ChevronRight, ChevronLeft, Loader2, Check, Globe, AlertTriangle, RefreshCw } from 'lucide-react';
 import { useAppConfig, MODEL_PROVIDERS, type ModelProviderDef } from '../lib/store';
 import { useI18n } from '../lib/i18n';
 import PasswordInput from '../components/PasswordInput';
@@ -31,6 +31,11 @@ export default function SetupWizard({ onComplete }: SetupProps) {
     { key: 'daemon', labelKey: 'setup.install.daemon', status: 'pending' as const, detail: '' },
   ]);
 
+  // Track which step failed so user can retry from there
+  const [installError, setInstallError] = useState<{ key: string; message: string } | null>(null);
+  // Track skipped model step so back button in memory goes to right place
+  const [skippedModelStep, setSkippedModelStep] = useState(false);
+
   // Model config
   const [selectedProvider, setSelectedProvider] = useState<string | null>(null);
   const [apiKey, setApiKey] = useState('');
@@ -47,75 +52,124 @@ export default function SetupWizard({ onComplete }: SetupProps) {
     setInstallSteps((prev) => prev.map((s) => s.key === key ? { ...s, status, ...(detail !== undefined ? { detail } : {}) } : s));
   };
 
-  const runInstallation = async () => {
+  const runInstallation = async (retryFromKey?: string) => {
     setStep('installing');
+    setInstallError(null);
     const api = window.electronAPI;
 
     // In browser dev mode (no Electron), simulate
     const simulate = !api;
 
-    // Step 1: Detect environment
-    updateInstallStep('detect', 'running');
-    let env: any = {};
-    if (simulate) {
-      await new Promise((r) => setTimeout(r, 800));
-      env = { systemNodeInstalled: true, openclawInstalled: false };
-    } else {
-      env = await api!.detectEnvironment();
+    // Reset steps that need to re-run (from retry point onwards)
+    const stepKeys = ['detect', 'nodejs', 'openclaw', 'plugin', 'daemon'];
+    const startIdx = retryFromKey ? stepKeys.indexOf(retryFromKey) : 0;
+    if (startIdx > 0) {
+      // Only reset from retry point; keep earlier successes
+      setInstallSteps((prev) => prev.map((s) => {
+        const idx = stepKeys.indexOf(s.key);
+        return idx >= startIdx ? { ...s, status: 'pending', detail: '' } : s;
+      }));
     }
-    updateInstallStep('detect', 'done');
 
-    // Step 2: Ensure Node.js is available
-    updateInstallStep('nodejs', 'running');
-    if (env.systemNodeInstalled) {
-      updateInstallStep('nodejs', 'done', t('setup.install.alreadyInstalled'));
-    } else {
-      updateInstallStep('nodejs', 'running', t('setup.install.installingNode'));
+    // Step 1: Detect environment
+    if (startIdx <= 0) {
+      updateInstallStep('detect', 'running');
+      let env: any = {};
       if (simulate) {
-        await new Promise((r) => setTimeout(r, 2000));
+        await new Promise((r) => setTimeout(r, 800));
+        env = { systemNodeInstalled: true, openclawInstalled: false };
       } else {
-        const res = await api!.installNodeJs();
-        if (!res.success) {
-          updateInstallStep('nodejs', 'error', t('setup.install.nodeFailed'));
-          return;
-        }
+        env = await api!.detectEnvironment();
       }
-      updateInstallStep('nodejs', 'done');
+      updateInstallStep('detect', 'done');
+
+      // Step 2: Ensure Node.js is available
+      updateInstallStep('nodejs', 'running');
+      if (env.systemNodeInstalled) {
+        updateInstallStep('nodejs', 'done', t('setup.install.alreadyInstalled'));
+      } else {
+        updateInstallStep('nodejs', 'running', t('setup.install.installingNode'));
+        if (simulate) {
+          await new Promise((r) => setTimeout(r, 2000));
+        } else {
+          const res = await api!.installNodeJs();
+          if (!res.success) {
+            updateInstallStep('nodejs', 'error', res.error || t('setup.install.nodeFailed'));
+            setInstallError({ key: 'nodejs', message: res.error || t('setup.install.nodeFailed') });
+            return;
+          }
+        }
+        updateInstallStep('nodejs', 'done');
+      }
     }
 
     // Step 3: Install OpenClaw
-    updateInstallStep('openclaw', 'running');
-    if (env.openclawInstalled) {
-      updateInstallStep('openclaw', 'done', t('setup.install.alreadyInstalled'));
-    } else {
-      if (simulate) {
-        await new Promise((r) => setTimeout(r, 2000));
+    if (startIdx <= stepKeys.indexOf('openclaw')) {
+      updateInstallStep('openclaw', 'running');
+      let env: any = {};
+      if (!simulate && startIdx <= 0) {
+        // env already loaded above; re-detect if retrying from openclaw
+      } else if (!simulate) {
+        env = await api!.detectEnvironment();
       } else {
-        const res = await api!.installOpenClaw();
-        if (!res.success) {
-          updateInstallStep('openclaw', 'error', t('setup.install.networkFailed'));
-          return;
-        }
+        env = { openclawInstalled: false };
       }
-      updateInstallStep('openclaw', 'done');
 
-      // Run bootstrap for newly installed OpenClaw
-      if (!simulate && api) {
-        await (api as any).bootstrap();
+      if (env.openclawInstalled) {
+        updateInstallStep('openclaw', 'done', t('setup.install.alreadyInstalled'));
+      } else {
+        if (simulate) {
+          await new Promise((r) => setTimeout(r, 2000));
+        } else {
+          const res = await api!.installOpenClaw();
+          if (!res.success) {
+            updateInstallStep('openclaw', 'error', res.error || t('setup.install.networkFailed'));
+            setInstallError({ key: 'openclaw', message: res.error || t('setup.install.networkFailed') });
+            return;
+          }
+        }
+        updateInstallStep('openclaw', 'done');
+
+        // Run bootstrap for newly installed OpenClaw
+        if (!simulate && api) {
+          await (api as any).bootstrap();
+        }
       }
     }
 
     // Step 4: Install plugin
-    updateInstallStep('plugin', 'running');
-    if (simulate) await new Promise((r) => setTimeout(r, 1500));
-    else await api!.installPlugin();
-    updateInstallStep('plugin', 'done');
+    if (startIdx <= stepKeys.indexOf('plugin')) {
+      updateInstallStep('plugin', 'running');
+      if (simulate) {
+        await new Promise((r) => setTimeout(r, 1500));
+        updateInstallStep('plugin', 'done');
+      } else {
+        const res = await api!.installPlugin();
+        if (res && !res.success) {
+          updateInstallStep('plugin', 'error', res.error || t('setup.install.pluginFailed', 'Plugin install failed'));
+          setInstallError({ key: 'plugin', message: res.error || t('setup.install.pluginFailed', 'Plugin install failed') });
+          return;
+        }
+        updateInstallStep('plugin', 'done');
+      }
+    }
 
     // Step 5: Start daemon
-    updateInstallStep('daemon', 'running');
-    if (simulate) await new Promise((r) => setTimeout(r, 1000));
-    else await api!.startDaemon();
-    updateInstallStep('daemon', 'done');
+    if (startIdx <= stepKeys.indexOf('daemon')) {
+      updateInstallStep('daemon', 'running');
+      if (simulate) {
+        await new Promise((r) => setTimeout(r, 1000));
+        updateInstallStep('daemon', 'done');
+      } else {
+        const res = await api!.startDaemon();
+        if (res && !res.success) {
+          // Daemon start failure is non-fatal — warn but continue
+          updateInstallStep('daemon', 'done', t('setup.install.daemonOptional', 'Memory daemon will start on first use'));
+        } else {
+          updateInstallStep('daemon', 'done');
+        }
+      }
+    }
 
     // Check if user already has OpenClaw configured with models
     await new Promise((r) => setTimeout(r, 500));
@@ -123,11 +177,13 @@ export default function SetupWizard({ onComplete }: SetupProps) {
       const existing = await (api as any).readExistingConfig();
       if (existing?.hasProviders) {
         setExistingConfig(existing);
+        setSkippedModelStep(true);
         // User already has models configured — skip model selection
         setStep('memory');
         return;
       }
     }
+    setSkippedModelStep(false);
     setStep('model');
   };
 
@@ -147,6 +203,11 @@ export default function SetupWizard({ onComplete }: SetupProps) {
   const handleFinish = () => {
     onComplete();
   };
+
+  // Which step failed label for display
+  const failedStepLabel = installError
+    ? installSteps.find(s => s.key === installError.key)?.labelKey
+    : null;
 
   return (
     <div className="h-screen flex flex-col bg-slate-900">
@@ -202,7 +263,7 @@ export default function SetupWizard({ onComplete }: SetupProps) {
               </div>
               <div className="flex flex-col items-center gap-4">
                 <button
-                  onClick={runInstallation}
+                  onClick={() => runInstallation()}
                   className="px-8 py-3 bg-brand-600 hover:bg-brand-500 text-white rounded-xl text-lg font-medium transition-colors flex items-center gap-2"
                 >
                   {t('setup.welcome.start')}
@@ -234,18 +295,18 @@ export default function SetupWizard({ onComplete }: SetupProps) {
                     className={`flex items-center gap-4 p-4 rounded-xl transition-all ${
                       s.status === 'running' ? 'bg-brand-600/10 border border-brand-600/30' :
                       s.status === 'done' ? 'bg-emerald-600/10' :
-                      s.status === 'error' ? 'bg-red-600/10' :
+                      s.status === 'error' ? 'bg-red-600/10 border border-red-600/20' :
                       'bg-slate-800/50'
                     }`}
                   >
                     <div className="w-8 h-8 flex items-center justify-center">
                       {s.status === 'running' && <Loader2 size={20} className="animate-spin text-brand-400" />}
                       {s.status === 'done' && <Check size={20} className="text-emerald-400" />}
-                      {s.status === 'error' && <span className="text-red-400">✕</span>}
+                      {s.status === 'error' && <AlertTriangle size={20} className="text-red-400" />}
                       {s.status === 'pending' && <div className="w-3 h-3 rounded-full bg-slate-600" />}
                     </div>
                     <div className="flex-1">
-                      <span className={s.status === 'done' ? 'text-emerald-300' : s.status === 'running' ? 'text-brand-300' : 'text-slate-400'}>
+                      <span className={s.status === 'done' ? 'text-emerald-300' : s.status === 'running' ? 'text-brand-300' : s.status === 'error' ? 'text-red-300' : 'text-slate-400'}>
                         {t(s.labelKey)}
                       </span>
                       {s.detail && <p className="text-xs text-slate-500 mt-0.5">{s.detail}</p>}
@@ -254,6 +315,37 @@ export default function SetupWizard({ onComplete }: SetupProps) {
                   </div>
                 ))}
               </div>
+
+              {/* Error recovery panel */}
+              {installError && (
+                <div className="p-4 bg-red-900/20 border border-red-600/30 rounded-xl space-y-3">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle size={16} className="text-red-400 mt-0.5 flex-shrink-0" />
+                    <div>
+                      <p className="text-sm text-red-300 font-medium">
+                        {t('setup.install.stepFailed', 'A step failed')}
+                        {failedStepLabel ? `: ${t(failedStepLabel)}` : ''}
+                      </p>
+                      <p className="text-xs text-red-400/70 mt-1">{installError.message}</p>
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => runInstallation(installError.key)}
+                      className="flex items-center gap-1.5 px-4 py-2 bg-red-600/20 hover:bg-red-600/30 border border-red-600/30 text-red-300 rounded-lg text-sm transition-colors"
+                    >
+                      <RefreshCw size={14} />
+                      {t('setup.install.retry', 'Retry')}
+                    </button>
+                    <button
+                      onClick={() => setStep('welcome')}
+                      className="px-4 py-2 text-slate-400 hover:text-slate-200 text-sm"
+                    >
+                      {t('setup.back')}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -410,6 +502,21 @@ export default function SetupWizard({ onComplete }: SetupProps) {
                 <h2 className="text-2xl font-bold mb-2">
                   {t('setup.memory.title')}
                 </h2>
+                {/* Show skipped step notice */}
+                {skippedModelStep && existingConfig && (
+                  <div className="mt-2 px-4 py-2 bg-emerald-600/10 border border-emerald-600/20 rounded-lg text-xs text-emerald-400 inline-flex items-center gap-1.5">
+                    <Check size={12} />
+                    {t('setup.model.alreadyConfigured', 'Model already configured')}
+                    {existingConfig.primaryModel ? `: ${existingConfig.primaryModel}` : ''}
+                    {' — '}
+                    <button
+                      onClick={() => setStep('model')}
+                      className="underline hover:no-underline"
+                    >
+                      {t('setup.model.change', 'Change')}
+                    </button>
+                  </div>
+                )}
               </div>
 
               <div className="space-y-4">
@@ -457,7 +564,7 @@ export default function SetupWizard({ onComplete }: SetupProps) {
 
               <div className="flex justify-between">
                 <button
-                  onClick={() => setStep('model')}
+                  onClick={() => skippedModelStep ? setStep('installing') : setStep('model')}
                   className="px-4 py-2 text-slate-400 hover:text-slate-200 flex items-center gap-1"
                 >
                   <ChevronLeft size={16} />

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Send, Paperclip, ChevronDown, ChevronRight, ExternalLink, Loader2, Copy, Check, X, File, Image, Plus, Brain, Key, Wrench, Search, BookOpen, Save, Zap, CheckCircle2, Terminal } from 'lucide-react';
+import { Send, Paperclip, ChevronDown, ChevronRight, ExternalLink, Loader2, Copy, Check, X, File, Image, Plus, Brain, Key, Wrench, Search, BookOpen, Save, Zap, CheckCircle2, Terminal, AlertTriangle } from 'lucide-react';
 import PasswordInput from '../components/PasswordInput';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -221,6 +221,11 @@ export default function Dashboard() {
   const [isDragOver, setIsDragOver] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Confirm dialog state (replaces native window.confirm)
+  const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
+  // Stream timeout tracking
+  const streamTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const STREAM_TIMEOUT_MS = 60000; // 60s without any chunk = timeout
 
   const { providers: allProviders } = useDynamicProviders();
   const currentProvider = allProviders.find(p => p.key === config.providerKey);
@@ -249,6 +254,12 @@ export default function Dashboard() {
       setStreamingContent(streamingRef.current);
       // Switch to generating status when we start receiving text
       setAgentStatus('generating');
+      // Reset stream timeout on each chunk
+      if (streamTimeoutRef.current) clearTimeout(streamTimeoutRef.current);
+      streamTimeoutRef.current = setTimeout(() => {
+        // No chunk received for STREAM_TIMEOUT_MS — treat as stalled
+        setAgentStatus('error');
+      }, STREAM_TIMEOUT_MS);
     });
 
     // Status events (agent lifecycle + tool calls + gateway auto-start)
@@ -339,6 +350,11 @@ export default function Dashboard() {
     setActiveToolCalls([]);
     streamingRef.current = '';
     setStreamingContent('');
+    // Start overall stream timeout from first send
+    if (streamTimeoutRef.current) clearTimeout(streamTimeoutRef.current);
+    streamTimeoutRef.current = setTimeout(() => {
+      setAgentStatus('error');
+    }, STREAM_TIMEOUT_MS);
 
     if (window.electronAPI) {
       // Model is configured via openclaw.json (synced by store.ts), not passed per-message.
@@ -366,7 +382,8 @@ export default function Dashboard() {
       }));
       // Track usage for cost estimation
       trackUsage(config.providerKey, config.modelId, text, responseText);
-      // Clear streaming state
+      // Clear streaming state and timeout
+      if (streamTimeoutRef.current) clearTimeout(streamTimeoutRef.current);
       streamingRef.current = '';
       setStreamingContent('');
     } else {
@@ -438,6 +455,28 @@ export default function Dashboard() {
       onDragLeave={e => { if (e.currentTarget === e.target || !e.currentTarget.contains(e.relatedTarget as Node)) setIsDragOver(false); }}
       onDrop={e => { handleFileDrop(e); setIsDragOver(false); }}
     >
+      {/* Custom confirm dialog */}
+      {confirmDialog && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[200] p-8">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-xs p-5 space-y-4">
+            <p className="text-sm text-slate-200">{confirmDialog.message}</p>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setConfirmDialog(null)}
+                className="px-4 py-1.5 text-sm text-slate-400 hover:text-slate-200"
+              >
+                {t('common.cancel', 'Cancel')}
+              </button>
+              <button
+                onClick={() => { confirmDialog.onConfirm(); setConfirmDialog(null); }}
+                className="px-4 py-1.5 text-sm bg-red-600 hover:bg-red-500 text-white rounded-lg transition-colors"
+              >
+                {t('common.delete', 'Delete')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Session sidebar */}
       {showSidebar && (
         <div className="w-64 bg-slate-950 border-r border-slate-800 flex flex-col flex-shrink-0">
@@ -476,7 +515,10 @@ export default function Dashboard() {
                   <span className="truncate flex-1">{s.title}</span>
                 )}
                 <button
-                  onClick={(e) => { e.stopPropagation(); if (!confirm('Delete this session?')) return; deleteSession(s.id); }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setConfirmDialog({ message: t('chat.deleteSession', 'Delete this session?'), onConfirm: () => deleteSession(s.id) });
+                  }}
                   className="opacity-0 group-hover:opacity-100 text-slate-600 hover:text-red-400 p-0.5 ml-1"
                 >
                   <X size={12} />
@@ -715,7 +757,7 @@ export default function Dashboard() {
           {agentStatus !== 'idle' && (
             <div className="group">
               <div className="flex gap-3">
-                <img src={logoUrl} alt="" className="w-7 h-7 rounded-lg mt-0.5 flex-shrink-0 animate-pulse" />
+                <img src={logoUrl} alt="" className={`w-7 h-7 rounded-lg mt-0.5 flex-shrink-0 ${agentStatus !== 'error' ? 'animate-pulse' : ''}`} />
                 <div className="flex-1 min-w-0">
                   {/* Meta line */}
                   <div className="flex items-center gap-2 mb-1.5">
@@ -723,8 +765,27 @@ export default function Dashboard() {
                     {config.modelId && <span className="text-[10px] text-slate-600">{config.modelId}</span>}
                   </div>
 
+                  {/* Error / stalled state */}
+                  {agentStatus === 'error' && (
+                    <div className="flex items-center gap-2 text-sm text-red-400">
+                      <AlertTriangle size={14} />
+                      <span>{t('chat.status.error', 'Response timed out or failed')}</span>
+                      <button
+                        onClick={() => {
+                          if (streamTimeoutRef.current) clearTimeout(streamTimeoutRef.current);
+                          streamingRef.current = '';
+                          setStreamingContent('');
+                          setAgentStatus('idle');
+                        }}
+                        className="ml-2 px-2 py-0.5 text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition-colors"
+                      >
+                        {t('chat.dismiss', 'Dismiss')}
+                      </button>
+                    </div>
+                  )}
+
                   {/* Tool calls section */}
-                  {activeToolCalls.length > 0 && (
+                  {agentStatus !== 'error' && activeToolCalls.length > 0 && (
                     <div className="mb-2 space-y-1 pb-2 border-b border-slate-700/30">
                       {activeToolCalls.slice(-5).map(tc => (
                         <div key={tc.id} className="flex items-center gap-1.5 text-[11px] text-slate-500">
@@ -740,7 +801,7 @@ export default function Dashboard() {
                   )}
 
                   {/* Streaming text content — no bubble */}
-                  {streamingContent ? (
+                  {agentStatus !== 'error' && streamingContent ? (
                     <div className="text-sm text-slate-200 leading-relaxed">
                       <div className="prose prose-invert prose-sm max-w-none">
                         <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
@@ -756,12 +817,12 @@ export default function Dashboard() {
                         <span className="animate-pulse text-brand-400">▊</span>
                       </div>
                     </div>
-                  ) : (
+                  ) : agentStatus !== 'error' ? (
                     <div className="flex items-center gap-2 text-sm text-slate-400">
                       <Loader2 size={14} className="animate-spin text-brand-400" />
                       <span>{statusLabel}</span>
                     </div>
-                  )}
+                  ) : null}
                 </div>
               </div>
             </div>
@@ -820,9 +881,13 @@ export default function Dashboard() {
                 value={input}
                 onChange={e => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder={t('chat.input.placeholder')}
+                placeholder={
+                  agentStatus === 'thinking' ? t('chat.input.waiting', 'Agent is thinking...') :
+                  agentStatus === 'generating' ? t('chat.input.generating', 'Generating response...') :
+                  t('chat.input.placeholder')
+                }
                 rows={1}
-                className="w-full px-4 py-2.5 bg-slate-800 rounded-xl text-sm focus:outline-none focus:ring-1 focus:ring-brand-500/50 resize-none transition-all placeholder:text-slate-600"
+                className="w-full px-4 py-2.5 bg-slate-800 rounded-xl text-sm focus:outline-none focus:ring-1 focus:ring-brand-500/50 resize-none transition-all placeholder:text-slate-600 disabled:opacity-50 disabled:cursor-not-allowed"
                 style={{ minHeight: '42px', maxHeight: '120px', height: input.includes('\n') ? 'auto' : '42px' }}
                 disabled={agentStatus !== 'idle'}
               />
