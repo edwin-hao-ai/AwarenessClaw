@@ -1,28 +1,28 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { ChevronRight, ChevronLeft, Check, ExternalLink, X, Loader2 } from 'lucide-react';
 import { useI18n } from '../lib/i18n';
 import PasswordInput from '../components/PasswordInput';
+import ChannelIcon from '../components/ChannelIcon';
 
 interface Channel {
   id: string;
-  emoji: string;
   connected: boolean;
   supported: boolean;
 }
 
 const CHANNELS: Channel[] = [
-  { id: 'local', emoji: '💬', connected: true, supported: true },
-  { id: 'telegram', emoji: '📱', connected: false, supported: true },
-  { id: 'discord', emoji: '🎮', connected: false, supported: true },
-  { id: 'whatsapp', emoji: '💚', connected: false, supported: true },
-  { id: 'wechat', emoji: '💬', connected: false, supported: true },
-  { id: 'slack', emoji: '💼', connected: false, supported: true },
-  { id: 'signal', emoji: '🔒', connected: false, supported: true },
-  { id: 'imessage', emoji: '🍎', connected: false, supported: true },
-  { id: 'feishu', emoji: '🐦', connected: false, supported: true },
-  { id: 'line', emoji: '🟢', connected: false, supported: true },
-  { id: 'matrix', emoji: '🔷', connected: false, supported: true },
-  { id: 'google-chat', emoji: '💼', connected: false, supported: true },
+  { id: 'local', connected: true, supported: true },
+  { id: 'telegram', connected: false, supported: true },
+  { id: 'discord', connected: false, supported: true },
+  { id: 'whatsapp', connected: false, supported: true },
+  { id: 'wechat', connected: false, supported: true },
+  { id: 'slack', connected: false, supported: true },
+  { id: 'signal', connected: false, supported: true },
+  { id: 'imessage', connected: false, supported: true },
+  { id: 'feishu', connected: false, supported: true },
+  { id: 'line', connected: false, supported: true },
+  { id: 'matrix', connected: false, supported: true },
+  { id: 'google-chat', connected: false, supported: true },
 ];
 
 type WizardStep = 'intro' | 'token' | 'test';
@@ -51,13 +51,15 @@ export default function Channels() {
 
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [testError, setTestError] = useState<string | null>(null);
+  const [lastError, setLastError] = useState<string | null>(null);
   const [configuredChannels, setConfiguredChannels] = useState<Set<string>>(new Set());
   const [channels, setChannels] = useState<Channel[]>(CHANNELS);
   const [loadingChannels, setLoadingChannels] = useState(true);
+  const hasLoadedOnce = useRef(false);
 
-  const loadConfiguredChannels = async () => {
+  const loadConfiguredChannels = async (showLoading = true) => {
     if (!window.electronAPI) { setLoadingChannels(false); return; }
-    setLoadingChannels(true);
+    if (showLoading) setLoadingChannels(true);
     try {
       const result = await (window.electronAPI as any).channelListConfigured();
       const configured = new Set<string>(result.configured || []);
@@ -72,12 +74,13 @@ export default function Channels() {
         const knownIds = new Set(CHANNELS.map(c => c.id));
         const extra: Channel[] = [];
         for (const ch of supported.channels) {
-          if (!knownIds.has(ch)) extra.push({ id: ch, emoji: '💬', connected: false, supported: true });
+          if (!knownIds.has(ch)) extra.push({ id: ch, connected: false, supported: true });
         }
         if (extra.length > 0) setChannels([...CHANNELS, ...extra]);
       }
     } catch { /* fallback */ }
     setLoadingChannels(false);
+    hasLoadedOnce.current = true;
   };
 
   useEffect(() => { loadConfiguredChannels(); }, []);
@@ -89,7 +92,7 @@ export default function Channels() {
     setFeishuAppId(''); setFeishuAppSecret('');
     setMatrixServer(''); setMatrixUser(''); setMatrixPass('');
     setGchatKeyFile('');
-    setTestStatus('idle'); setTestError(null);
+    setTestStatus('idle'); setTestError(null); setLastError(null);
 
     // Pre-fill if already configured
     if (window.electronAPI && configuredChannels.has(channelId)) {
@@ -106,7 +109,7 @@ export default function Channels() {
     }
   };
 
-  const closeWizard = () => { setActiveWizard(null); loadConfiguredChannels(); };
+  const closeWizard = () => { setActiveWizard(null); loadConfiguredChannels(false); };
 
   // Build config for save — only the essentials, backend handles defaults
   const buildConfig = (): Record<string, string> | null => {
@@ -213,7 +216,15 @@ export default function Channels() {
         return (
           <div className="p-4 bg-slate-800/50 rounded-xl">
             <p className="text-sm text-slate-300">{t(`channels.guide.${activeWizard}`, t('channels.guide.default'))}</p>
-            <button onClick={() => window.electronAPI?.openExternal(`https://docs.openclaw.ai/channels/${activeWizard}`)}
+            <button onClick={() => {
+              // Map frontend IDs to real doc slugs
+              const docSlugs: Record<string, string> = {
+                'google-chat': 'googlechat', 'wechat': 'googlechat', // wechat has no doc page, fallback
+                'feishu': 'googlechat', // feishu is plugin, no dedicated doc
+              };
+              const slug = docSlugs[activeWizard!] || activeWizard;
+              window.electronAPI?.openExternal(`https://docs.openclaw.ai/channels/${slug}`);
+            }}
               className="mt-3 flex items-center gap-1.5 text-sm text-brand-400 hover:text-brand-300">
               <ExternalLink size={14} /> {t('channels.viewTutorial')}
             </button>
@@ -348,7 +359,7 @@ export default function Channels() {
               <button key={ch.id} onClick={() => ch.id !== 'local' && openWizard(ch.id)} disabled={ch.id === 'local'}
                 className={`p-4 bg-emerald-600/10 border border-emerald-600/30 rounded-xl text-left ${ch.id !== 'local' ? 'hover:border-emerald-500/50 cursor-pointer' : ''} transition-colors`}>
                 <div className="flex items-center gap-3">
-                  <span className="text-2xl">{ch.emoji}</span>
+                  <ChannelIcon channelId={ch.id} size={28} />
                   <div className="flex-1">
                     <div className="font-medium text-sm">{t(`channels.channel.${ch.id}`, ch.id)}</div>
                     <div className="text-xs text-emerald-400">✅ {ch.id === 'local' ? t('channels.builtIn') : t('channels.configured')}</div>
@@ -368,7 +379,7 @@ export default function Channels() {
               <button key={ch.id} onClick={() => openWizard(ch.id)}
                 className="p-4 bg-slate-800/50 border border-slate-700 rounded-xl hover:border-slate-600 transition-colors text-left group">
                 <div className="flex items-center gap-3">
-                  <span className="text-2xl">{ch.emoji}</span>
+                  <ChannelIcon channelId={ch.id} size={28} />
                   <div className="flex-1">
                     <div className="font-medium text-sm">{t(`channels.channel.${ch.id}`)}</div>
                     <div className="text-xs text-slate-500">{t(`channels.channel.${ch.id}.desc`)}</div>
@@ -387,7 +398,7 @@ export default function Channels() {
           <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-lg max-h-[80vh] overflow-y-auto">
             <div className="flex items-center justify-between p-5 border-b border-slate-800">
               <h2 className="text-lg font-semibold flex items-center gap-2">
-                {channels.find((c) => c.id === activeWizard)?.emoji}
+                <ChannelIcon channelId={activeWizard} size={24} />
                 {t('channels.connectPrefix')} {t(`channels.channel.${activeWizard}`)}
               </h2>
               <button onClick={closeWizard} className="text-slate-500 hover:text-slate-300"><X size={20} /></button>

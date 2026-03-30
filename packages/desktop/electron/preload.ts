@@ -2,7 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
   getPlatform: () => ipcRenderer.invoke('app:get-platform'),
-  openExternal: (url: string) => ipcRenderer.invoke('app:open-external'),
+  openExternal: (url: string) => ipcRenderer.invoke('app:open-external', url),
   getDashboardUrl: () => ipcRenderer.invoke('app:get-dashboard-url'),
   checkUpdates: () => ipcRenderer.invoke('app:check-updates'),
   upgradeComponent: (component: string) => ipcRenderer.invoke('app:upgrade-component', component),
@@ -110,6 +110,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   memoryGetContext: () => ipcRenderer.invoke('memory:get-context'),
   memoryGetPerception: () => ipcRenderer.invoke('memory:get-perception'),
   memoryGetDailySummary: () => ipcRenderer.invoke('memory:get-daily-summary'),
+  memoryGetEvents: (opts?: { limit?: number; offset?: number; search?: string }) => ipcRenderer.invoke('memory:get-events', opts || {}),
+  memoryCheckHealth: () => ipcRenderer.invoke('memory:check-health'),
 
   // App Doctor (System Health)
   doctorRun: () => ipcRenderer.invoke('doctor:run'),
