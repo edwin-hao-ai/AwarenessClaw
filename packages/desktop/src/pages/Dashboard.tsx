@@ -921,20 +921,10 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Input */}
-        <div className="px-4 py-2.5 border-t border-slate-800/80">
-          <div className="flex items-end gap-1.5 max-w-3xl mx-auto">
-            <button onClick={() => fileInputRef.current?.click()}
-              aria-label={t('chat.attachFile', 'Attach file')}
-              className="p-2 text-slate-500 hover:text-slate-300 hover:bg-slate-800 rounded-lg transition-colors mb-0.5" title={t('chat.attachFile', 'Attach file')}
-            >
-              <Paperclip size={15} />
-            </button>
-            <input ref={fileInputRef} type="file" multiple className="hidden" aria-label={t('chat.attachFile', 'Attach file')}
-              onChange={e => { const files = Array.from(e.target.files || []).map(f => ({ name: f.name, path: (f as any).path || f.name })); attachFiles(files); }}
-            />
-
-            <div className="flex-1 relative">
+        {/* Input — Claude-style: buttons inside a unified input container */}
+        <div className="px-4 py-3">
+          <div className="max-w-3xl mx-auto">
+            <div className="relative bg-slate-800 rounded-2xl border border-slate-700/60 focus-within:border-brand-500/50 focus-within:ring-1 focus-within:ring-brand-500/20 transition-all">
               <textarea
                 value={input}
                 onChange={e => setInput(e.target.value)}
@@ -945,18 +935,29 @@ export default function Dashboard() {
                   t('chat.input.placeholder')
                 }
                 rows={1}
-                className="w-full px-4 py-2.5 bg-slate-800 rounded-xl text-sm focus:outline-none focus:ring-1 focus:ring-brand-500/50 resize-none transition-all placeholder:text-slate-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                style={{ minHeight: '42px', maxHeight: '120px', height: input.includes('\n') ? 'auto' : '42px' }}
+                className="w-full pl-4 pr-4 pt-3 pb-10 bg-transparent rounded-2xl text-sm focus:outline-none resize-none placeholder:text-slate-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ minHeight: '52px', maxHeight: '160px', height: input.includes('\n') ? 'auto' : '52px' }}
                 disabled={agentStatus !== 'idle'}
               />
+              <input ref={fileInputRef} type="file" multiple className="hidden" aria-label={t('chat.attachFile', 'Attach file')}
+                onChange={e => { const files = Array.from(e.target.files || []).map(f => ({ name: f.name, path: (f as any).path || f.name })); attachFiles(files); }}
+              />
+              {/* Bottom toolbar inside the input box */}
+              <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between">
+                <button onClick={() => fileInputRef.current?.click()}
+                  aria-label={t('chat.attachFile', 'Attach file')}
+                  className="p-1.5 text-slate-500 hover:text-slate-300 hover:bg-slate-700 rounded-lg transition-colors" title={t('chat.attachFile', 'Attach file')}
+                >
+                  <Paperclip size={14} />
+                </button>
+                <button onClick={handleSend}
+                  disabled={(!input.trim() && attachedFiles.length === 0) || agentStatus !== 'idle'}
+                  className="p-1.5 bg-brand-600 hover:bg-brand-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded-lg transition-colors"
+                >
+                  {agentStatus !== 'idle' ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                </button>
+              </div>
             </div>
-
-            <button onClick={handleSend}
-              disabled={(!input.trim() && attachedFiles.length === 0) || agentStatus !== 'idle'}
-              className="p-2 bg-brand-600 hover:bg-brand-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded-lg transition-colors mb-0.5"
-            >
-              {agentStatus !== 'idle' ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
-            </button>
           </div>
         </div>
       </div>
