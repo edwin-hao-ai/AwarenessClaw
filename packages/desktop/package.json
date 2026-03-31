@@ -82,8 +82,10 @@
     "nsis": {
       "oneClick": false,
       "perMachine": false,
+      "createDesktopShortcut": "always",
+      "shortcutName": "AwarenessClaw",
       "allowToChangeInstallationDirectory": false,
-      "include": "build/installer.nsh"
+      "include": "scripts/installer.nsh"
     },
     "publish": {
       "provider": "github",
