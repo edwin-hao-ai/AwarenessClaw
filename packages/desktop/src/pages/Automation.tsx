@@ -253,7 +253,7 @@ export default function Automation() {
               onClick={() => window.electronAPI?.openExternal('http://localhost:18789')}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200 bg-slate-800 rounded-lg transition-colors"
             >
-              <ExternalLink size={12} /> Dashboard
+              <ExternalLink size={12} /> {t('auto.dashboard', 'Dashboard')}
             </button>
           </div>
         </div>
@@ -349,7 +349,7 @@ export default function Automation() {
               {/* Time picker — show for daily/weekly */}
               {(frequency === 'daily' || frequency === 'weekly') && (
                 <div>
-                  <label className="text-xs text-slate-400 block mb-1.5">Time</label>
+                  <label className="text-xs text-slate-400 block mb-1.5">{t('auto.time', 'Time')}</label>
                   <div className="flex items-center gap-2">
                     <select
                       value={hour}
@@ -377,7 +377,7 @@ export default function Automation() {
               {/* Minute picker — show for hourly */}
               {frequency === 'hourly' && (
                 <div>
-                  <label className="text-xs text-slate-400 block mb-1.5">At minute</label>
+                  <label className="text-xs text-slate-400 block mb-1.5">{t('auto.atMinute', 'At minute')}</label>
                   <select
                     value={minute}
                     onChange={e => setMinute(parseInt(e.target.value))}
@@ -393,7 +393,7 @@ export default function Automation() {
               {/* Weekday selector — show for weekly */}
               {frequency === 'weekly' && (
                 <div>
-                  <label className="text-xs text-slate-400 block mb-1.5">Days</label>
+                  <label className="text-xs text-slate-400 block mb-1.5">{t('auto.days', 'Days')}</label>
                   <div className="flex gap-1.5">
                     {WEEKDAYS.map(day => (
                       <button
@@ -415,17 +415,17 @@ export default function Automation() {
               {/* Custom cron input */}
               {frequency === 'custom' && (
                 <div>
-                  <label className="text-xs text-slate-400 block mb-1">Cron expression</label>
+                  <label className="text-xs text-slate-400 block mb-1">{t('auto.cronExpression', 'Cron expression')}</label>
                   <input
                     value={customCron}
                     onChange={e => setCustomCron(e.target.value)}
-                    placeholder="0 9 * * * (daily at 9 AM)"
+                    placeholder={t('auto.cronPlaceholder', '0 9 * * * (daily at 9 AM)')}
                     className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-sm font-mono focus:outline-none focus:border-brand-500"
                   />
                   {customCron && !isValidCron(customCron) ? (
-                    <p className="text-[10px] text-amber-400 mt-1">Needs 5 fields: minute hour day month weekday</p>
+                    <p className="text-[10px] text-amber-400 mt-1">{t('auto.cronInvalid', 'Needs 5 fields: minute hour day month weekday')}</p>
                   ) : (
-                    <p className="text-[10px] text-slate-600 mt-1">Format: minute hour day month weekday</p>
+                    <p className="text-[10px] text-slate-600 mt-1">{t('auto.cronFormat', 'Format: minute hour day month weekday')}</p>
                   )}
                 </div>
               )}

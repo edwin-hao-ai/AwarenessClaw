@@ -95,6 +95,67 @@
 
 ---
 
+## P2.5 — 关键 Bug 修复（2026-03-31）
+
+### 性能优化（✅ 已完成）
+- [x] Dashboard 打字机 15ms setInterval → RAF + 30ms 节流（CPU 占用大幅降低）
+- [x] Settings Gateway 轮询改为 visibilitychange 感知 + 30s 间隔（省电）
+- [x] Node.js 安装等待 120×2s → 30 次指数退避（~90s 上限）
+- [x] daemon 关闭/升级/gateway 启动轮询全部加指数退避
+
+### Gateway 无法启动（✅ 已修复）
+- [x] `tools.denied: []` 写入 openclaw.json 导致 OpenClaw 配置校验失败，所有命令报错
+- [x] `permissions:update` 和 config merge 只在 denied 非空时写入
+
+### openclaw-memory 插件本地模式（✅ 已修复）
+- [x] 插件 `memory-awareness.ts` 强制要求 apiKey + memoryId → 本地模式（localUrl）跳过校验
+- [x] 插件成功注册到 OpenClaw Gateway（日志确认 `Awareness memory plugin initialized (local daemon)`）
+
+### Dashboard 切换 tab 丢失对话（✅ 已修复）
+- [x] App.tsx 条件渲染 → Dashboard 始终 mounted + CSS hidden
+- [x] 切回 Chat 自动 focus 输入框 + 滚动到最新消息
+- [x] RAF 打字机在 app 隐藏时跳到最终状态
+
+### 测试修复（✅ 已修复）
+- [x] dashboard.test.tsx / update-banner.test.tsx 的 `getByText('AwarenessClaw')` → `getByAltText`（头部 UI 改为 logo img）
+
+### Chat 上下文连贯性（✅ 已调查 2026-03-31）
+- [x] **排查 `openclaw agent --local --session-id` 是否维护多轮对话历史**：确认 OpenClaw 在 `~/.openclaw/agents/main/sessions/<id>.jsonl` 中维护完整对话历史，session-id 相同时上下文连贯 ✅
+- [x] 真正问题是 Awareness 插件 auto-recall 注入了 Claude Code 编程记忆（source=mcp），导致 AI 上下文混乱 → 已通过 sourceExclude 修复 ✅
+
+### Daemon 记忆隔离（✅ 已修复 2026-03-31）
+- [x] **根因修复**：`daemon.mjs` `_remember()` 中 `source` 字段被硬编码为 `'mcp'`，无论调用方传什么来源都被覆盖 → 改为 `params.source || 'mcp'` ✅
+- [x] **`awareness_record` MCP 工具**：schema 中加入 `source` 字段（daemon.mjs 和 mcp-server.mjs 两处）✅
+- [x] **`awareness_recall` source_exclude 过滤**：MCP 工具加 `source_exclude` 参数，search.mjs recall() 加后过滤，daemon REST `/memories` 加 `source_exclude` 查询参数 ✅
+- [x] **openclaw-memory 插件**：auto-recall 时传 `sourceExclude: ['mcp']`，确保聊天上下文中不再注入 Claude Code 编程记忆 ✅
+- [x] **Memory 页面**：sourceView 切换现在在 API 层面过滤（不再是前端过滤），节省网络传输 ✅
+
+### Chat 功能对齐 OpenClaw Web UI（进行中 2026-03-31）
+- [x] **消息队列**：agent 运行时 textarea 保持可用，消息排队自动发送 ✅
+- [x] **Stop 按钮**：agent 运行时显示 Stop 按钮，kill 子进程 ✅
+- [x] **代码块复制按钮**：已有 CodeBlock 组件 ✅
+- [x] **Gateway 模式**：去掉 `--local` flag，通过 Gateway 运行（更好的会话管理）✅
+- [ ] **WebSocket 直连 Gateway**：认证需要设备身份签名（RSA v3 协议），暂缓。当前 CLI 方式已通过 Gateway 运行，功能上无差距
+- [ ] **chat.abort RPC**：通过 Gateway RPC 优雅中止（当前用 kill 进程，功能可用但不优雅）
+- [ ] **chat.history 同步**：从 Gateway 加载历史替代 localStorage（增强可靠性）
+
+### OpenClaw MD 文档管理（待做）
+OpenClaw 的 chat 质量依赖 `~/.openclaw/workspace/` 下的 MD 文档：
+| 文件 | 功能 | 重要性 |
+|------|------|--------|
+| **SOUL.md** | Agent 人格/身份设定 | 高 |
+| **USER.md** | 用户信息（名字、偏好等） | 高 |
+| **IDENTITY.md** | Agent 显示名/头像/emoji | 中 |
+| **TOOLS.md** | 工具使用备注 | 低 |
+| **MEMORY.md** | 长期记忆配置 | 中 |
+| **HEARTBEAT.md** | 定时检查任务 | 低 |
+| **AGENTS.md** | 工作区设置 | 低 |
+- [ ] **Settings 页集成 MD 编辑器**：用户可在 UI 中直接编辑 SOUL.md、USER.md、IDENTITY.md
+- [ ] **首次使用引导**：新用户第一次打开时引导填写 USER.md（名字等基本信息）
+- [ ] **Agent 人格设定 UI**：SOUL.md 可视化编辑（不需要用户懂 Markdown）
+
+---
+
 ## P3 — 进阶功能
 
 ### 技能市场（ClawHub 集成）
@@ -107,6 +168,7 @@
 ### 权限管理
 - [x] **权限概览面板**：Settings 页显示 tools profile、alsoAllow 标签列表（可增删）、denied 命令标签列表（可增删）（2026-03-30）
 - [x] **安全审计提示**：Settings 页新增 Security Audit section — 检测 openclaw.json 文件权限（非 600 时警告 + 修复命令）、tools.alsoAllow 过多时警告、第三方 extensions 检测（2026-03-30）
+- [x] **权限预设方案 UI**：3 张卡片（安全/标准/开发者模式），一键应用，自动检测当前是哪个预设，高级设置折叠（2026-03-31）
 
 ### 工作区设置
 - [x] **工作区文件编辑器**：Settings 页 Workspace section，编辑 SOUL.md / USER.md / IDENTITY.md / TOOLS.md（模态框 + 保存）（2026-03-30）
@@ -176,6 +238,10 @@
 
 ## 技术债务 & Bug
 
+- [x] ~~通道连接后消息无响应~~ — channel:setup 加 `--verbose` flag（非 TTY 无输出）+ 成功后自动 `openclaw agents bind --agent main --bind <channel>`（2026-03-31）
+- [x] ~~新建会话按钮样式粗糙~~ — 重设计为 Claude Desktop 风格（圆角+图标+hover动画+⌘N 快捷键提示），同时注册全局 ⌘N/Ctrl+N 键绑定（2026-03-31）
+- [x] ~~代码块无语言标签无复制按钮~~ — 新增 CodeBlock 组件（语言标签 + copy 按钮 + 圆角 header），所有 markdown 渲染路径统一使用（2026-03-31）
+- [x] ~~工具调用折叠无动画~~ — ToolCallsBlock 改用 max-h CSS transition（200ms），ChevronRight 旋转代替切换 ChevronDown（2026-03-31）
 - [x] ~~openclaw agent session conflict~~ — 用 --local --session-id 解决
 - [x] ~~.bash_profile cargo/env 报错~~ — 用 --norc --noprofile
 - [x] ~~plugins.allow 警告~~ — 写入 plugins.allow

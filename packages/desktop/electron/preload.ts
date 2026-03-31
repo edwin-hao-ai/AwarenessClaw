@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Chat
   chatSend: (message: string, sessionId?: string, options?: { thinkingLevel?: string; model?: string; files?: string[]; workspacePath?: string }) => ipcRenderer.invoke('chat:send', message, sessionId, options),
+  chatAbort: () => ipcRenderer.invoke('chat:abort'),
   onChatStream: (callback: (chunk: string) => void) => {
     ipcRenderer.on('chat:stream', (_e: any, chunk: string) => callback(chunk));
   },
@@ -41,6 +42,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   channelSetup: (channelId: string) => ipcRenderer.invoke('channel:setup', channelId),
   channelListConfigured: () => ipcRenderer.invoke('channel:list-configured'),
   channelListSupported: () => ipcRenderer.invoke('channel:list-supported'),
+  onChannelQR: (callback: (art: string) => void) => {
+    ipcRenderer.on('channel:qr-art', (_e: any, art: string) => callback(art));
+  },
+  onChannelStatus: (callback: (status: string) => void) => {
+    ipcRenderer.on('channel:status', (_e: any, status: string) => callback(status));
+  },
 
   // Cron management
   cronList: () => ipcRenderer.invoke('cron:list'),
@@ -121,4 +128,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // App Doctor (System Health)
   doctorRun: () => ipcRenderer.invoke('doctor:run'),
   doctorFix: (checkId: string) => ipcRenderer.invoke('doctor:fix', checkId),
+
+  // Launch at Login
+  setLoginItem: (enabled: boolean) => ipcRenderer.invoke('app:set-login-item', enabled),
+  getLoginItem: () => ipcRenderer.invoke('app:get-login-item'),
+
+  // Daemon watchdog
+  daemonMarkConnected: () => ipcRenderer.invoke('daemon:mark-connected'),
 });

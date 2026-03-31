@@ -65,19 +65,49 @@ function getToolIcon(name: string) {
   return <Wrench size={12} />;
 }
 
-function getToolLabel(name: string, status: string) {
-  if (status === 'recalling') return `${name}: Recalling context...`;
-  if (status === 'saving') return `${name}: Saving memory...`;
-  if (status === 'cached') return `${name}: Signals cached`;
-  if (status === 'approved') return `${name}: Approved`;
-  if (status === 'completed') return `${name}: Done`;
-  if (status === 'running' || status === 'in_progress') return `${name}: Running...`;
+function getToolLabel(name: string, status: string, t: (key: string, fallback?: string) => string) {
+  if (status === 'recalling') return `${name}: ${t('tool.status.recalling', 'Recalling context...')}`;
+  if (status === 'saving') return `${name}: ${t('tool.status.saving', 'Saving memory...')}`;
+  if (status === 'cached') return `${name}: ${t('tool.status.cached', 'Signals cached')}`;
+  if (status === 'approved') return `${name}: ${t('tool.status.approved', 'Approved')}`;
+  if (status === 'completed') return `${name}: ${t('tool.status.completed', 'Done')}`;
+  if (status === 'running' || status === 'in_progress') return `${name}: ${t('tool.status.running', 'Running...')}`;
   return `${name}: ${status}`;
 }
 
-// --- Tool calls in message (collapsible) ---
+// --- Code block with language label + copy button ---
+
+function CodeBlock({ code, language }: { code: string; language?: string }) {
+  const { t } = useI18n();
+  const [copied, setCopied] = useState(false);
+  const copyCode = () => {
+    navigator.clipboard.writeText(code);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  const lang = language?.replace(/^language-/, '') || '';
+  return (
+    <div className="rounded-xl overflow-hidden border border-slate-700/60 my-2 text-xs">
+      <div className="flex items-center justify-between px-3 py-1.5 bg-slate-800/80 border-b border-slate-700/50">
+        <span className="text-[10px] text-slate-500 font-mono uppercase tracking-wide">{lang || t('code.label', 'code')}</span>
+        <button
+          onClick={copyCode}
+          className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-slate-300 transition-colors"
+        >
+          {copied ? <><Check size={10} /> {t('common.copied', 'copied')}</> : <><Copy size={10} /> {t('common.copy', 'copy')}</>}
+        </button>
+      </div>
+      <pre className="bg-slate-950 p-3 overflow-x-auto leading-relaxed">
+        <code className={language}>{code}</code>
+      </pre>
+    </div>
+  );
+}
+
+// --- Tool calls in message (collapsible with animation) ---
 
 function ToolCallsBlock({ toolCalls }: { toolCalls: ToolCallInfo[] }) {
+  const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   if (!toolCalls || toolCalls.length === 0) return null;
 
@@ -87,11 +117,17 @@ function ToolCallsBlock({ toolCalls }: { toolCalls: ToolCallInfo[] }) {
         onClick={() => setExpanded(!expanded)}
         className="flex items-center gap-1.5 text-[11px] text-slate-500 hover:text-slate-300 transition-colors"
       >
-        {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        <ChevronRight
+          size={12}
+          className={`transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`}
+        />
         <Wrench size={11} />
-        <span>{toolCalls.length} tool{toolCalls.length > 1 ? 's' : ''} used</span>
+        <span>{t('tool.used', '{0} tool(s) used').replace('{0}', String(toolCalls.length))}</span>
       </button>
-      {expanded && (
+      <div
+        className="overflow-hidden transition-all duration-200"
+        style={{ maxHeight: expanded ? `${toolCalls.length * 28}px` : '0px' }}
+      >
         <div className="mt-1.5 ml-4 space-y-1 border-l border-slate-700/50 pl-3">
           {toolCalls.map(tc => (
             <div key={tc.id} className="flex items-center gap-1.5 text-[11px] text-slate-500">
@@ -100,7 +136,7 @@ function ToolCallsBlock({ toolCalls }: { toolCalls: ToolCallInfo[] }) {
             </div>
           ))}
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -131,9 +167,9 @@ function createSession(): ChatSession {
   };
 }
 
-// --- Typewriter effect ---
+// --- Typewriter effect (RAF-based, low CPU) ---
 
-function useTypewriter(text: string, speed = 15) {
+function useTypewriter(text: string, charsPerFrame = 3) {
   const [displayed, setDisplayed] = useState('');
   const [done, setDone] = useState(false);
 
@@ -141,19 +177,34 @@ function useTypewriter(text: string, speed = 15) {
     if (!text) { setDisplayed(''); setDone(true); return; }
     setDone(false);
     let i = 0;
-    setDisplayed('');
-    const interval = setInterval(() => {
-      i += 1 + Math.floor(Math.random() * 2); // 1-2 chars at a time for natural feel
+    let cancelled = false;
+    let lastTime = 0;
+    const minInterval = 30; // ms between updates — ~33 FPS max, gentle on CPU
+
+    const finish = () => { setDisplayed(text); setDone(true); };
+
+    // When app is hidden (user switched to another app), skip animation
+    const onVisibility = () => { if (document.hidden) { cancelled = true; finish(); } };
+    document.addEventListener('visibilitychange', onVisibility);
+
+    const step = (time: number) => {
+      if (cancelled) return;
+      if (time - lastTime < minInterval) { requestAnimationFrame(step); return; }
+      lastTime = time;
+      i += charsPerFrame + Math.floor(Math.random() * 2);
       if (i >= text.length) {
-        setDisplayed(text);
-        setDone(true);
-        clearInterval(interval);
+        finish();
       } else {
         setDisplayed(text.slice(0, i));
+        requestAnimationFrame(step);
       }
-    }, speed);
-    return () => clearInterval(interval);
-  }, [text, speed]);
+    };
+    requestAnimationFrame(step);
+    return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [text, charsPerFrame]);
 
   return { displayed, done };
 }
@@ -161,7 +212,7 @@ function useTypewriter(text: string, speed = 15) {
 // --- Typewriter Message Component ---
 
 function TypewriterMessage({ content, isNew }: { content: string; isNew: boolean }) {
-  const { displayed, done } = useTypewriter(isNew ? content : '', 12);
+  const { displayed, done } = useTypewriter(isNew ? content : '', 3);
   const text = isNew ? displayed : content;
 
   return (
@@ -172,32 +223,32 @@ function TypewriterMessage({ content, isNew }: { content: string; isNew: boolean
           code({ children, className, ...props }) {
             const isInline = !className;
             if (isInline) {
-              return <code className="px-1.5 py-0.5 bg-slate-700 rounded text-brand-300 text-xs" {...props}>{children}</code>;
+              return <code className="px-1.5 py-0.5 bg-slate-700/80 rounded text-brand-300 text-[12px]" {...props}>{children}</code>;
             }
-            return (
-              <pre className="bg-slate-950 rounded-lg p-3 overflow-x-auto text-xs">
-                <code className={className} {...props}>{children}</code>
-              </pre>
-            );
+            return <CodeBlock code={String(children).replace(/\n$/, '')} language={className} />;
           },
-          p({ children }) { return <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>; },
-          ul({ children }) { return <ul className="list-disc list-inside mb-2 space-y-1">{children}</ul>; },
-          ol({ children }) { return <ol className="list-decimal list-inside mb-2 space-y-1">{children}</ol>; },
-          h1({ children }) { return <h3 className="text-base font-bold mb-2 mt-3">{children}</h3>; },
-          h2({ children }) { return <h4 className="text-sm font-bold mb-1.5 mt-2">{children}</h4>; },
-          h3({ children }) { return <h5 className="text-sm font-semibold mb-1 mt-2">{children}</h5>; },
+          p({ children }) { return <p className="mb-3 last:mb-0 leading-relaxed">{children}</p>; },
+          ul({ children }) { return <ul className="list-disc list-inside mb-3 space-y-1.5 pl-1">{children}</ul>; },
+          ol({ children }) { return <ol className="list-decimal list-inside mb-3 space-y-1.5 pl-1">{children}</ol>; },
+          h1({ children }) { return <h3 className="text-base font-bold mb-2 mt-4 pb-1 border-b border-slate-700/50">{children}</h3>; },
+          h2({ children }) { return <h4 className="text-sm font-bold mb-2 mt-3">{children}</h4>; },
+          h3({ children }) { return <h5 className="text-sm font-semibold mb-1.5 mt-2">{children}</h5>; },
+          blockquote({ children }) { return <blockquote className="border-l-2 border-brand-500/40 pl-3 text-slate-400 italic my-2">{children}</blockquote>; },
+          table({ children }) { return <div className="overflow-x-auto my-3"><table className="text-xs w-full border-collapse">{children}</table></div>; },
+          th({ children }) { return <th className="px-3 py-1.5 bg-slate-800 text-left font-medium border border-slate-700/50">{children}</th>; },
+          td({ children }) { return <td className="px-3 py-1.5 border border-slate-700/30">{children}</td>; },
         }}
       >
         {text}
       </ReactMarkdown>
-      {isNew && !done && <span className="animate-pulse text-brand-400">▊</span>}
+      {isNew && !done && <span className="animate-pulse text-brand-400 ml-0.5">▊</span>}
     </div>
   );
 }
 
 // --- Main Component ---
 
-export default function Dashboard() {
+export default function Dashboard({ isActive = true }: { isActive?: boolean }) {
   const { config, updateConfig, syncConfig } = useAppConfig();
   const { t } = useI18n();
   const [sessions, setSessions] = useState<ChatSession[]>(loadSessions);
@@ -222,6 +273,7 @@ export default function Dashboard() {
   const streamingRef = useRef('');
   const [isDragOver, setIsDragOver] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // Confirm dialog state (replaces native window.confirm)
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
@@ -296,6 +348,18 @@ export default function Dashboard() {
     (window.electronAPI as any).onTrayNewChat?.(() => handleNewSession());
   }, []);
 
+  // ⌘N / Ctrl+N — new session from anywhere in the chat view
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'n') {
+        e.preventDefault();
+        handleNewSession();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   // Persist sessions
   useEffect(() => {
     saveSessions(sessions);
@@ -314,6 +378,17 @@ export default function Dashboard() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [sessions, agentStatus]);
+
+  // When tab becomes active again, restore focus + scroll to bottom
+  useEffect(() => {
+    if (!isActive) return;
+    messagesEndRef.current?.scrollIntoView({ behavior: 'instant' });
+    if (agentStatus === 'idle') {
+      // Small delay so the hidden→visible transition completes first
+      const t = setTimeout(() => textareaRef.current?.focus(), 50);
+      return () => clearTimeout(t);
+    }
+  }, [isActive]);
 
   const activeSession = sessions.find(s => s.id === activeSessionId);
   const messages = activeSession?.messages || [];
@@ -334,49 +409,40 @@ export default function Dashboard() {
     if (result?.directoryPath) setProjectRoot(result.directoryPath);
   };
 
-  const handleSend = async () => {
-    const text = input.trim();
-    if (!text || agentStatus !== 'idle') return;
+  // --- Message queue: allows user to type while agent is running ---
+  const messageQueueRef = useRef<Array<{ text: string; files?: string[] }>>([]);
+  const [queueLength, setQueueLength] = useState(0);
+  const isProcessingRef = useRef(false);
 
-    const fullMessage = text;
-    const filePaths = attachedFiles.length > 0 ? attachedFiles.map(f => f.path) : undefined;
+  /** Core send logic — processes one message at a time, then drains queue. */
+  const processMessage = async (text: string, filePaths?: string[]) => {
+    // Build conversation context: include last N turns so OpenClaw agent has history
+    const session = sessions.find(s => s.id === activeSessionId);
+    const prevMessages = session?.messages ?? [];
+    const MAX_CONTEXT_TURNS = 10;
+    const contextMsgs = prevMessages.slice(-MAX_CONTEXT_TURNS);
+    let fullMessage = text;
+    if (contextMsgs.length > 0) {
+      const history = contextMsgs
+        .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content.slice(0, 800)}`)
+        .join('\n');
+      fullMessage = `[Conversation history (for context continuity):\n${history}\n]\n\nUser: ${text}`;
+    }
 
-    const userMsg: Message = {
-      id: `msg-${Date.now()}`,
-      role: 'user',
-      content: text,
-      timestamp: Date.now(),
-      files: attachedFiles.length > 0 ? [...attachedFiles] : undefined,
-    };
-
-    updateSession(activeSessionId, s => ({
-      ...s,
-      messages: [...s.messages, userMsg],
-      title: s.messages.length === 0 ? text.slice(0, 30) : s.title,
-      updatedAt: Date.now(),
-    }));
-
-    setInput('');
-    setAttachedFiles([]);
     setAgentStatus('thinking');
     toolCallsRef.current = [];
     setActiveToolCalls([]);
     streamingRef.current = '';
     setStreamingContent('');
-    // Start overall stream timeout from first send
     if (streamTimeoutRef.current) clearTimeout(streamTimeoutRef.current);
-    streamTimeoutRef.current = setTimeout(() => {
-      setAgentStatus('error');
-    }, STREAM_TIMEOUT_MS);
+    streamTimeoutRef.current = setTimeout(() => { setAgentStatus('error'); }, STREAM_TIMEOUT_MS);
 
     if (window.electronAPI) {
-      // Model is configured via openclaw.json (synced by store.ts), not passed per-message.
       const result = await (window.electronAPI as any).chatSend(fullMessage, activeSessionId, {
         thinkingLevel: config.thinkingLevel || 'low',
         files: filePaths,
         workspacePath: projectRoot || undefined,
       });
-      // Prefer streamed content if available, fallback to full response
       const responseText = streamingRef.current.trim() || result.text || result.error || t('chat.noResponse') || 'No response';
 
       const assistantMsg: Message = {
@@ -394,9 +460,7 @@ export default function Dashboard() {
         messages: [...s.messages, assistantMsg],
         updatedAt: Date.now(),
       }));
-      // Track usage for cost estimation
       trackUsage(config.providerKey, config.modelId, text, responseText);
-      // Clear streaming state and timeout
       if (streamTimeoutRef.current) clearTimeout(streamTimeoutRef.current);
       streamingRef.current = '';
       setStreamingContent('');
@@ -417,8 +481,56 @@ export default function Dashboard() {
         updatedAt: Date.now(),
       }));
     }
+  };
 
+  /** Drain queue: process messages one by one until empty. */
+  const drainQueue = async () => {
+    if (isProcessingRef.current) return;
+    isProcessingRef.current = true;
+
+    while (messageQueueRef.current.length > 0) {
+      const next = messageQueueRef.current.shift()!;
+      setQueueLength(messageQueueRef.current.length);
+      await processMessage(next.text, next.files);
+    }
+
+    isProcessingRef.current = false;
     setAgentStatus('idle');
+  };
+
+  const handleSend = async () => {
+    const text = input.trim();
+    if (!text) return;
+
+    const filePaths = attachedFiles.length > 0 ? attachedFiles.map(f => f.path) : undefined;
+
+    // Add user message to session immediately (visible in chat)
+    const userMsg: Message = {
+      id: `msg-${Date.now()}`,
+      role: 'user',
+      content: text,
+      timestamp: Date.now(),
+      files: attachedFiles.length > 0 ? [...attachedFiles] : undefined,
+    };
+    updateSession(activeSessionId, s => ({
+      ...s,
+      messages: [...s.messages, userMsg],
+      title: s.messages.length === 0 ? text.slice(0, 30) : s.title,
+      updatedAt: Date.now(),
+    }));
+    setInput('');
+    setAttachedFiles([]);
+
+    if (isProcessingRef.current) {
+      // Agent is busy — queue the message
+      messageQueueRef.current.push({ text, files: filePaths });
+      setQueueLength(messageQueueRef.current.length);
+    } else {
+      // Agent is idle — process immediately, then drain any queued messages
+      messageQueueRef.current.push({ text, files: filePaths });
+      setQueueLength(messageQueueRef.current.length);
+      await drainQueue();
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -460,7 +572,7 @@ export default function Dashboard() {
   };
 
   const statusLabel = agentStatus === 'thinking' ? t('chat.status.thinking') :
-    agentStatus === 'generating' ? t('chat.status.generating') :
+    agentStatus === 'generating' ? (queueLength > 0 ? `${t('chat.status.generating')} (${queueLength} queued)` : t('chat.status.generating')) :
     agentStatus === 'error' ? t('chat.status.error') : null;
 
   return (
@@ -494,9 +606,21 @@ export default function Dashboard() {
       {/* Session sidebar */}
       {showSidebar && (
         <div className="w-64 bg-slate-950 border-r border-slate-800 flex flex-col flex-shrink-0">
-          <div className="p-3 border-b border-slate-800">
-            <button onClick={handleNewSession} className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-brand-600 hover:bg-brand-500 rounded-lg text-sm text-white transition-colors">
-              <Plus size={14} /> {t('chat.newSession')}
+          <div className="p-2.5 border-b border-slate-800">
+            <button
+              onClick={handleNewSession}
+              title={`${t('chat.newSession')} (⌘N)`}
+              className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-slate-800/60 hover:bg-slate-800 border border-slate-700/60 hover:border-slate-600 text-slate-400 hover:text-slate-200 transition-all group"
+            >
+              <div className="flex items-center gap-2">
+                <div className="w-5 h-5 rounded-md bg-brand-600/20 group-hover:bg-brand-600/30 flex items-center justify-center transition-colors flex-shrink-0">
+                  <Plus size={12} className="text-brand-400" />
+                </div>
+                <span className="text-sm">{t('chat.newSession')}</span>
+              </div>
+              <kbd className="hidden sm:inline text-[10px] text-slate-600 group-hover:text-slate-500 font-sans px-1.5 py-0.5 rounded bg-slate-700/50 border border-slate-600/50 leading-none">
+                ⌘N
+              </kbd>
             </button>
           </div>
           <div className="flex-1 overflow-y-auto">
@@ -522,8 +646,8 @@ export default function Dashboard() {
                       if (e.key === 'Escape') { setRenamingId(null); }
                     }}
                     onClick={e => e.stopPropagation()}
-                    aria-label="Rename session"
-                    title="Rename session"
+                    aria-label={t('chat.renameSession', 'Rename session')}
+                    title={t('chat.renameSession', 'Rename session')}
                     className="flex-1 bg-slate-700 px-1.5 py-0.5 rounded text-xs focus:outline-none focus:ring-1 focus:ring-brand-500"
                     autoFocus
                   />
@@ -640,7 +764,7 @@ export default function Dashboard() {
 
           <button onClick={() => window.electronAPI?.openExternal('http://localhost:18789')}
             className="p-1 text-slate-600 hover:text-slate-300 rounded-md transition-colors"
-            title="OpenClaw Dashboard"
+            title={t('chat.openclawDashboard', 'OpenClaw Dashboard')}
           >
             <ExternalLink size={12} />
           </button>
@@ -660,7 +784,7 @@ export default function Dashboard() {
                 <PasswordInput
                   value={tempApiKey}
                   onChange={e => setTempApiKey(e.target.value)}
-                  placeholder="Paste your API Key..."
+                  placeholder={t('common.pasteApiKey', 'Paste your API Key...')}
                   className="w-full px-3 py-2.5 bg-slate-800 border border-slate-600 rounded-lg text-sm focus:outline-none focus:border-brand-500"
                   autoFocus
                 />
@@ -794,7 +918,7 @@ export default function Dashboard() {
                       <button onClick={() => copyMessage(msg)}
                         className="text-slate-600 hover:text-slate-300 text-[10px] flex items-center gap-1 transition-colors"
                       >
-                        {copiedId === msg.id ? <><Check size={10} /> Copied</> : <><Copy size={10} /> Copy</>}
+                        {copiedId === msg.id ? <><Check size={10} /> {t('common.copied', 'Copied')}</> : <><Copy size={10} /> {t('common.copy', 'Copy')}</>}
                       </button>
                     </div>
                   </div>
@@ -811,7 +935,7 @@ export default function Dashboard() {
                 <div className="flex-1 min-w-0">
                   {/* Meta line */}
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="text-[11px] text-slate-500 font-medium">AwarenessClaw</span>
+                    <span className="text-[11px] text-slate-500 font-medium">{t('app.name', 'AwarenessClaw')}</span>
                     {config.modelId && <span className="text-[10px] text-slate-600">{config.modelId.split('/').pop()}</span>}
                   </div>
 
@@ -844,7 +968,7 @@ export default function Dashboard() {
                           ) : (
                             <span className="text-emerald-500/70">{getToolIcon(tc.name)}</span>
                           )}
-                          <span className="truncate max-w-[300px]">{getToolLabel(tc.name, tc.status)}</span>
+                          <span className="truncate max-w-[300px]">{getToolLabel(tc.name, tc.status, t)}</span>
                         </div>
                       ))}
                     </div>
@@ -855,16 +979,16 @@ export default function Dashboard() {
                     <div className="text-sm text-slate-200 leading-relaxed">
                       <div className="prose prose-invert prose-sm max-w-none">
                         <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
-                          code({ children, className, ...props }) {
+                          code({ children, className }) {
                             const isInline = !className;
-                            if (isInline) return <code className="px-1.5 py-0.5 bg-slate-700 rounded text-brand-300 text-xs" {...props}>{children}</code>;
-                            return <pre className="bg-slate-950 rounded-lg p-3 overflow-x-auto text-xs"><code className={className} {...props}>{children}</code></pre>;
+                            if (isInline) return <code className="px-1.5 py-0.5 bg-slate-700/80 rounded text-brand-300 text-[12px]">{children}</code>;
+                            return <CodeBlock code={String(children).replace(/\n$/, '')} language={className} />;
                           },
-                          p({ children }) { return <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>; },
+                          p({ children }) { return <p className="mb-3 last:mb-0 leading-relaxed">{children}</p>; },
                         }}>
                           {streamingContent}
                         </ReactMarkdown>
-                        <span className="animate-pulse text-brand-400">▊</span>
+                        <span className="animate-pulse text-brand-400 ml-0.5">▊</span>
                       </div>
                     </div>
                   ) : agentStatus !== 'error' ? (
@@ -873,6 +997,21 @@ export default function Dashboard() {
                       <span>{statusLabel}</span>
                     </div>
                   ) : null}
+
+                  {/* Stop button — abort the running agent */}
+                  {agentStatus !== 'error' && (
+                    <button
+                      onClick={async () => {
+                        await (window.electronAPI as any)?.chatAbort?.();
+                        if (streamTimeoutRef.current) clearTimeout(streamTimeoutRef.current);
+                        setAgentStatus('idle');
+                      }}
+                      className="mt-2 flex items-center gap-1.5 px-3 py-1 text-xs text-slate-400 hover:text-red-400 bg-slate-800/60 hover:bg-red-500/10 border border-slate-700/50 hover:border-red-500/30 rounded-lg transition-colors"
+                    >
+                      <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><rect width="10" height="10" rx="1.5" /></svg>
+                      {t('chat.stop', 'Stop')}
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -926,18 +1065,21 @@ export default function Dashboard() {
           <div className="max-w-3xl mx-auto">
             <div className="relative bg-slate-800 rounded-2xl border border-slate-700/60 focus-within:border-brand-500/50 focus-within:ring-1 focus-within:ring-brand-500/20 transition-all">
               <textarea
+                ref={textareaRef}
                 value={input}
                 onChange={e => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
                 placeholder={
-                  agentStatus === 'thinking' ? t('chat.input.waiting', 'Agent is thinking...') :
-                  agentStatus === 'generating' ? t('chat.input.generating', 'Generating response...') :
-                  t('chat.input.placeholder')
+                  agentStatus === 'thinking' || agentStatus === 'generating'
+                    ? (queueLength > 0
+                      ? t('chat.input.queued', `${queueLength} queued — type more or wait...`)
+                      : t('chat.input.canQueue', 'Type to queue next message...'))
+                    : t('chat.input.placeholder')
                 }
                 rows={1}
                 className="w-full pl-4 pr-4 pt-3 pb-10 bg-transparent rounded-2xl text-sm focus:outline-none resize-none placeholder:text-slate-600 disabled:opacity-50 disabled:cursor-not-allowed"
                 style={{ minHeight: '52px', maxHeight: '160px', height: input.includes('\n') ? 'auto' : '52px' }}
-                disabled={agentStatus !== 'idle'}
+                disabled={false}
               />
               <input ref={fileInputRef} type="file" multiple className="hidden" aria-label={t('chat.attachFile', 'Attach file')}
                 onChange={e => { const files = Array.from(e.target.files || []).map(f => ({ name: f.name, path: (f as any).path || f.name })); attachFiles(files); }}

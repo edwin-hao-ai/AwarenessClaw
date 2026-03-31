@@ -278,6 +278,16 @@ AwarenessClaw/
 - **正确**：openclaw.json 中用 `channels["openclaw-weixin"]`，CLI 用 `--channel openclaw-weixin`
 - `channel:list-configured` 需要映射 `openclaw-weixin` → `wechat` 给前端
 
+#### 7. WhatsApp QR 是 ASCII 块字符图形，不是 URL（最新发现）
+- **问题**：`openclaw channels login --channel whatsapp --verbose` 调用 `createWaSocket(true, verbose)` → `qrcode-terminal` 输出 `▄▀█` 块字符 QR 到 stdout，**不是** HTTPS URL
+- **Signal 类似**：Signal 输出的是 `sgnl://linkdevice?...` 深链接，不是 `https://`
+- **WeChat**：插件输出 HTTPS URL → 我们的 URL 检测可以工作 ✅
+- **修复**：
+  - 按行解析 stdout，检测块字符行（`▄▀█` 占 60%+）构成 QR 块（≥5 行）
+  - 将 ASCII QR 通过 IPC `channel:qr-art` 事件发送到前端，在白色背景 `<pre>` 中显示
+  - 同时检测 `sgnl://` 深链接并 `shell.openExternal()` 唤起 Signal app
+- **前端**：wizard 的 testing 步骤当检测到 `asciiQR` 时切换显示 QR 图形 + 等待扫码提示
+
 #### 5. `runAsync` 超时错误字符串不匹配
 - `runAsync` 抛 `"Command timed out"`，但检查用 `msg.includes('timeout')` — `"timed out"` 不包含连续的 `"timeout"`
 - **必须**同时检查 `msg.includes('timed out')`
@@ -304,6 +314,26 @@ AwarenessClaw/
 - `openclaw gateway status` 比 `openclaw status` 快得多（跳过完整插件加载）
 - Gateway 操作超时至少 15s（插件多的环境加载慢）
 - `openclaw gateway start` 如果已在运行会报错，需要检查 status 判断"already running"
+
+### ASCII QR 码检测三大坑（WhatsApp/Signal，已修复）
+- **坑 1: QR 只发前 5 行**：`isQrLine()` 检测到 5 行时立即发送 `channel:qr-art`，但完整 QR 有 30 行 → 前端只显示一条矮长条。**修复**：用 300ms debounce timer，等所有 QR 行到齐后一次性发送
+- **坑 2: QR 永远不发送（原始 bug）**：原代码只在 `else` 分支（收到非 QR 行时）发送 QR 块，但 WhatsApp 输出完 QR 后进程挂起等待扫码，不再有新行 → `else` 永远不触发。**修复**：在 QR 行分支内用 setTimeout 延时发送
+- **坑 3: ANSI 转义码干扰检测**：OpenClaw 输出可能含 ANSI 颜色码（`\x1b[...m`），会膨胀字符计数，降低块字符占比到阈值以下。**修复**：`isQrLine()` 先 `stripAnsi()` 再计算比例，阈值从 0.6 降到 0.55
+- **坑 4: Config warnings 框的空行误判**：`│                    │` 这样的 box-drawing 空行被误判为 QR（空格占比高），但只有 1 行不会触发发送（≥5 行阈值保护）
+- **规则**：QR 相关的 IPC 必须用 `webContents.send`（单向推送），不能放在 `ipcMain.handle` 的返回值里（因为 QR 在 await 中途产生）
+
+### 通道插件未预装导致交互式提示挂起（重要）
+- **问题**：对未安装插件的通道执行 `openclaw channels login`，OpenClaw 弹出 `@clack/prompts` 交互式 select（"Install plugin? npm/local/skip"），在非 TTY 的 `spawn` 环境下无法响应，直接挂起到超时
+- **影响通道**：所有非预装通道（首次使用的 Telegram/Discord/Slack/Signal/LINE 等）
+- **不影响**：WhatsApp（已配置）、WeChat（代码中预装 `@tencent-weixin/openclaw-weixin`）、iMessage（无需插件）
+- **修复**：在 `channels login` 前先 `openclaw channels add --channel <id>`（非交互式），确保通道配置存在；如需插件安装，用 `openclaw plugins install @openclaw/<channel>` 代替交互式提示
+- **注意**：Telegram/Discord/Slack 实际走 token 流程不走 QR，它们不在 `ONE_CLICK_CHANNELS` 中，但如果用户手动尝试 login 仍会卡住
+
+### OpenClaw 每次 CLI 命令都重新加载所有插件（性能坑）
+- **问题**：`openclaw channels login` 启动时加载 10+ 个插件（feishu_doc/chat/wiki/drive/bitable、device-pair、phone-control、talk-voice、awareness-memory 等），耗时 15-20 秒，用户看到长时间 spinner
+- **无法跳过**：OpenClaw CLI 没有 `--no-plugins`/`--skip-plugins` 选项
+- **缓解**：在 `channelLoginWithQR` 的 `processLine` 中检测 `[plugins] Registered` 等日志行，通过 `channel:status` IPC 实时推送加载进度到前端，让用户知道在做什么
+- **未来优化**：OpenClaw Gateway 的 WebSocket API 理论上支持 `channels.login`（Gateway 已加载好所有插件），可以避免重复加载。但目前桌面端未实现 Gateway WS 客户端
 
 ### Windows Gateway 计划任务缺失（严重踩坑，影响普通用户）
 - **现象**：前端只看到 `Gateway failed to start. Please check Settings → Gateway and try again.`，容易误以为是模型 API Key 或 Qwen 配置问题

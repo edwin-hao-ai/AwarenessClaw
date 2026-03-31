@@ -32,6 +32,15 @@ const ONE_CLICK_CHANNELS = ['whatsapp', 'wechat', 'signal', 'imessage'];
 
 export default function Channels() {
   const { t } = useI18n();
+
+  // Translate channel:status i18n keys from main process
+  // Format: "channels.status.key" or "channels.status.key::param" for dynamic values
+  const translateStatus = (statusKey: string): string => {
+    const [key, param] = statusKey.split('::');
+    const translated = t(key, '');
+    if (!translated) return statusKey; // fallback to raw string if key not found
+    return param ? translated.replace('{0}', param) : translated;
+  };
   const [activeWizard, setActiveWizard] = useState<string | null>(null);
   const [wizardStep, setWizardStep] = useState<WizardStep>('intro');
   // Simple token (Telegram, Discord, LINE)
@@ -52,6 +61,8 @@ export default function Channels() {
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [testError, setTestError] = useState<string | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
+  const [asciiQR, setAsciiQR] = useState<string | null>(null);
+  const [channelProgress, setChannelProgress] = useState<string | null>(null);
   const [configuredChannels, setConfiguredChannels] = useState<Set<string>>(new Set());
   const [channels, setChannels] = useState<Channel[]>(CHANNELS);
   const [loadingChannels, setLoadingChannels] = useState(true);
@@ -85,6 +96,19 @@ export default function Channels() {
 
   useEffect(() => { loadConfiguredChannels(); }, []);
 
+  // Listen for ASCII QR and progress status from backend
+  useEffect(() => {
+    if (!window.electronAPI) return;
+    (window.electronAPI as any).onChannelQR?.((art: string) => {
+      setAsciiQR(art);
+      setChannelProgress(null); // Clear progress once QR is shown
+    });
+    (window.electronAPI as any).onChannelStatus?.((statusKey: string) => {
+      // statusKey is an i18n key, possibly with "::" dynamic param (e.g. "channels.status.loadingPlugin::feishu_doc")
+      setChannelProgress(statusKey);
+    });
+  }, []);
+
   const openWizard = async (channelId: string) => {
     setActiveWizard(channelId);
     setWizardStep('intro');
@@ -92,6 +116,7 @@ export default function Channels() {
     setFeishuAppId(''); setFeishuAppSecret('');
     setMatrixServer(''); setMatrixUser(''); setMatrixPass('');
     setGchatKeyFile('');
+    setAsciiQR(null); setChannelProgress(null);
     setTestStatus('idle'); setTestError(null); setLastError(null);
 
     // Pre-fill if already configured
@@ -471,12 +496,38 @@ export default function Channels() {
               {/* Step 3: Result */}
               {wizardStep === 'test' && (
                 <>
-                  <div className="text-center py-6">
+                  <div className={asciiQR ? 'py-2' : 'text-center py-6'}>
                     {testStatus === 'testing' && (
-                      <div className="space-y-3">
-                        <div className="w-10 h-10 mx-auto border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
-                        <p className="text-slate-300">{t('channels.testing')}</p>
-                        {isOneClick && <p className="text-xs text-slate-500">{t('channels.oneclick.wait', 'This may take a moment...')}</p>}
+                      <div className={asciiQR ? 'space-y-3' : 'space-y-3'}>
+                        {/* ASCII QR code display (WhatsApp / Signal CLI mode) */}
+                        {asciiQR ? (
+                          <div className="space-y-3">
+                            <p className="text-sm text-slate-300 text-center font-medium">
+                              {activeWizard === 'whatsapp'
+                                ? t('channels.whatsapp.scanHint', 'Open WhatsApp → Linked Devices → Link a Device')
+                                : t('channels.signal.scanHint', 'Open Signal → Settings → Linked Devices → Link New Device')}
+                            </p>
+                            <div className="bg-white rounded-xl p-3 overflow-x-auto">
+                              <pre className="text-black text-[10px] leading-none font-mono whitespace-pre select-text">{asciiQR}</pre>
+                            </div>
+                            <p className="text-xs text-slate-500 text-center">{t('channels.qr.waiting', 'Waiting for scan...')}</p>
+                          </div>
+                        ) : (
+                          <div className="text-center space-y-4">
+                            <div className="w-10 h-10 mx-auto border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
+                            <div className="space-y-2">
+                              <p className="text-slate-300">{t('channels.testing')}</p>
+                              {isOneClick && (
+                                <p className="text-xs text-slate-500 animate-pulse">{channelProgress ? translateStatus(channelProgress) : t('channels.oneclick.wait', 'Initializing...')}</p>
+                              )}
+                              {isOneClick && !asciiQR && (
+                                <p className="text-[11px] text-slate-600 mt-3">
+                                  {t('channels.oneclick.patience', 'First time may take 15-20s to load')}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                     {testStatus === 'success' && (

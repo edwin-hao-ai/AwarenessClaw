@@ -156,14 +156,17 @@ export default function App() {
       <div className="flex flex-1 overflow-hidden pt-8">
         <Sidebar currentPage={currentPage} onNavigate={setCurrentPage} />
 
-        <main className="flex-1 overflow-y-auto">
-          {currentPage === 'chat' && <Dashboard />}
-          {currentPage === 'memory' && <Memory />}
-          {currentPage === 'channels' && <Channels />}
-          {currentPage === 'skills' && <Skills />}
-          {currentPage === 'automation' && <Automation />}
-          {currentPage === 'agents' && <Agents />}
-          {currentPage === 'settings' && <Settings />}
+        <main className="flex-1 overflow-hidden relative">
+          {/* Dashboard is always mounted so in-flight chats survive tab switches */}
+          <div className={`absolute inset-0 overflow-y-auto ${currentPage === 'chat' ? '' : 'hidden'}`}>
+            <Dashboard isActive={currentPage === 'chat'} />
+          </div>
+          {currentPage === 'memory' && <div className="h-full overflow-y-auto"><Memory /></div>}
+          {currentPage === 'channels' && <div className="h-full overflow-y-auto"><Channels /></div>}
+          {currentPage === 'skills' && <div className="h-full overflow-y-auto"><Skills /></div>}
+          {currentPage === 'automation' && <div className="h-full overflow-y-auto"><Automation /></div>}
+          {currentPage === 'agents' && <div className="h-full overflow-y-auto"><Agents /></div>}
+          {currentPage === 'settings' && <div className="h-full overflow-y-auto"><Settings /></div>}
         </main>
       </div>
     </div>

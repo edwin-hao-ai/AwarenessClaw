@@ -397,6 +397,29 @@ ipcMain.handle('app:open-external', (_e, url: string) => {
   shell.openExternal(url);
 });
 
+// --- Launch at Login ---
+ipcMain.handle('app:set-login-item', (_e: any, enabled: boolean) => {
+  try {
+    app.setLoginItemSettings({
+      openAtLogin: enabled,
+      // macOS: open as hidden (minimized to tray)
+      openAsHidden: true,
+    });
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: String(err) };
+  }
+});
+
+ipcMain.handle('app:get-login-item', () => {
+  try {
+    const settings = app.getLoginItemSettings();
+    return { openAtLogin: settings.openAtLogin };
+  } catch {
+    return { openAtLogin: false };
+  }
+});
+
 /**
  * Step 1: Detect environment
  * Returns system info + whether Node.js and OpenClaw are available
@@ -512,8 +535,10 @@ ipcMain.handle('setup:install-nodejs', async () => {
       const pkgPath = path.join(os.tmpdir(), 'node-installer.pkg');
       await downloadFile(pkgUrl, pkgPath);
       await runAsync(`open "${pkgPath}"`, 10000);
-      for (let i = 0; i < 120; i++) {
-        await sleep(2000);
+      // Poll with exponential backoff: 2s, 2s, 2s, 4s, 4s, 8s... (max ~90s total)
+      for (let i = 0; i < 30; i++) {
+        const delay = i < 3 ? 2000 : i < 6 ? 4000 : 8000;
+        await sleep(delay);
         if (getNodeVersion()) return { success: true, method: 'pkg-gui' };
       }
       return { success: false, error: 'Node.js installation timed out' };
@@ -872,13 +897,16 @@ ipcMain.handle('app:upgrade-component', async (_e, component: string) => {
     } else if (component === 'daemon') {
       // Stop existing daemon, then restart with latest via npx
       await shutdownLocalDaemon(3000);
-      await new Promise(r => setTimeout(r, 1500));
 
-      // Force-kill if still running (shutdown endpoint may not have worked)
-      const stillRunning = await getLocalDaemonHealth(2000);
-      if (stillRunning?.pid) {
-        try { process.kill(stillRunning.pid, 'SIGKILL'); } catch { /* already dead */ }
-        await new Promise(r => setTimeout(r, 1000));
+      // Wait for daemon to actually stop (poll instead of fixed sleep)
+      for (let w = 0; w < 6; w++) {
+        const health = await getLocalDaemonHealth(1000);
+        if (!health?.pid) break;
+        if (w === 3) {
+          // Force-kill after ~3 attempts
+          try { process.kill(health.pid, 'SIGKILL'); } catch { /* already dead */ }
+        }
+        await new Promise(r => setTimeout(r, 500));
       }
 
       // Clear npx cache for @awareness-sdk/local to force fresh download
@@ -899,9 +927,10 @@ ipcMain.handle('app:upgrade-component', async (_e, component: string) => {
       // Start new version — npx -y @latest forces fresh fetch after cache clear
       // IMPORTANT: Must pass --project to avoid cwd=/ in packaged Electron (ENOENT: mkdir '/.awareness')
       await runAsync(`npx -y @awareness-sdk/local@latest start --port 37800 --project "${path.join(HOME, '.openclaw')}" --background`, 60000);
-      // Poll for readiness — npx download + daemon startup may take 10-20s
-      for (let i = 0; i < 20; i++) {
-        await new Promise(r => setTimeout(r, 1000));
+      // Poll for readiness with exponential backoff — npx download + daemon startup may take 10-20s
+      for (let i = 0; i < 12; i++) {
+        const delay = i < 3 ? 1000 : i < 6 ? 2000 : 3000; // 1s×3, 2s×3, 3s×6 = ~27s max
+        await new Promise(r => setTimeout(r, delay));
         const health = await getLocalDaemonHealth(3000);
         if (health?.version) return { success: true, version: health.version };
       }
@@ -1383,7 +1412,8 @@ function mergeOpenClawConfig(existing: Record<string, any>, incoming: Record<str
         for (const tool of incomingTools.alsoAllow) existingAllow.add(tool);
         merged.tools.alsoAllow = [...existingAllow];
       }
-      if (incomingTools.denied) merged.tools.denied = incomingTools.denied;
+      // Only carry over denied if non-empty; OpenClaw 2026.3.28+ rejects unknown keys
+      if (incomingTools.denied && incomingTools.denied.length > 0) merged.tools.denied = incomingTools.denied;
       if (incomingTools.profile) merged.tools.profile = incomingTools.profile;
     } else {
       merged[key] = value;
@@ -1598,9 +1628,11 @@ async function startGatewayWithRepair(send?: (ch: string, data: any) => void): P
     }
   }
 
-  for (let i = 0; i < 10; i++) {
-    await sleep(1000);
-    const check = await readShellOutputAsync('openclaw gateway status 2>&1', 15000);
+  // Poll with backoff: 1s×3, 2s×3 = ~12s max (down from 10×1s + 15s timeout each)
+  for (let i = 0; i < 6; i++) {
+    const delay = i < 3 ? 1000 : 2000;
+    await sleep(delay);
+    const check = await readShellOutputAsync('openclaw gateway status 2>&1', 8000);
     if (isGatewayRunningOutput(check)) {
       emit('Gateway started');
       return { ok: true };
@@ -1653,6 +1685,19 @@ async function ensureGatewayRunning(): Promise<{ ok: boolean; error?: string }> 
  * Non-interactive, one message at a time, returns JSON response.
  * Streaming: read stdout line by line as response comes in.
  */
+
+// Track active chat child process for abort support
+let activeChatChild: ReturnType<typeof spawn> | null = null;
+
+ipcMain.handle('chat:abort', async () => {
+  if (activeChatChild) {
+    try { activeChatChild.kill('SIGTERM'); } catch { /* already dead */ }
+    activeChatChild = null;
+    return { success: true };
+  }
+  return { success: false, error: 'No active chat' };
+});
+
 ipcMain.handle('chat:send', async (_e, message: string, sessionId?: string, options?: { thinkingLevel?: string; model?: string; files?: string[]; workspacePath?: string }) => {
   // Auto-start Gateway if not running (users should never need to manually start it)
   const gatewayReady = await ensureGatewayRunning();
@@ -1711,7 +1756,9 @@ ipcMain.handle('chat:send', async (_e, message: string, sessionId?: string, opti
       fullMsg = `[Current project directory: ${requestedWorkspace}] (use this as base for relative file paths)\\n${fullMsg}`;
     }
 
-    const cmd = `openclaw agent --local --session-id "${sid}" -m "${fullMsg}" --verbose on${thinkingFlag}`;
+    // Use Gateway mode (no --local) for proper session management and context continuity.
+    // Gateway is already ensured running above.
+    const cmd = `openclaw agent --session-id "${sid}" -m "${fullMsg}" --verbose on${thinkingFlag}`;
     const enhancedPath = getEnhancedPath();
     // Use home directory as cwd so agent is not restricted to a single directory.
     // The project path is passed via message context above.
@@ -1730,6 +1777,8 @@ ipcMain.handle('chat:send', async (_e, message: string, sessionId?: string, opti
         cwd: chatWorkingDirectory,
         env: { ...process.env, PATH: enhancedPath },
       });
+
+    activeChatChild = child;
 
     const send = (channel: string, data: any) => {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, data);
@@ -1856,6 +1905,7 @@ ipcMain.handle('chat:send', async (_e, message: string, sessionId?: string, opti
     child.stderr?.on('data', () => { /* ignore stderr */ });
 
     child.on('exit', () => {
+      activeChatChild = null;
       // Flush remaining buffer
       const normalizedBuffer = normalizeStreamLine(lineBuffer).trim();
       if (normalizedBuffer && !isNoiseLine(normalizedBuffer)) {
@@ -2016,12 +2066,28 @@ ipcMain.handle('channel:read-config', async (_e, channelId: string) => {
  * Spawns login command, streams stdout, auto-opens QR URLs in browser.
  * Returns success only if login completes; timeout = failure.
  */
+// Detect ASCII block-character QR lines (qrcode-terminal output: ▄▀█ chars)
+function isQrLine(line: string): boolean {
+  const clean = stripAnsi(line);
+  if (clean.length < 4) return false;
+  const blockCount = [...clean].filter(c => '▄▀█░▒▓'.includes(c) || c === ' ').length;
+  return blockCount / clean.length > 0.55;
+}
+
 function channelLoginWithQR(loginCmd: string, timeoutMs = 120000): Promise<{ success: boolean; output?: string; error?: string }> {
   const ep = getEnhancedPath();
+  const send = (ch: string, data: unknown) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(ch, data);
+  };
+
   return new Promise((resolve) => {
     let settled = false;
     let stdout = '';
-    let qrOpened = false;
+    let lineBuffer = '';
+    let qrShown = false;         // URL opened OR ASCII QR streamed to frontend
+    let qrLines: string[] = [];  // accumulate ASCII QR block
+    let lineCount = 0;
+    let qrFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
     const child = process.platform === 'win32'
       ? spawn(wrapWindowsCommand(loginCmd + ' 2>&1'), [], {
@@ -2030,34 +2096,94 @@ function channelLoginWithQR(loginCmd: string, timeoutMs = 120000): Promise<{ suc
         })
       : spawn('/bin/bash', ['--norc', '--noprofile', '-c', `export PATH="${ep}"; ${loginCmd} 2>&1`]);
 
-    child.stdout?.on('data', (data: Buffer) => {
-      const chunk = data.toString();
-      stdout += chunk;
+    const processLine = (line: string) => {
+      lineCount++;
+      stdout += line + '\n';
 
-      // Look for QR URLs and auto-open in browser
-      // Skip internal URLs (localhost, 127.0.0.1, docs, github)
-      if (!qrOpened) {
-        const urls = stdout.match(/https?:\/\/\S+/g) || [];
-        for (const url of urls) {
-          if (url.includes('localhost') || url.includes('127.0.0.1') ||
-              url.includes('docs.openclaw') || url.includes('github.com')) continue;
-          qrOpened = true;
-          shell.openExternal(url);
-          break;
+      // Send progress hints to frontend as i18n keys for loading status
+      if (!qrShown) {
+        if (line.includes('[plugins]') && line.includes('Registered')) {
+          // Extract plugin name: "[plugins] feishu_doc: Registered..." → "feishu_doc"
+          const pluginMatch = line.match(/\[plugins\]\s+(\S+?):/);
+          send('channel:status', pluginMatch ? `channels.status.loadingPlugin::${pluginMatch[1]}` : 'channels.status.loadingPlugins');
+        } else if (line.includes('Waiting for') || line.includes('Scan this QR')) {
+          send('channel:status', 'channels.status.generatingQR');
+        } else if (line.includes('auto-start')) {
+          send('channel:status', 'channels.status.startingMemory');
+        } else if (line.includes('plugin registered') || line.includes('plugin initialized')) {
+          send('channel:status', 'channels.status.almostReady');
         }
       }
+
+      // 1. HTTPS URLs (WeChat plugin, some Signal web URLs, etc.)
+      if (!qrShown) {
+        const httpsUrls = line.match(/https?:\/\/\S+/g) || [];
+        for (const url of httpsUrls) {
+          if (url.includes('localhost') || url.includes('127.0.0.1') ||
+              url.includes('docs.openclaw') || url.includes('github.com')) continue;
+          qrShown = true;
+          shell.openExternal(url);
+          return;
+        }
+      }
+
+      // 2. Signal deep links: sgnl://linkdevice?... — open in Signal app
+      if (!qrShown) {
+        const signalLink = line.match(/sgnl:\/\/\S+/);
+        if (signalLink) {
+          qrShown = true;
+          shell.openExternal(signalLink[0]);
+          return;
+        }
+      }
+
+      // 3. ASCII QR block (WhatsApp, sometimes Signal in CLI mode)
+      // Accumulate all QR lines, then flush after 300ms of no new QR lines
+      if (isQrLine(line)) {
+        qrLines.push(line);
+        // Reset flush timer — wait for all QR lines to arrive
+        if (qrFlushTimer) clearTimeout(qrFlushTimer);
+        qrFlushTimer = setTimeout(() => {
+          if (qrLines.length >= 5 && !qrShown) {
+            qrShown = true;
+            send('channel:qr-art', qrLines.join('\n'));
+          }
+        }, 300);
+      } else {
+        // Non-QR line after QR block — flush immediately
+        if (qrFlushTimer) { clearTimeout(qrFlushTimer); qrFlushTimer = null; }
+        if (qrLines.length >= 5 && !qrShown) {
+          qrShown = true;
+          send('channel:qr-art', qrLines.join('\n'));
+        }
+        qrLines = [];
+      }
+    };
+
+    child.stdout?.on('data', (data: Buffer) => {
+      const chunk = data.toString();
+      lineBuffer += chunk;
+      const lines = lineBuffer.split('\n');
+      lineBuffer = lines.pop() ?? '';
+      for (const ln of lines) processLine(ln);
     });
 
-    child.stderr?.on('data', (data: Buffer) => { stdout += data.toString(); });
+    child.stderr?.on('data', (data: Buffer) => {
+      const chunk = data.toString();
+      lineBuffer += chunk;
+      const lines = lineBuffer.split('\n');
+      lineBuffer = lines.pop() ?? '';
+      for (const ln of lines) processLine(ln);
+    });
 
     child.on('exit', (code) => {
+      if (lineBuffer) processLine(lineBuffer);
       if (settled) return;
       settled = true;
       if (code === 0) {
         resolve({ success: true, output: 'Connected!' });
       } else {
-        // Non-zero but QR was opened means user didn't scan in time
-        if (qrOpened) {
+        if (qrShown) {
           resolve({ success: false, error: 'QR code expired. Click "Try again" to get a new QR code.' });
         } else {
           resolve({ success: false, error: stdout.slice(-300) || `Exit code ${code}` });
@@ -2075,7 +2201,7 @@ function channelLoginWithQR(loginCmd: string, timeoutMs = 120000): Promise<{ suc
       if (settled) return;
       settled = true;
       try { child.kill(); } catch {}
-      if (qrOpened) {
+      if (qrShown) {
         resolve({ success: false, error: 'QR code expired. Click "Try again" to get a new QR code.' });
       } else {
         resolve({ success: false, error: 'Connection timed out. Make sure Gateway is running.' });
@@ -2091,22 +2217,43 @@ ipcMain.handle('channel:setup', async (_e: any, channelId: string) => {
     return { success: false, error: `Invalid channel ID: ${channelId}` };
   }
 
+  // Helper: send progress status to frontend
+  const sendStatus = (msg: string) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('channel:status', msg);
+  };
+
+  // Helper: bind channel to main agent after login
+  const bindToMainAgent = async (bindId: string) => {
+    sendStatus('channels.status.binding');
+    try { await safeShellExecAsync(`openclaw agents bind --agent main --bind ${bindId} 2>&1`, 10000); } catch { /* non-fatal */ }
+  };
+
   // WeChat: plugin-based (openclaw-weixin)
   if (safeChannelId === 'wechat') {
+    sendStatus('channels.status.installingWechat');
     try { await runAsync('openclaw plugins install "@tencent-weixin/openclaw-weixin" 2>&1', 30000); } catch { /* already installed */ }
-    return channelLoginWithQR('openclaw channels login --channel openclaw-weixin');
+    sendStatus('channels.status.connectingWechat');
+    const res = await channelLoginWithQR('openclaw channels login --channel openclaw-weixin --verbose');
+    if (res.success) await bindToMainAgent('openclaw-weixin');
+    return res;
   }
 
   // Signal: add channel first, then QR link
   if (safeChannelId === 'signal') {
+    sendStatus('channels.status.configuringSignal');
     try { await runAsync('openclaw channels add --channel signal 2>&1', 15000); } catch { /* may exist */ }
-    return channelLoginWithQR('openclaw channels login --channel signal');
+    sendStatus('channels.status.connectingSignal');
+    const res = await channelLoginWithQR('openclaw channels login --channel signal --verbose');
+    if (res.success) await bindToMainAgent('signal');
+    return res;
   }
 
   // iMessage: just add — no login needed (macOS auto-detects)
   if (safeChannelId === 'imessage') {
+    sendStatus('channels.status.configuringImessage');
     try {
       await runAsync('openclaw channels add --channel imessage 2>&1', 15000);
+      await bindToMainAgent('imessage');
       return { success: true, output: 'iMessage connected.' };
     } catch (err: any) {
       return { success: false, error: err.message?.slice(0, 300) };
@@ -2114,8 +2261,12 @@ ipcMain.handle('channel:setup', async (_e: any, channelId: string) => {
   }
 
   // WhatsApp + others: add then QR login
+  sendStatus(`channels.status.configuring::${safeChannelId}`);
   try { await safeShellExecAsync(`openclaw channels add --channel ${safeChannelId} 2>&1`, 10000); } catch { /* may exist */ }
-  return channelLoginWithQR(`openclaw channels login --channel ${safeChannelId}`);
+  sendStatus(`channels.status.connecting::${safeChannelId}`);
+  const res = await channelLoginWithQR(`openclaw channels login --channel ${safeChannelId} --verbose`);
+  if (res.success) await bindToMainAgent(safeChannelId);
+  return res;
 });
 
 // Channel status: fast config read first, then CLI check cached for 60s
@@ -2511,7 +2662,15 @@ ipcMain.handle('permissions:update', async (_e, changes: { alsoAllow?: string[];
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     if (!config.tools) config.tools = {};
     if (changes.alsoAllow !== undefined) config.tools.alsoAllow = changes.alsoAllow;
-    if (changes.denied !== undefined) config.tools.denied = changes.denied;
+    // OpenClaw 2026.3.28+ does not recognize tools.denied — only write when non-empty,
+    // and remove the key entirely when empty to avoid config validation failures.
+    if (changes.denied !== undefined) {
+      if (changes.denied.length > 0) {
+        config.tools.denied = changes.denied;
+      } else {
+        delete config.tools.denied;
+      }
+    }
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
     return { success: true };
   } catch (err: any) {
@@ -2605,12 +2764,14 @@ ipcMain.handle('memory:get-daily-summary', async () => {
 });
 
 /** Fetch memory events (timeline) from daemon REST API */
-ipcMain.handle('memory:get-events', async (_e, opts: { limit?: number; offset?: number; search?: string; type?: string; agent_role?: string }) => {
+ipcMain.handle('memory:get-events', async (_e, opts: { limit?: number; offset?: number; search?: string; type?: string; agent_role?: string; source?: string; source_exclude?: string }) => {
   const limit = opts?.limit || 50;
   const offset = opts?.offset || 0;
   const search = opts?.search || '';
   const typeFilter = opts?.type || '';
   const agentRoleFilter = opts?.agent_role || '';
+  const sourceFilter = opts?.source || '';
+  const sourceExclude = opts?.source_exclude || '';
 
   let endpoint: string;
   if (search) {
@@ -2622,6 +2783,8 @@ ipcMain.handle('memory:get-events', async (_e, opts: { limit?: number; offset?: 
     const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
     if (typeFilter) params.set('type', typeFilter);
     if (agentRoleFilter) params.set('agent_role', agentRoleFilter);
+    if (sourceFilter) params.set('source', sourceFilter);
+    if (sourceExclude) params.set('source_exclude', sourceExclude);
     endpoint = `http://127.0.0.1:37800/api/v1/memories?${params.toString()}`;
   }
 
@@ -2930,6 +3093,43 @@ function createTray() {
   });
 }
 
+// --- Daemon Watchdog ---
+// Periodically checks daemon health and auto-restarts if crashed.
+// Only runs after first successful connection (avoids restart loops during setup).
+let watchdogInterval: ReturnType<typeof setInterval> | null = null;
+let daemonEverConnected = false;
+
+function startDaemonWatchdog() {
+  if (watchdogInterval) return;
+  watchdogInterval = setInterval(async () => {
+    if (!daemonEverConnected) return;
+    const health = await getLocalDaemonHealth(3000);
+    if (health) return; // healthy
+    // Daemon is down — attempt restart
+    console.log('[watchdog] Daemon not responding, attempting restart...');
+    try {
+      const startCmd = `npx -y @awareness-sdk/local start --port 37800 --project ${path.join(HOME, '.openclaw')} --background`;
+      if (process.platform === 'win32') {
+        spawn('cmd.exe', ['/c', startCmd], { detached: true, stdio: 'ignore', env: { ...process.env, PATH: getEnhancedPath() } }).unref();
+      } else {
+        spawn('/bin/bash', ['--norc', '--noprofile', '-c', `export PATH="${getEnhancedPath()}"; ${startCmd}`], { detached: true, stdio: 'ignore' }).unref();
+      }
+    } catch (err) {
+      console.error('[watchdog] Failed to restart daemon:', err);
+    }
+  }, 60_000); // check every 60s
+}
+
+function stopDaemonWatchdog() {
+  if (watchdogInterval) { clearInterval(watchdogInterval); watchdogInterval = null; }
+}
+
+// Mark daemon as having connected (called from startup flow)
+ipcMain.handle('daemon:mark-connected', () => {
+  daemonEverConnected = true;
+  startDaemonWatchdog();
+});
+
 // --- App Lifecycle ---
 
 app.whenReady().then(() => {
@@ -2937,10 +3137,15 @@ app.whenReady().then(() => {
   if (process.platform === 'darwin') {
     createTray();
   }
+  // Start watchdog after a delay (give startup flow time to connect daemon first)
+  setTimeout(() => {
+    if (!watchdogInterval) startDaemonWatchdog();
+  }, 30_000);
 });
 
 app.on('before-quit', () => {
   isQuitting = true;
+  stopDaemonWatchdog();
 });
 
 app.on('window-all-closed', () => {

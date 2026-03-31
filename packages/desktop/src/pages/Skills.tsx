@@ -306,7 +306,7 @@ export default function Skills() {
             <div className="flex items-center justify-between p-5 border-b border-slate-800">
               {detailLoading ? (
                 <div className="flex items-center gap-2 text-slate-400">
-                  <Loader2 size={16} className="animate-spin" /> Loading...
+                  <Loader2 size={16} className="animate-spin" /> {t('common.loading', 'Loading...')}
                 </div>
               ) : (
                 <div className="flex items-center gap-3 min-w-0">
@@ -336,7 +336,7 @@ export default function Skills() {
                 {/* SKILL.md / README content */}
                 {(detailSkill.skillMd || detailSkill.readme) && (
                   <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700/50">
-                    <h4 className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">Documentation</h4>
+                    <h4 className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">{t('skills.documentation', 'Documentation')}</h4>
                     <pre className="text-xs text-slate-300 whitespace-pre-wrap font-mono max-h-60 overflow-y-auto">
                       {detailSkill.skillMd || detailSkill.readme}
                     </pre>
@@ -346,9 +346,9 @@ export default function Skills() {
                 {/* Configuration */}
                 {installedSlugs.has(detailSkill.slug) && (
                   <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700/50">
-                    <h4 className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-3">Configuration</h4>
+                    <h4 className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-3">{t('skills.configuration', 'Configuration')}</h4>
                     {Object.keys(skillConfig).length === 0 ? (
-                      <p className="text-xs text-slate-600">No configuration options. Add key-value pairs below.</p>
+                      <p className="text-xs text-slate-600">{t('skills.noConfigOptions', 'No configuration options. Add key-value pairs below.')}</p>
                     ) : null}
                     <div className="space-y-2">
                       {Object.entries(skillConfig).map(([key, val]) => (
@@ -371,7 +371,7 @@ export default function Skills() {
                     {/* Add new config key */}
                     <div className="mt-2 flex gap-2">
                       <input
-                        placeholder="key"
+                        placeholder={t('skills.configKeyPlaceholder', 'key')}
                         id="new-config-key"
                         className="flex-1 px-2 py-1 bg-slate-900 border border-slate-600 rounded text-xs font-mono focus:outline-none focus:border-brand-500"
                         onKeyDown={e => {
@@ -390,7 +390,7 @@ export default function Skills() {
                         }}
                         className="px-2 py-1 text-xs bg-slate-700 hover:bg-slate-600 rounded text-slate-300"
                       >
-                        + Add
+                        {t('skills.addConfig', '+ Add')}
                       </button>
                     </div>
                     {configDirty && (
@@ -400,7 +400,7 @@ export default function Skills() {
                         className="mt-3 flex items-center gap-1 px-3 py-1.5 text-xs bg-brand-600 hover:bg-brand-500 disabled:bg-slate-700 text-white rounded-lg transition-colors"
                       >
                         {configSaving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
-                        Save Config
+                        {t('skills.saveConfig', 'Save Config')}
                       </button>
                     )}
                   </div>

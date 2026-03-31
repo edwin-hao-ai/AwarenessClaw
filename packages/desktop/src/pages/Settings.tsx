@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Moon, Sun, Monitor, ChevronRight, X, Check, ChevronDown, Play, Square, RotateCw, RefreshCw, Loader2, Plus, Trash2, Download, Upload, Shield, AlertTriangle, Puzzle, Webhook, CheckCircle } from 'lucide-react';
+import { Moon, Sun, Monitor, ChevronRight, X, Check, ChevronDown, Play, Square, RotateCw, RefreshCw, Loader2, Plus, Trash2, Download, Upload, Shield, AlertTriangle, Puzzle, Webhook, CheckCircle, Lock, Code2, Zap } from 'lucide-react';
 import { useAppConfig, MODEL_PROVIDERS, useDynamicProviders } from '../lib/store';
 import { getUsageStats, clearUsage, type UsageStats } from '../lib/usage';
 import { useI18n } from '../lib/i18n';
@@ -25,6 +25,52 @@ export default function Settings() {
   const [permissions, setPermissions] = useState<{ profile: string; alsoAllow: string[]; denied: string[] } | null>(null);
   const [newAllowTool, setNewAllowTool] = useState('');
   const [newDenyCmd, setNewDenyCmd] = useState('');
+  const [showAdvancedPerms, setShowAdvancedPerms] = useState(false);
+
+  // Permission presets
+  const PERMISSION_PRESETS = {
+    safe: {
+      label: t('settings.permissions.safe', 'Safe'),
+      desc: t('settings.permissions.safe.desc', 'Minimal access — no shell commands, privacy tools blocked'),
+      icon: <Lock size={16} />,
+      color: 'blue',
+      alsoAllow: [] as string[],
+      denied: ['exec', 'bash', 'shell', 'camera.snap', 'screen.record', 'contacts.add', 'calendar.add', 'sms.send'],
+    },
+    standard: {
+      label: t('settings.permissions.standard', 'Standard'),
+      desc: t('settings.permissions.standard.desc', 'Code editing + Awareness memory, privacy tools blocked'),
+      icon: <Shield size={16} />,
+      color: 'emerald',
+      alsoAllow: ['awareness_recall', 'awareness_record', 'awareness_lookup'],
+      denied: ['camera.snap', 'screen.record', 'contacts.add', 'calendar.add', 'sms.send'],
+    },
+    developer: {
+      label: t('settings.permissions.developer', 'Developer'),
+      desc: t('settings.permissions.developer.desc', 'Full tool access, all capabilities enabled'),
+      icon: <Code2 size={16} />,
+      color: 'purple',
+      alsoAllow: ['awareness_recall', 'awareness_record', 'awareness_lookup', 'awareness_perception'],
+      denied: [] as string[],
+    },
+  };
+
+  type PresetKey = keyof typeof PERMISSION_PRESETS;
+
+  const detectPreset = (): PresetKey | null => {
+    if (!permissions) return null;
+    for (const [key, preset] of Object.entries(PERMISSION_PRESETS)) {
+      const allowMatch = JSON.stringify([...preset.alsoAllow].sort()) === JSON.stringify([...permissions.alsoAllow].sort());
+      const denyMatch = JSON.stringify([...preset.denied].sort()) === JSON.stringify([...permissions.denied].sort());
+      if (allowMatch && denyMatch) return key as PresetKey;
+    }
+    return null; // custom
+  };
+
+  const applyPreset = async (key: PresetKey) => {
+    const preset = PERMISSION_PRESETS[key];
+    await savePermissions({ alsoAllow: preset.alsoAllow, denied: preset.denied });
+  };
 
   // Plugins state — entries is Record<name, {enabled}> in openclaw.json
   const [plugins, setPlugins] = useState<Record<string, { enabled?: boolean }>>({});
@@ -149,11 +195,30 @@ export default function Settings() {
     }
   };
 
-  // Check gateway status on mount
+  // Check gateway status — only poll when page is visible, reduced frequency
   useEffect(() => {
     checkGateway();
-    const interval = setInterval(checkGateway, 15000);
-    return () => clearInterval(interval);
+    let interval: ReturnType<typeof setInterval> | null = null;
+
+    const startPolling = () => {
+      if (!interval) interval = setInterval(checkGateway, 30000);
+    };
+    const stopPolling = () => {
+      if (interval) { clearInterval(interval); interval = null; }
+    };
+
+    const onVisibility = () => {
+      if (document.hidden) { stopPolling(); }
+      else { checkGateway(); startPolling(); }
+    };
+
+    document.addEventListener('visibilitychange', onVisibility);
+    if (!document.hidden) startPolling();
+
+    return () => {
+      stopPolling();
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
   }, []);
 
   const checkGateway = async () => {
@@ -175,7 +240,7 @@ export default function Settings() {
   const loadLogs = async () => {
     if (!window.electronAPI) return;
     const result = await (window.electronAPI as any).getRecentLogs();
-    setLogs(result.logs || 'No logs');
+    setLogs(result.logs || t('settings.gateway.noLogs', 'No logs'));
     setShowLogs(true);
   };
 
@@ -399,82 +464,232 @@ export default function Settings() {
         {/* Permissions */}
         {permissions && (
           <Section title={`🛡️ ${t('settings.permissions')}`}>
-            <Row label={t('settings.permissions.profile')} desc={`${t('settings.model.current')}: ${permissions.profile}`}>
-              <span className="text-xs text-brand-400 font-mono">{permissions.profile}</span>
-            </Row>
+            {/* Preset mode cards */}
             <div className="p-4 space-y-3">
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-medium text-slate-400">{t('settings.permissions.allowed')} ({permissions.alsoAllow.length})</span>
-                </div>
-                <div className="flex flex-wrap gap-1.5 mb-2">
-                  {permissions.alsoAllow.map(tool => (
-                    <span key={tool} className="flex items-center gap-1 px-2 py-0.5 bg-emerald-600/10 border border-emerald-600/20 rounded text-[10px] text-emerald-400">
-                      {tool}
-                      <button onClick={() => savePermissions({ alsoAllow: permissions.alsoAllow.filter(t => t !== tool) })} className="hover:text-red-400">×</button>
-                    </span>
-                  ))}
-                  {permissions.alsoAllow.length === 0 && <span className="text-[10px] text-slate-500 italic">{t('settings.permissions.noneAllowed', 'No extra tools added')}</span>}
-                </div>
-                <div className="flex gap-1.5">
-                  <input
-                    value={newAllowTool}
-                    onChange={e => setNewAllowTool(e.target.value)}
-                    placeholder="tool_name"
-                    className="flex-1 px-2 py-1 bg-slate-900 border border-slate-600 rounded text-xs font-mono focus:outline-none focus:border-brand-500"
-                    onKeyDown={e => {
-                      if (e.key === 'Enter' && newAllowTool.trim() && !permissions.alsoAllow.includes(newAllowTool.trim())) {
-                        savePermissions({ alsoAllow: [...permissions.alsoAllow, newAllowTool.trim()] });
-                        setNewAllowTool('');
-                      }
-                    }}
-                  />
-                  <button
-                    data-testid="add-allow-tool"
-                    onClick={() => { if (newAllowTool.trim() && !permissions.alsoAllow.includes(newAllowTool.trim())) { savePermissions({ alsoAllow: [...permissions.alsoAllow, newAllowTool.trim()] }); setNewAllowTool(''); } }}
-                    className="px-2 py-1 text-xs bg-slate-700 hover:bg-slate-600 rounded text-slate-300"
-                  >
-                    <Plus size={12} />
-                  </button>
-                </div>
+              <p className="text-xs text-slate-500 mb-3">{t('settings.permissions.presetDesc', 'Choose a security level. Controls what tools the AI can use.')}</p>
+              <div className="grid grid-cols-3 gap-2">
+                {(Object.entries(PERMISSION_PRESETS) as [PresetKey, typeof PERMISSION_PRESETS[PresetKey]][]).map(([key, preset]) => {
+                  const isActive = detectPreset() === key;
+                  const colorMap: Record<string, string> = {
+                    blue: isActive
+                      ? 'border-blue-500/60 bg-blue-600/10 text-blue-300'
+                      : 'border-slate-700 bg-slate-800/50 text-slate-400 hover:border-blue-500/40 hover:text-blue-300',
+                    emerald: isActive
+                      ? 'border-emerald-500/60 bg-emerald-600/10 text-emerald-300'
+                      : 'border-slate-700 bg-slate-800/50 text-slate-400 hover:border-emerald-500/40 hover:text-emerald-300',
+                    purple: isActive
+                      ? 'border-purple-500/60 bg-purple-600/10 text-purple-300'
+                      : 'border-slate-700 bg-slate-800/50 text-slate-400 hover:border-purple-500/40 hover:text-purple-300',
+                  };
+                  return (
+                    <button
+                      key={key}
+                      onClick={() => applyPreset(key)}
+                      className={`relative flex flex-col items-center gap-1.5 p-3 rounded-xl border transition-all text-center ${colorMap[preset.color]}`}
+                    >
+                      {isActive && (
+                        <span className="absolute top-1.5 right-1.5">
+                          <Check size={10} className="text-current opacity-80" />
+                        </span>
+                      )}
+                      <span className="opacity-80">{preset.icon}</span>
+                      <span className="text-xs font-medium">{preset.label}</span>
+                    </button>
+                  );
+                })}
               </div>
-              <div className="border-t border-slate-700/50 pt-3">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-medium text-slate-400 flex items-center gap-1">
-                    <Shield size={11} /> {t('settings.permissions.denied')} ({permissions.denied.length})
-                  </span>
+              {/* Active preset description */}
+              {(() => {
+                const active = detectPreset();
+                return active ? (
+                  <p className="text-[11px] text-slate-500 text-center">{PERMISSION_PRESETS[active].desc}</p>
+                ) : (
+                  <p className="text-[11px] text-amber-500/80 text-center">{t('settings.permissions.custom', 'Custom configuration')}</p>
+                );
+              })()}
+
+              {/* Advanced toggle */}
+              <button
+                onClick={() => setShowAdvancedPerms(v => !v)}
+                className="w-full flex items-center justify-center gap-1.5 text-[11px] text-slate-600 hover:text-slate-400 transition-colors pt-1"
+              >
+                <Zap size={10} />
+                {showAdvancedPerms
+                  ? t('settings.permissions.hideAdvanced', 'Hide advanced settings')
+                  : t('settings.permissions.showAdvanced', 'Advanced settings')}
+              </button>
+
+              {/* Advanced: checkbox pickers + custom input */}
+              {showAdvancedPerms && (
+                <div className="space-y-4 pt-2 border-t border-slate-700/50">
+
+                  {/* Section: Extra allowed tools */}
+                  <div>
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <Check size={11} className="text-emerald-400" />
+                      <span className="text-xs font-medium text-slate-300">{t('settings.permissions.allowed', 'Extra allowed tools')}</span>
+                    </div>
+                    {/* Known tool picker */}
+                    <div className="space-y-1.5 mb-2">
+                      {[
+                        { id: 'awareness_recall', label: t('perm.tool.recall', 'Search memory'), desc: t('perm.tool.recall.desc', 'Let AI search past decisions and knowledge') },
+                        { id: 'awareness_record', label: t('perm.tool.record', 'Save memory'), desc: t('perm.tool.record.desc', 'Let AI save new knowledge to memory') },
+                        { id: 'awareness_lookup', label: t('perm.tool.lookup', 'Lookup knowledge cards'), desc: t('perm.tool.lookup.desc', 'Let AI read structured knowledge cards') },
+                        { id: 'awareness_perception', label: t('perm.tool.perception', 'Read project signals'), desc: t('perm.tool.perception.desc', 'Let AI read file patterns and activity signals') },
+                      ].map(tool => {
+                        const on = permissions.alsoAllow.includes(tool.id);
+                        return (
+                          <button
+                            key={tool.id}
+                            onClick={() => savePermissions({
+                              alsoAllow: on
+                                ? permissions.alsoAllow.filter(t => t !== tool.id)
+                                : [...permissions.alsoAllow, tool.id],
+                            })}
+                            className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg border text-left transition-all ${
+                              on
+                                ? 'bg-emerald-600/10 border-emerald-600/30 text-slate-200'
+                                : 'bg-slate-900/50 border-slate-700/50 text-slate-400 hover:border-slate-600'
+                            }`}
+                          >
+                            <div className={`w-4 h-4 rounded flex-shrink-0 flex items-center justify-center border ${on ? 'bg-emerald-600 border-emerald-500' : 'border-slate-600'}`}>
+                              {on && <Check size={10} className="text-white" />}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-xs font-medium">{tool.label}</div>
+                              <div className="text-[10px] text-slate-500 truncate">{tool.desc}</div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {/* Custom tool name — for power users */}
+                    {(() => {
+                      const knownIds = ['awareness_recall', 'awareness_record', 'awareness_lookup', 'awareness_perception'];
+                      const custom = permissions.alsoAllow.filter(t => !knownIds.includes(t));
+                      return (
+                        <div>
+                          {custom.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5 mb-1.5">
+                              {custom.map(tool => (
+                                <span key={tool} className="flex items-center gap-1 px-2 py-0.5 bg-slate-700/50 border border-slate-600/50 rounded text-[10px] text-slate-300 font-mono">
+                                  {tool}
+                                  <button onClick={() => savePermissions({ alsoAllow: permissions.alsoAllow.filter(t => t !== tool) })} className="hover:text-red-400 ml-0.5">×</button>
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          <div className="flex gap-1.5">
+                            <input
+                              value={newAllowTool}
+                              onChange={e => setNewAllowTool(e.target.value)}
+                              placeholder={t('perm.tool.custom', 'Custom tool name (advanced)...')}
+                              className="flex-1 px-2 py-1 bg-slate-900 border border-slate-700 rounded text-[11px] font-mono text-slate-400 placeholder:text-slate-600 focus:outline-none focus:border-brand-500"
+                              onKeyDown={e => {
+                                if (e.key === 'Enter' && newAllowTool.trim() && !permissions.alsoAllow.includes(newAllowTool.trim())) {
+                                  savePermissions({ alsoAllow: [...permissions.alsoAllow, newAllowTool.trim()] });
+                                  setNewAllowTool('');
+                                }
+                              }}
+                            />
+                            <button
+                              data-testid="add-allow-tool"
+                              onClick={() => { if (newAllowTool.trim() && !permissions.alsoAllow.includes(newAllowTool.trim())) { savePermissions({ alsoAllow: [...permissions.alsoAllow, newAllowTool.trim()] }); setNewAllowTool(''); } }}
+                              className="px-2 py-1 text-[11px] bg-slate-700 hover:bg-slate-600 rounded text-slate-300"
+                            >
+                              <Plus size={11} />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  {/* Section: Blocked commands */}
+                  <div className="border-t border-slate-700/50 pt-3">
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <Shield size={11} className="text-red-400" />
+                      <span className="text-xs font-medium text-slate-300">{t('settings.permissions.denied', 'Blocked commands')}</span>
+                    </div>
+                    {/* Known privacy commands */}
+                    <div className="space-y-1.5 mb-2">
+                      {[
+                        { id: 'camera.snap', label: t('perm.deny.camera', 'Camera / Photo'), desc: t('perm.deny.camera.desc', 'Block taking photos or screen clips') },
+                        { id: 'screen.record', label: t('perm.deny.screen', 'Screen recording'), desc: t('perm.deny.screen.desc', 'Block recording the screen') },
+                        { id: 'contacts.add', label: t('perm.deny.contacts', 'Contacts'), desc: t('perm.deny.contacts.desc', 'Block adding or reading contacts') },
+                        { id: 'calendar.add', label: t('perm.deny.calendar', 'Calendar'), desc: t('perm.deny.calendar.desc', 'Block creating calendar events') },
+                        { id: 'sms.send', label: t('perm.deny.sms', 'SMS / Messages'), desc: t('perm.deny.sms.desc', 'Block sending text messages') },
+                        { id: 'exec', label: t('perm.deny.exec', 'Shell commands (exec)'), desc: t('perm.deny.exec.desc', 'Block running arbitrary shell commands') },
+                      ].map(cmd => {
+                        const on = permissions.denied.includes(cmd.id);
+                        return (
+                          <button
+                            key={cmd.id}
+                            onClick={() => savePermissions({
+                              denied: on
+                                ? permissions.denied.filter(c => c !== cmd.id)
+                                : [...permissions.denied, cmd.id],
+                            })}
+                            className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg border text-left transition-all ${
+                              on
+                                ? 'bg-red-600/10 border-red-600/30 text-slate-200'
+                                : 'bg-slate-900/50 border-slate-700/50 text-slate-400 hover:border-slate-600'
+                            }`}
+                          >
+                            <div className={`w-4 h-4 rounded flex-shrink-0 flex items-center justify-center border ${on ? 'bg-red-600 border-red-500' : 'border-slate-600'}`}>
+                              {on && <X size={10} className="text-white" />}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-xs font-medium">{cmd.label}</div>
+                              <div className="text-[10px] text-slate-500 truncate">{cmd.desc}</div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {/* Custom deny — for power users */}
+                    {(() => {
+                      const knownDeny = ['camera.snap', 'screen.record', 'contacts.add', 'calendar.add', 'sms.send', 'exec'];
+                      const custom = permissions.denied.filter(c => !knownDeny.includes(c));
+                      return (
+                        <div>
+                          {custom.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5 mb-1.5">
+                              {custom.map(cmd => (
+                                <span key={cmd} className="flex items-center gap-1 px-2 py-0.5 bg-slate-700/50 border border-slate-600/50 rounded text-[10px] text-slate-300 font-mono">
+                                  {cmd}
+                                  <button onClick={() => savePermissions({ denied: permissions.denied.filter(c => c !== cmd) })} className="hover:text-red-400 ml-0.5">×</button>
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          <div className="flex gap-1.5">
+                            <input
+                              value={newDenyCmd}
+                              onChange={e => setNewDenyCmd(e.target.value)}
+                              placeholder={t('perm.deny.custom', 'Custom command name (advanced)...')}
+                              className="flex-1 px-2 py-1 bg-slate-900 border border-slate-700 rounded text-[11px] font-mono text-slate-400 placeholder:text-slate-600 focus:outline-none focus:border-brand-500"
+                              onKeyDown={e => {
+                                if (e.key === 'Enter' && newDenyCmd.trim() && !permissions.denied.includes(newDenyCmd.trim())) {
+                                  savePermissions({ denied: [...permissions.denied, newDenyCmd.trim()] });
+                                  setNewDenyCmd('');
+                                }
+                              }}
+                            />
+                            <button
+                              data-testid="add-deny-cmd"
+                              onClick={() => { if (newDenyCmd.trim() && !permissions.denied.includes(newDenyCmd.trim())) { savePermissions({ denied: [...permissions.denied, newDenyCmd.trim()] }); setNewDenyCmd(''); } }}
+                              className="px-2 py-1 text-[11px] bg-slate-700 hover:bg-slate-600 rounded text-slate-300"
+                            >
+                              <Plus size={11} />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
                 </div>
-                <div className="flex flex-wrap gap-1.5 mb-2">
-                  {permissions.denied.map(cmd => (
-                    <span key={cmd} className="flex items-center gap-1 px-2 py-0.5 bg-red-600/10 border border-red-600/20 rounded text-[10px] text-red-400">
-                      {cmd}
-                      <button onClick={() => savePermissions({ denied: permissions.denied.filter(c => c !== cmd) })} className="hover:text-white">×</button>
-                    </span>
-                  ))}
-                  {permissions.denied.length === 0 && <span className="text-[10px] text-slate-500 italic">{t('settings.permissions.noneDenied', 'No commands blocked')}</span>}
-                </div>
-                <div className="flex gap-1.5">
-                  <input
-                    value={newDenyCmd}
-                    onChange={e => setNewDenyCmd(e.target.value)}
-                    placeholder="command.name"
-                    className="flex-1 px-2 py-1 bg-slate-900 border border-slate-600 rounded text-xs font-mono focus:outline-none focus:border-brand-500"
-                    onKeyDown={e => {
-                      if (e.key === 'Enter' && newDenyCmd.trim() && !permissions.denied.includes(newDenyCmd.trim())) {
-                        savePermissions({ denied: [...permissions.denied, newDenyCmd.trim()] });
-                        setNewDenyCmd('');
-                      }
-                    }}
-                  />
-                  <button
-                    data-testid="add-deny-cmd"
-                    onClick={() => { if (newDenyCmd.trim() && !permissions.denied.includes(newDenyCmd.trim())) { savePermissions({ denied: [...permissions.denied, newDenyCmd.trim()] }); setNewDenyCmd(''); } }}
-                    className="px-2 py-1 text-xs bg-slate-700 hover:bg-slate-600 rounded text-slate-300"
-                  >
-                    <Plus size={12} />
-                  </button>
-                </div>
-              </div>
+              )}
             </div>
           </Section>
         )}
@@ -540,7 +755,7 @@ export default function Settings() {
             {securityIssues.length === 0 ? (
               <div className="flex items-center gap-2 text-xs p-2 rounded-lg bg-emerald-500/10 text-emerald-400">
                 <CheckCircle size={14} className="shrink-0" />
-                <p>No security issues found</p>
+                <p>{t('settings.security.allGood', 'No security issues found')}</p>
               </div>
             ) : (
               securityIssues.map((issue, i) => (
@@ -601,7 +816,7 @@ export default function Settings() {
                         <div key={subName} className="flex items-center justify-between gap-2 py-0.5">
                           <code className="text-[11px] font-mono text-slate-500 truncate flex-1">{subName}</code>
                           <span className={`text-[10px] ${(subCfg as any)?.enabled !== false ? 'text-emerald-500' : 'text-slate-600'}`}>
-                            {(subCfg as any)?.enabled !== false ? 'on' : 'off'}
+                            {(subCfg as any)?.enabled !== false ? t('common.on', 'on') : t('common.off', 'off')}
                           </span>
                         </div>
                       ))}
@@ -634,7 +849,7 @@ export default function Settings() {
         {/* Workspace file editor modal */}
         {editingFile && (
           <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-8">
-            <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-2xl max-h-[80vh] flex flex-col">
+            <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-3xl max-h-[85vh] flex flex-col">
               <div className="flex items-center justify-between p-4 border-b border-slate-800">
                 <h3 className="font-semibold text-sm">{editingFile}</h3>
                 <button onClick={() => setEditingFile(null)} className="text-slate-500 hover:text-slate-300"><X size={18} /></button>
@@ -642,13 +857,13 @@ export default function Settings() {
               <textarea
                 value={fileContent}
                 onChange={e => setFileContent(e.target.value)}
-                className="flex-1 p-4 bg-slate-950 text-sm font-mono text-slate-300 resize-none focus:outline-none min-h-[300px]"
+                className="flex-1 p-4 bg-slate-950 text-sm font-mono text-slate-300 leading-relaxed resize-none focus:outline-none min-h-[400px]"
                 spellCheck={false}
               />
               <div className="flex items-center justify-end gap-2 p-4 border-t border-slate-800">
                 {fileSaveSuccess && (
                   <span className="flex items-center gap-1 text-xs text-emerald-400 mr-2">
-                    <CheckCircle size={14} /> Saved
+                    <CheckCircle size={14} /> {t('common.saved', 'Saved')}
                   </span>
                 )}
                 <button onClick={() => setEditingFile(null)} className="px-4 py-2 text-sm text-slate-400 hover:text-slate-200">{t('common.cancel')}</button>
@@ -667,7 +882,7 @@ export default function Settings() {
         {/* Gateway Management */}
         <Section title={`🖥️ ${t('settings.gateway')}`}>
           <Row
-            label="OpenClaw Gateway"
+            label={t('settings.gateway.label', 'OpenClaw Gateway')}
             desc={t(`settings.gateway.status.${gatewayStatus}`)}
           >
             <div className="flex items-center gap-2">
@@ -719,7 +934,12 @@ export default function Settings() {
             <Toggle checked={config.autoUpdate} onChange={(v) => updateConfig({ autoUpdate: v })} />
           </Row>
           <Row label={t('settings.bootStart')} desc={t('settings.bootStart.desc')}>
-            <Toggle checked={config.autoStart} onChange={(v) => updateConfig({ autoStart: v })} />
+            <Toggle checked={config.autoStart} onChange={async (v) => {
+              updateConfig({ autoStart: v });
+              if (window.electronAPI) {
+                await (window.electronAPI as any).setLoginItem(v);
+              }
+            }} />
           </Row>
           <Row label={t('settings.diagnostic')} desc={t('settings.diagnostic.desc')}>
             <button
@@ -803,7 +1023,7 @@ export default function Settings() {
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-medium text-slate-500 uppercase tracking-wider">{t('settings.usage') || 'Usage (estimated)'}</h3>
               <button
-                onClick={() => { if (confirm('Clear all usage data? This cannot be undone.')) { clearUsage(); setUsageStats(getUsageStats()); } }}
+                onClick={() => { if (confirm(t('settings.usage.clearConfirm', 'Clear all usage data? This cannot be undone.'))) { clearUsage(); setUsageStats(getUsageStats()); } }}
                 className="text-[10px] text-slate-600 hover:text-red-400 transition-colors"
               >
                 {t('settings.reset.btn')}
@@ -841,11 +1061,11 @@ export default function Settings() {
           <h3 className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-3">{t('settings.versions')}</h3>
           <div className="grid grid-cols-2 gap-2 text-xs">
             <div className="flex justify-between p-2 bg-slate-900/50 rounded-lg">
-              <span className="text-slate-400">AwarenessClaw</span>
+              <span className="text-slate-400">{t('app.name', 'AwarenessClaw')}</span>
               <span className="text-slate-200 font-mono">v{pkg.version}</span>
             </div>
             <div className="flex justify-between p-2 bg-slate-900/50 rounded-lg">
-              <span className="text-slate-400">OpenClaw</span>
+              <span className="text-slate-400">{t('settings.versions.openclaw', 'OpenClaw')}</span>
               <span className={`font-mono ${versionInfo?.openclawVersion ? 'text-slate-200' : 'text-red-400'}`}>
                 {versionInfo?.openclawVersion || t('settings.diagnostic.notInstalled')}
               </span>
@@ -857,15 +1077,15 @@ export default function Settings() {
               </span>
             </div>
             <div className="flex justify-between p-2 bg-slate-900/50 rounded-lg">
-              <span className="text-slate-400">Awareness Plugin</span>
+              <span className="text-slate-400">{t('settings.versions.awarenessPlugin', 'Awareness Plugin')}</span>
               <span className={`font-mono ${versionInfo?.awarenessPluginVersion ? 'text-slate-200' : 'text-red-400'}`}>
                 {versionInfo?.awarenessPluginVersion ? `v${versionInfo.awarenessPluginVersion}` : t('settings.diagnostic.notInstalled')}
               </span>
             </div>
             <div className="flex justify-between p-2 bg-slate-900/50 rounded-lg">
-              <span className="text-slate-400">Local Daemon</span>
+              <span className="text-slate-400">{t('settings.versions.localDaemon', 'Local Daemon')}</span>
               <span className={`font-mono ${versionInfo?.daemonRunning ? 'text-emerald-400' : 'text-red-400'}`}>
-                {versionInfo?.daemonRunning ? `v${versionInfo.daemonVersion || '?'} ✓` : 'Offline'}
+                {versionInfo?.daemonRunning ? `v${versionInfo.daemonVersion || '?'} ✓` : t('settings.versions.offline', 'Offline')}
               </span>
             </div>
             <div className="flex justify-between p-2 bg-slate-900/50 rounded-lg">
@@ -876,9 +1096,9 @@ export default function Settings() {
           {/* Daemon stats */}
           {versionInfo?.daemonStats && (
             <div className="flex gap-4 justify-center text-[10px] text-slate-500 pt-1">
-              <span>{versionInfo.daemonStats.memories || 0} memories</span>
-              <span>{versionInfo.daemonStats.knowledge || 0} knowledge cards</span>
-              <span>{versionInfo.daemonStats.sessions || 0} sessions</span>
+              <span>{versionInfo.daemonStats.memories || 0} {t('settings.versions.memories', 'memories')}</span>
+              <span>{versionInfo.daemonStats.knowledge || 0} {t('settings.versions.knowledgeCards', 'knowledge cards')}</span>
+              <span>{versionInfo.daemonStats.sessions || 0} {t('settings.versions.sessions', 'sessions')}</span>
             </div>
           )}
           <div className="flex justify-center pt-2">
@@ -945,11 +1165,11 @@ export default function Settings() {
                   {/* API Key */}
                   {selectedTempProvider.needsKey && (
                     <div>
-                      <label className="block text-xs font-medium text-slate-400 mb-1">🔑 API Key</label>
+                      <label className="block text-xs font-medium text-slate-400 mb-1">🔑 {t('settings.model.apiKey', 'API Key')}</label>
                       <PasswordInput
                         value={tempApiKey}
                         onChange={(e) => setTempApiKey(e.target.value)}
-                        placeholder="Paste your API Key..."
+                        placeholder={t('common.pasteApiKey', 'Paste your API Key...')}
                         className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-sm focus:outline-none focus:border-brand-500"
                       />
                     </div>
@@ -975,7 +1195,7 @@ export default function Settings() {
 
                   {/* Base URL */}
                   <div>
-                    <label className="block text-xs font-medium text-slate-400 mb-1">API Base URL</label>
+                    <label className="block text-xs font-medium text-slate-400 mb-1">{t('settings.model.baseUrl', 'API Base URL')}</label>
                     <input
                       type="text"
                       value={tempBaseUrl || selectedTempProvider.baseUrl}

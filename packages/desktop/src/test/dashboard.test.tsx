@@ -21,9 +21,10 @@ describe('Dashboard (Chat)', () => {
     expect(screen.getByText(/学习计划/)).toBeInTheDocument();
   });
 
-  it('renders AwarenessClaw in header', async () => {
+  it('renders AwarenessClaw logo in header', async () => {
     await act(async () => { render(<Dashboard />); });
-    expect(screen.getByText('AwarenessClaw')).toBeInTheDocument();
+    // Header uses an img with alt="AwarenessClaw" instead of visible text
+    expect(screen.getByAltText('AwarenessClaw')).toBeInTheDocument();
   });
 
   it('renders input area', async () => {

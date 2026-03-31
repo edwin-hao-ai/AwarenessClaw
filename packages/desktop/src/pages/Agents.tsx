@@ -96,7 +96,7 @@ export default function Agents() {
 
   const handleDelete = async (agentId: string) => {
     if (!window.electronAPI || agentId === 'main') return;
-    if (!confirm('Delete this agent? This will remove its workspace and all data.')) return;
+    if (!confirm(t('agents.deleteConfirm', 'Delete this agent? This will remove its workspace and all data.'))) return;
     const result = await (window.electronAPI as any).agentsDelete(agentId);
     if (result.success) loadAgents();
     else setError(result.error || 'Delete failed');
@@ -222,7 +222,7 @@ export default function Agents() {
             <button onClick={() => setShowCreateForm(!showCreateForm)}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-brand-600 hover:bg-brand-500 text-white rounded-lg transition-colors">
               {showCreateForm ? <X size={12} /> : <Plus size={12} />}
-              {showCreateForm ? 'Cancel' : t('agents.createAgent')}
+              {showCreateForm ? t('common.cancel', 'Cancel') : t('agents.createAgent')}
             </button>
             <button onClick={loadAgents} disabled={loading}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200 bg-slate-800 rounded-lg">
@@ -295,7 +295,7 @@ export default function Agents() {
                       <div>
                         <div className="flex items-center gap-2">
                           <span className="text-sm font-medium">{agent.name || agent.id}</span>
-                          {agent.isDefault && <span className="px-1.5 py-0.5 text-[10px] bg-brand-600/20 text-brand-400 rounded">Default</span>}
+                          {agent.isDefault && <span className="px-1.5 py-0.5 text-[10px] bg-brand-600/20 text-brand-400 rounded">{t('agents.default', 'Default')}</span>}
                         </div>
                         <div className="text-[11px] text-slate-500 mt-0.5">
                           ID: {agent.id}{agent.model && <span className="ml-2">Model: {agent.model}</span>}
@@ -309,11 +309,11 @@ export default function Agents() {
                         <FileText size={14} />
                       </button>
                       <button onClick={() => { setEditingId(agent.id); setEditName(agent.name || ''); setEditEmoji(agent.emoji || ''); setEditAvatar(''); setEditTheme(''); }}
-                        className="p-1.5 text-slate-500 hover:text-slate-300 rounded" title="Edit identity"><Edit3 size={14} /></button>
+                        className="p-1.5 text-slate-500 hover:text-slate-300 rounded" title={t('agents.editIdentity', 'Edit identity')}><Edit3 size={14} /></button>
                       <button onClick={() => { setBindingAgentId(agent.id); setBindChannel(''); }}
-                        className="p-1.5 text-slate-500 hover:text-emerald-400 rounded" title="Add binding"><Link size={14} /></button>
+                        className="p-1.5 text-slate-500 hover:text-emerald-400 rounded" title={t('agents.addBinding', 'Add binding')}><Link size={14} /></button>
                       {!agent.isDefault && (
-                        <button onClick={() => handleDelete(agent.id)} title="Delete" className="p-1.5 text-slate-500 hover:text-red-400 rounded"><Trash2 size={14} /></button>
+                        <button onClick={() => handleDelete(agent.id)} title={t('common.delete', 'Delete')} className="p-1.5 text-slate-500 hover:text-red-400 rounded"><Trash2 size={14} /></button>
                       )}
                     </div>
                   </div>
@@ -336,20 +336,20 @@ export default function Agents() {
                       <div className="flex items-center gap-2">
                         <input value={editEmoji} onChange={(e) => setEditEmoji(e.target.value)} placeholder="🤖"
                           className="w-10 px-1 py-1 bg-slate-900 border border-slate-600 rounded text-center text-sm" maxLength={4} />
-                        <input value={editName} onChange={(e) => setEditName(e.target.value)} placeholder="Name"
+                        <input value={editName} onChange={(e) => setEditName(e.target.value)} placeholder={t('agents.namePlaceholder', 'Name')}
                           className="flex-1 px-2 py-1 bg-slate-900 border border-slate-600 rounded text-sm" />
                         <button onClick={() => handleSetIdentity(agent.id)} className="p-1 text-emerald-400 hover:text-emerald-300"><Check size={14} /></button>
                         <button onClick={() => setEditingId(null)} className="p-1 text-slate-500 hover:text-slate-300"><X size={14} /></button>
                       </div>
                       <div className="flex items-center gap-2">
                         <input value={editAvatar} onChange={(e) => setEditAvatar(e.target.value)}
-                          placeholder="Avatar URL (optional)"
+                          placeholder={t('agents.avatarPlaceholder', 'Avatar URL (optional)')}
                           className="flex-1 px-2 py-1 bg-slate-900 border border-slate-600 rounded text-xs text-slate-400" />
                         <select value={editTheme} onChange={(e) => setEditTheme(e.target.value)}
                           className="px-2 py-1 bg-slate-900 border border-slate-600 rounded text-xs text-slate-400">
-                          <option value="">Theme</option>
-                          <option value="dark">Dark</option>
-                          <option value="light">Light</option>
+                          <option value="">{t('agents.theme', 'Theme')}</option>
+                          <option value="dark">{t('agents.themeDark', 'Dark')}</option>
+                          <option value="light">{t('agents.themeLight', 'Light')}</option>
                         </select>
                       </div>
                     </div>
@@ -416,8 +416,8 @@ export default function Agents() {
                         <textarea
                           value={fileContent}
                           onChange={(e) => setFileContent(e.target.value)}
-                          rows={10}
-                          className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-slate-300 font-mono focus:outline-none focus:border-brand-500 resize-y"
+                          rows={20}
+                          className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-sm text-slate-300 font-mono leading-relaxed focus:outline-none focus:border-brand-500 resize-y min-h-[300px]"
                           placeholder={activeFile === 'SOUL.md'
                             ? 'You are a helpful assistant specialized in...\n\n# Personality\n- Friendly and professional\n- Always explain your reasoning\n\n# Rules\n- Never share private information\n- Always cite sources'
                             : activeFile === 'TOOLS.md'
@@ -430,7 +430,7 @@ export default function Agents() {
                       {/* Save button */}
                       <div className="flex items-center justify-between mt-2">
                         <span className="text-[10px] text-slate-600">
-                          {fileDirty ? 'Unsaved changes' : ''}
+                          {fileDirty ? t('agents.unsavedChanges', 'Unsaved changes') : ''}
                         </span>
                         <button onClick={handleSaveFile}
                           disabled={!fileDirty || fileSaving}

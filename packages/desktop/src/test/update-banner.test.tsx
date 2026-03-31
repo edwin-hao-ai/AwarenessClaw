@@ -153,8 +153,8 @@ describe('Dashboard with update banner', () => {
       expect(screen.getByText('Updates Available')).toBeInTheDocument();
     });
 
-    // Dashboard content is still in the DOM behind the modal
-    expect(screen.getByText('AwarenessClaw')).toBeInTheDocument();
+    // Dashboard content is still in the DOM behind the modal (logo img, not visible text)
+    expect(screen.getByAltText('AwarenessClaw')).toBeInTheDocument();
   });
 
   it('checkUpdates mock is called exactly once on mount', async () => {

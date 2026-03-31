@@ -150,7 +150,7 @@ export default function UpdateBanner() {
           <button
             onClick={handleDismiss}
             className="text-slate-500 hover:text-slate-300 p-0.5"
-            title="Dismiss"
+            title={t('update.dismiss', 'Dismiss')}
           >
             <X size={14} />
           </button>
@@ -237,7 +237,7 @@ export default function UpdateBanner() {
                       onClick={handleNeverRemind}
                       disabled={!!upgrading}
                       className="w-full py-2 text-slate-700 hover:text-slate-500 text-xs transition-colors"
-                      title="You can re-enable this in Settings"
+                      title={t('update.neverRemindTooltip', 'You can re-enable this in Settings')}
                     >
                       {t('update.neverRemind')}
                     </button>

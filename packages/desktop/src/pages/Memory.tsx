@@ -173,6 +173,22 @@ function MemoryLayerInfo() {
 
 type TabView = 'timeline' | 'knowledge';
 
+/** Highlight matching search terms in text */
+function HighlightText({ text, query }: { text: string; query: string }) {
+  if (!query.trim() || !text) return <>{text}</>;
+  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const parts = text.split(new RegExp(`(${escaped})`, 'gi'));
+  return (
+    <>
+      {parts.map((part, i) =>
+        part.toLowerCase() === query.toLowerCase()
+          ? <mark key={i} className="bg-amber-500/30 text-amber-200 rounded-sm px-0.5">{part}</mark>
+          : part
+      )}
+    </>
+  );
+}
+
 export default function Memory() {
   const { t } = useI18n();
   const [activeTab, setActiveTab] = useState<TabView>('timeline');
@@ -191,6 +207,8 @@ export default function Memory() {
   const [dailySummary, setDailySummary] = useState<{ recentCards: KnowledgeCard[]; openTasks: number } | null>(null);
   const [expandedEvent, setExpandedEvent] = useState<string | null>(null);
   const [selectedEventType, setSelectedEventType] = useState<string>('all');
+  // Source filter: 'chat' = OpenClaw conversations only (default), 'dev' = Claude Code, 'all' = everything
+  const [sourceView, setSourceView] = useState<'chat' | 'dev' | 'all'>('chat');
 
   // Daemon connection state
   const [daemonHealth, setDaemonHealth] = useState<DaemonHealth | null>(null);
@@ -207,6 +225,8 @@ export default function Memory() {
       if (health?.status === 'ok') {
         setDaemonHealth(health);
         setDaemonConnected(true);
+        // Notify watchdog that daemon is alive
+        if (window.electronAPI) (window.electronAPI as any).daemonMarkConnected?.();
         return true;
       }
       setDaemonConnected(false);
@@ -235,10 +255,15 @@ export default function Memory() {
     }
   }, [api, t]);
 
-  const loadEvents = useCallback(async (offset = 0, append = false) => {
+  const loadEvents = useCallback(async (offset = 0, append = false, currentSourceView?: 'chat' | 'dev' | 'all') => {
     if (!api) return;
     try {
-      const result = await api.memoryGetEvents({ limit: 50, offset });
+      // Translate sourceView to API-level filter for efficiency
+      const view = currentSourceView ?? sourceView;
+      const opts: Record<string, unknown> = { limit: 50, offset };
+      if (view === 'chat') opts.source_exclude = 'mcp';
+      else if (view === 'dev') opts.source = 'mcp';
+      const result = await api.memoryGetEvents(opts);
       if (result?.error) return;
       const items = result?.items || [];
       setEvents(prev => append ? [...prev, ...items] : items);
@@ -252,7 +277,7 @@ export default function Memory() {
     } catch {
       setLoading(false);
     }
-  }, [api]);
+  }, [api, sourceView]);
 
   const loadPerception = useCallback(async () => {
     if (!api) return;
@@ -308,6 +333,15 @@ export default function Memory() {
     init();
   }, [checkHealth, loadCards, loadEvents, loadPerception, loadDailySummary]);
 
+  // Reload events when source view changes
+  useEffect(() => {
+    if (daemonConnected) {
+      setEventsOffset(0);
+      loadEvents(0, false, sourceView);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourceView, daemonConnected]);
+
   const handleRefresh = async () => {
     setLoading(true);
     setError(null);
@@ -326,6 +360,7 @@ export default function Memory() {
       const result = await api.startDaemon();
       if (result?.success) {
         setDaemonConnected(true);
+        if (window.electronAPI) (window.electronAPI as any).daemonMarkConnected?.();
         // Reload everything
         await Promise.all([checkHealth(), loadCards(), loadEvents(0), loadPerception(), loadDailySummary()]);
         setError(null);
@@ -383,7 +418,8 @@ export default function Memory() {
     setSearching(false);
   };
 
-  // Compute filtered event list based on selectedEventType (filter by event type, not agent_role)
+  // Compute filtered event list based on selectedEventType only
+  // (source filtering is now done at the API level via source_exclude param)
   const displayedEvents = events.filter((event) => {
     if (selectedEventType === 'all') return true;
     return event.type === selectedEventType;
@@ -397,9 +433,15 @@ export default function Memory() {
 
   const displayCards = searchResults && activeTab === 'knowledge' ? searchResults : filteredCards;
 
+  // Stats reflect the current source view, not the global total
+  const filteredEventCount = events.filter(e => {
+    if (sourceView === 'chat') return e.source !== 'mcp';
+    if (sourceView === 'dev') return e.source === 'mcp';
+    return true;
+  }).length;
   const statsText = daemonHealth?.stats
     ? t('memory.stats', '{memories} memories, {knowledge} cards, {sessions} sessions')
-        .replace('{memories}', String(daemonHealth.stats.totalMemories))
+        .replace('{memories}', String(sourceView === 'all' ? daemonHealth.stats.totalMemories : filteredEventCount))
         .replace('{knowledge}', String(daemonHealth.stats.totalKnowledge))
         .replace('{sessions}', String(daemonHealth.stats.totalSessions))
     : null;
@@ -596,6 +638,22 @@ export default function Memory() {
             {/* === TIMELINE TAB === */}
             {activeTab === 'timeline' && (
               <>
+                {/* Source view toggle — separate conversations from dev memories */}
+                <div className="flex gap-1.5 mb-2">
+                  {([['chat', 'Conversations'], ['dev', 'Dev Logs'], ['all', 'All']] as const).map(([key, label]) => (
+                    <button
+                      key={key}
+                      onClick={() => setSourceView(key)}
+                      className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
+                        sourceView === key
+                          ? 'bg-brand-600/20 text-brand-400 border border-brand-500/40'
+                          : 'text-slate-500 hover:text-slate-300'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
                 {/* Event type filter chips — dynamically generated from actual event types */}
                 <div className="flex gap-2 flex-wrap mb-2">
                   {['all', ...[...new Set(events.map(e => e.type).filter(Boolean))].sort()].map((filterType) => {
@@ -689,7 +747,9 @@ export default function Memory() {
                           📄 {parsedCode.shortPath}
                         </h4>
                       ) : event.title ? (
-                        <h4 className="font-medium text-sm mb-1 text-slate-200">{event.title}</h4>
+                        <h4 className="font-medium text-sm mb-1 text-slate-200">
+                          <HighlightText text={event.title} query={searchQuery} />
+                        </h4>
                       ) : null}
 
                       {/* Event content */}
@@ -715,7 +775,7 @@ export default function Memory() {
                       ) : contentPreview ? (
                         <div className="text-sm text-slate-400 leading-relaxed">
                           <p className={isExpanded ? '' : 'line-clamp-3'}>
-                            {contentPreview}
+                            <HighlightText text={contentPreview} query={searchQuery} />
                           </p>
                           {hasLongContent && (
                             <button
@@ -788,7 +848,11 @@ export default function Memory() {
                   return (
                     <div
                       key={card.id || i}
-                      className="p-4 bg-slate-800/50 rounded-xl border border-slate-700/50 hover:border-slate-600 transition-colors"
+                      className={`p-4 rounded-xl border transition-colors ${
+                        card.status === 'superseded'
+                          ? 'bg-slate-800/30 border-slate-700/30 opacity-60'
+                          : 'bg-slate-800/50 border-slate-700/50 hover:border-slate-600'
+                      }`}
                     >
                       <div className="flex items-center gap-2 mb-2">
                         <span>{catDisplay.emoji}</span>
@@ -800,11 +864,17 @@ export default function Memory() {
                           </>
                         )}
                         {card.status === 'superseded' && (
-                          <span className="text-xs px-1.5 py-0.5 bg-slate-700 rounded text-slate-500">{t('memory.superseded')}</span>
+                          <span className="text-xs px-1.5 py-0.5 bg-amber-600/20 rounded text-amber-500 border border-amber-600/30">
+                            ⚠️ {t('memory.superseded', 'Superseded')}
+                          </span>
                         )}
                       </div>
-                      <h4 className="font-medium text-sm mb-1">{card.title}</h4>
-                      <p className="text-sm text-slate-400 leading-relaxed">{card.summary}</p>
+                      <h4 className={`font-medium text-sm mb-1 ${card.status === 'superseded' ? 'line-through text-slate-500' : ''}`}>
+                        <HighlightText text={card.title} query={searchQuery} />
+                      </h4>
+                      <p className="text-sm text-slate-400 leading-relaxed">
+                        <HighlightText text={card.summary} query={searchQuery} />
+                      </p>
                     </div>
                   );
                 })}
