@@ -9,6 +9,15 @@ import http from 'http';
 import crypto from 'crypto';
 import { createDoctor } from './doctor';
 import { GatewayClient } from './gateway-ws';
+import {
+  normalizePluginAllow,
+  isGatewayRunningOutput,
+  getManagedOpenClawPrefix as getManagedOpenClawPrefixShared,
+  getManagedOpenClawEntrypoint as getManagedOpenClawEntrypointShared,
+  getGatewayPort as getGatewayPortShared,
+  repairWindowsGatewayServiceScript as repairWindowsGatewayServiceScriptShared,
+  GATEWAY_DEFAULTS,
+} from './openclaw-config';
 
 let mainWindow: typeof BrowserWindow.prototype | null = null;
 let tray: typeof Tray.prototype | null = null;
@@ -35,7 +44,7 @@ function getRuntimePreferencesPath() {
 }
 
 function getManagedOpenClawPrefix() {
-  return path.join(HOME, '.awareness-claw', 'openclaw-runtime');
+  return getManagedOpenClawPrefixShared(HOME);
 }
 
 function getManagedOpenClawBinDir() {
@@ -44,8 +53,7 @@ function getManagedOpenClawBinDir() {
 }
 
 function getManagedOpenClawEntrypoint() {
-  const entry = path.join(getManagedOpenClawPrefix(), 'node_modules', 'openclaw', 'openclaw.mjs');
-  return fs.existsSync(entry) ? entry : null;
+  return getManagedOpenClawEntrypointShared(HOME);
 }
 
 function findNodeExecutable() {
@@ -77,6 +85,10 @@ function getManagedOpenClawCommand() {
   return `${getNodeInvocationCommand()} "${entry}"`;
 }
 
+function getGatewayPort() {
+  return getGatewayPortShared(HOME);
+}
+
 function rewriteOpenClawCommand(cmd: string) {
   const managedCommand = getManagedOpenClawCommand();
   if (!managedCommand) return cmd;
@@ -104,6 +116,13 @@ function ensureManagedOpenClawWindowsShim() {
   fs.writeFileSync(cmdShim, cmdContent, 'utf8');
   fs.writeFileSync(ps1Shim, ps1Content, 'utf8');
   fs.writeFileSync(shellShim, shellContent, 'utf8');
+}
+
+function repairWindowsGatewayServiceScript() {
+  repairWindowsGatewayServiceScriptShared(HOME, {
+    nodeCommand: getNodeInvocationCommand(),
+    tmpdir: process.env.TEMP,
+  });
 }
 
 function getManagedOpenClawInstallCommand(packageName = 'openclaw') {
@@ -1601,13 +1620,24 @@ function applyAwarenessPluginConfig(config: Record<string, any>, options?: { ena
   };
 
   if (options?.enableSlot) {
-    config.plugins.allow = Array.from(new Set([...(config.plugins.allow || []), 'openclaw-memory']));
+    config.plugins.allow = Array.from(new Set([...(normalizePluginAllow(config.plugins.allow) || []), 'openclaw-memory']));
     config.plugins.slots = { ...(config.plugins.slots || {}), memory: 'openclaw-memory' };
   }
 }
 
 function sanitizeAwarenessPluginConfig(config: Record<string, any>) {
+  config.gateway = {
+    ...(config.gateway || {}),
+    mode: GATEWAY_DEFAULTS.mode,
+    bind: config.gateway?.bind || GATEWAY_DEFAULTS.bind,
+    port: Number(config.gateway?.port) || GATEWAY_DEFAULTS.port,
+  };
+
   if (!config.plugins) return;
+
+  const normalizedAllow = normalizePluginAllow(config.plugins.allow);
+  if (normalizedAllow) config.plugins.allow = normalizedAllow;
+  else delete config.plugins.allow;
 
   if (config.plugins.entries?.['memory-awareness']) {
     delete config.plugins.entries['memory-awareness'];
@@ -1678,7 +1708,8 @@ function mergeOpenClawConfig(existing: Record<string, any>, incoming: Record<str
     } else if (key === 'plugins') {
       merged.plugins = JSON.parse(JSON.stringify(merged.plugins || {}));
       const incomingPlugins = value as any;
-      if (incomingPlugins.allow) merged.plugins.allow = incomingPlugins.allow;
+      const normalizedAllow = normalizePluginAllow(incomingPlugins.allow);
+      if (normalizedAllow) merged.plugins.allow = normalizedAllow;
       if (incomingPlugins.slots) merged.plugins.slots = { ...(merged.plugins.slots || {}), ...incomingPlugins.slots };
       if (incomingPlugins.entries) {
         if (!merged.plugins.entries) merged.plugins.entries = {};
@@ -1690,6 +1721,11 @@ function mergeOpenClawConfig(existing: Record<string, any>, incoming: Record<str
           }
         }
       }
+    } else if (key === 'gateway') {
+      merged.gateway = {
+        ...(merged.gateway || {}),
+        ...(value as any),
+      };
     } else if (key === 'tools') {
       merged.tools = JSON.parse(JSON.stringify(merged.tools || {}));
       const incomingTools = value as any;
@@ -1773,22 +1809,18 @@ function downloadFile(url: string, dest: string): Promise<void> {
 
 // --- PTY Management (for embedded openclaw chat) ---
 
-function isGatewayRunningOutput(output: string | null) {
-  if (!output) return false;
+function repairOpenClawConfigFile() {
+  const configDir = path.join(HOME, '.openclaw');
+  const configPath = path.join(configDir, 'openclaw.json');
 
-  const normalized = output.toLowerCase();
-  if (
-    normalized.includes('runtime: stopped') ||
-    normalized.includes('not running') ||
-    normalized.includes('no listener detected') ||
-    normalized.includes('rpc probe: failed')
-  ) {
-    return false;
+  try {
+    if (!fs.existsSync(configPath)) return;
+    const current = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    sanitizeAwarenessPluginConfig(current);
+    fs.writeFileSync(configPath, JSON.stringify(current, null, 2));
+  } catch {
+    // Best-effort config repair only.
   }
-
-  return normalized.includes('runtime: running') ||
-    normalized.includes('rpc probe: ok') ||
-    normalized.includes('listening:');
 }
 
 function isWindowsGatewayServiceMissing(output: string | null) {
@@ -1843,6 +1875,9 @@ async function startGatewayInUserSession(send?: (ch: string, data: any) => void)
 }
 
 async function startGatewayWithRepair(send?: (ch: string, data: any) => void): Promise<{ ok: boolean; error?: string }> {
+  repairOpenClawConfigFile();
+  ensureManagedOpenClawWindowsShim();
+  repairWindowsGatewayServiceScript();
   const statusOutput = await readShellOutputAsync('openclaw gateway status 2>&1', 15000);
   if (isGatewayRunningOutput(statusOutput)) return { ok: true };
 
@@ -1934,6 +1969,12 @@ async function startGatewayWithRepair(send?: (ch: string, data: any) => void): P
       emit('Gateway started');
       return { ok: true };
     }
+  }
+
+  if (process.platform === 'win32') {
+    emit('Gateway service did not stay up, switching to app session mode...');
+    const fallback = await startGatewayInUserSession(send);
+    if (fallback.ok) return fallback;
   }
 
   return {

@@ -8,6 +8,15 @@
 import fs from 'fs';
 import path from 'path';
 import http from 'http';
+import {
+  normalizePluginAllow,
+  isGatewayRunningOutput,
+  getManagedOpenClawPrefix,
+  getManagedOpenClawEntrypoint,
+  getGatewayPort,
+  repairWindowsGatewayServiceScript as repairWindowsGatewayServiceScriptShared,
+  GATEWAY_DEFAULTS,
+} from './openclaw-config';
 
 // --- Types ---
 
@@ -57,17 +66,8 @@ interface Ctx {
   deps: DoctorDeps;
 }
 
-function getManagedOpenClawPrefix(homedir: string) {
-  return path.join(homedir, '.awareness-claw', 'openclaw-runtime');
-}
-
 function getManagedOpenClawInstallCommand(homedir: string, packageName = 'openclaw') {
   return `npm install -g --prefix "${getManagedOpenClawPrefix(homedir)}" ${packageName}`;
-}
-
-function getManagedOpenClawEntrypoint(homedir: string) {
-  const entry = path.join(getManagedOpenClawPrefix(homedir), 'node_modules', 'openclaw', 'openclaw.mjs');
-  return fs.existsSync(entry) ? entry : null;
 }
 
 function persistAwarenessPluginConfig(homedir: string) {
@@ -83,6 +83,12 @@ function persistAwarenessPluginConfig(homedir: string) {
   }
 
   if (!config.plugins) config.plugins = {};
+  config.gateway = {
+    ...(config.gateway || {}),
+    mode: GATEWAY_DEFAULTS.mode,
+    bind: config.gateway?.bind || GATEWAY_DEFAULTS.bind,
+    port: Number(config.gateway?.port) || GATEWAY_DEFAULTS.port,
+  };
   if (!config.plugins.entries) config.plugins.entries = {};
   config.plugins.entries['openclaw-memory'] = {
     ...(config.plugins.entries['openclaw-memory'] || {}),
@@ -97,14 +103,23 @@ function persistAwarenessPluginConfig(homedir: string) {
       embeddingLanguage: 'multilingual',
     },
   };
-  config.plugins.allow = Array.from(new Set([...(config.plugins.allow || []), 'openclaw-memory']));
+  config.plugins.allow = Array.from(new Set([...(normalizePluginAllow(config.plugins.allow) || []), 'openclaw-memory']));
   config.plugins.slots = { ...(config.plugins.slots || {}), memory: 'openclaw-memory' };
   if (config.plugins.entries['memory-awareness']) delete config.plugins.entries['memory-awareness'];
   if (Array.isArray(config.plugins.allow)) {
     config.plugins.allow = config.plugins.allow.filter((pluginId: string) => pluginId !== 'memory-awareness');
+    if (config.plugins.allow.length === 0) delete config.plugins.allow;
   }
 
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+}
+
+function repairWindowsGatewayServiceScript(homedir: string) {
+  const nodeCommand = process.platform === 'win32' ? '"C:\\Program Files\\nodejs\\node.exe"' : 'node';
+  repairWindowsGatewayServiceScriptShared(homedir, {
+    nodeCommand,
+    tmpdir: path.join(homedir, 'AppData', 'Local', 'Temp'),
+  });
 }
 
 function pickFirstCommandPath(output: string | null): string | null {
@@ -354,7 +369,7 @@ async function fixLaunchAgentPath(ctx: Ctx): Promise<FixResult> {
 async function checkGatewayRunning(ctx: Ctx): Promise<CheckResult> {
   if (!ctx.openclawPath) return { id: 'gateway-running', label: 'Gateway', status: 'skipped', message: 'Skipped (OpenClaw not installed)', fixable: 'none' };
   const output = await ctx.deps.shellExec('openclaw gateway status 2>&1', 15000);
-  if (output && (output.includes('running') || output.includes('active') || output.includes('RPC probe: ok') || output.includes('Listening:'))) {
+  if (isGatewayRunningOutput(output)) {
     return { id: 'gateway-running', label: 'Gateway', status: 'pass', message: 'Running', fixable: 'none' };
   }
   return { id: 'gateway-running', label: 'Gateway', status: 'fail', message: 'Gateway is not running', fixable: 'auto', fixDescription: 'Start the Gateway' };
@@ -362,6 +377,7 @@ async function checkGatewayRunning(ctx: Ctx): Promise<CheckResult> {
 
 async function fixGatewayStart(ctx: Ctx): Promise<FixResult> {
   try {
+    if (ctx.deps.platform === 'win32') repairWindowsGatewayServiceScript(ctx.deps.homedir);
     await ctx.deps.shellRun('openclaw gateway start 2>&1', 20000);
     return { id: 'gateway-running', success: true, message: 'Gateway started' };
   } catch (err: any) {

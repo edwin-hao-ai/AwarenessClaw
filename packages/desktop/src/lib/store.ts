@@ -74,6 +74,11 @@ async function syncToOpenClaw(config: AppConfig, providers: ModelProviderDef[]) 
   if (!provider) return;
 
   const openclawConfig: Record<string, any> = {
+    gateway: {
+      mode: 'local',
+      bind: 'loopback',
+      port: 18789,
+    },
     plugins: {
       allow: ['openclaw-memory'],
     },
