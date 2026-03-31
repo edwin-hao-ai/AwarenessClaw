@@ -1682,11 +1682,9 @@ ipcMain.handle('chat:send', async (_e, message: string, sessionId?: string, opti
       if (others.length > 0) parts.push(`[Attached files: ${others.join(', ')}]`);
       fullMsg = `${parts.join('\\n')}\\n\\n${escapedMsg}`;
     }
-    const cmd = `openclaw agent --local --session-id "${sid}" -m "${fullMsg}" --verbose on${thinkingFlag}`;
-    const enhancedPath = getEnhancedPath();
+    // Pass project directory as message context instead of cwd restriction.
+    // This allows agent to access files anywhere while knowing the active project.
     const requestedWorkspace = options?.workspacePath?.trim();
-    const chatWorkingDirectory = requestedWorkspace || os.homedir();
-
     if (requestedWorkspace) {
       try {
         const stat = fs.statSync(requestedWorkspace);
@@ -1706,7 +1704,14 @@ ipcMain.handle('chat:send', async (_e, message: string, sessionId?: string, opti
           sessionId: sid,
         });
       }
+      fullMsg = `[Current project directory: ${requestedWorkspace}] (use this as base for relative file paths)\\n${fullMsg}`;
     }
+
+    const cmd = `openclaw agent --local --session-id "${sid}" -m "${fullMsg}" --verbose on${thinkingFlag}`;
+    const enhancedPath = getEnhancedPath();
+    // Use home directory as cwd so agent is not restricted to a single directory.
+    // The project path is passed via message context above.
+    const chatWorkingDirectory = os.homedir();
 
     const shellCmd = process.platform === 'win32' ? wrapWindowsCommand(cmd) : cmd;
     const child = process.platform === 'win32'
