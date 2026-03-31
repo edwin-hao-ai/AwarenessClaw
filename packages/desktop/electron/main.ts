@@ -3697,10 +3697,18 @@ ipcMain.handle('daemon:mark-connected', () => {
 // --- App Lifecycle ---
 
 app.whenReady().then(() => {
+  // Ensure config has required gateway defaults before anything tries to start
+  repairOpenClawConfigFile();
+  repairWindowsGatewayServiceScript();
+
   createWindow();
   if (process.platform === 'darwin') {
     createTray();
   }
+
+  // Best-effort: start Gateway early so it's ready when user sends first message
+  startGatewayWithRepair().catch(() => {});
+
   // Start watchdog after a delay (give startup flow time to connect daemon first)
   setTimeout(() => {
     if (!watchdogInterval) startDaemonWatchdog();
