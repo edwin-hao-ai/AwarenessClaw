@@ -13,6 +13,8 @@ import { GatewayClient } from './gateway-ws';
 let mainWindow: typeof BrowserWindow.prototype | null = null;
 let tray: typeof Tray.prototype | null = null;
 let isQuitting = false;
+let daemonStartupPromise: Promise<{ success: boolean; alreadyRunning?: boolean; error?: string }> | null = null;
+let daemonStartupLastKickoff = 0;
 let gatewayWsClient: GatewayClient | null = null;
 
 const isDev = !app.isPackaged;
@@ -221,6 +223,10 @@ function resolveBundledCache(fileName: string) {
   return candidates.find(p => fs.existsSync(p)) || null;
 }
 
+function sendSetupDaemonStatus(key: string, detail?: string) {
+  mainWindow?.webContents.send('setup:daemon-status', { key, detail });
+}
+
 function clearAwarenessLocalNpxCache() {
   try {
     const npxCacheDir = path.join(HOME, '.npm', '_npx');
@@ -288,6 +294,29 @@ async function startLocalDaemonDetached() {
     if (err?.code !== 'ENOENT') throw err;
     await startViaBundledNpm();
   }
+}
+
+async function waitForLocalDaemonReady(timeoutMs: number, statusKey: string) {
+  const startedAt = Date.now();
+  let lastStatusAt = 0;
+
+  while (Date.now() - startedAt < timeoutMs) {
+    if (await checkDaemonHealth()) return true;
+
+    const elapsed = Date.now() - startedAt;
+    if (elapsed - lastStatusAt >= 10000) {
+      lastStatusAt = elapsed;
+      sendSetupDaemonStatus(statusKey, `${Math.max(1, Math.ceil((timeoutMs - elapsed) / 1000))}s`);
+    }
+
+    await sleep(1500);
+  }
+
+  return false;
+}
+
+function formatDaemonSetupError() {
+  return 'Local service is taking longer than expected. AwarenessClaw already retried automatically. Please keep this window open, check your network, and try again in a minute.';
 }
 
 function requestLocalDaemon(pathname: string, method: 'GET' | 'POST' = 'GET', timeoutMs = 2000): Promise<{ statusCode: number; body: string }> {
@@ -755,28 +784,62 @@ ipcMain.handle('setup:install-plugin', async () => {
  * Step 4: Start local Awareness daemon
  */
 ipcMain.handle('setup:start-daemon', async () => {
-  // Check if already running
-  const isReady = await checkDaemonHealth();
-  if (isReady) return { success: true, alreadyRunning: true };
+  if (daemonStartupPromise) return daemonStartupPromise;
+
+  daemonStartupPromise = (async () => {
+    const isReady = await checkDaemonHealth();
+    if (isReady) return { success: true, alreadyRunning: true };
+
+    const recentlyStarted = Date.now() - daemonStartupLastKickoff < 120000;
+    if (recentlyStarted) {
+      sendSetupDaemonStatus('setup.install.daemonStatus.waiting');
+      if (await waitForLocalDaemonReady(45000, 'setup.install.daemonStatus.waiting')) {
+        return { success: true };
+      }
+    }
+
+    try {
+      sendSetupDaemonStatus('setup.install.daemonStatus.starting');
+      daemonStartupLastKickoff = Date.now();
+      await startLocalDaemonDetached();
+    } catch (err: any) {
+      if (err?.code === 'ENOENT') {
+        return { success: false, error: 'Node/npm not found. Please install Node.js 22+ and reopen AwarenessClaw.' };
+      }
+      return { success: false, error: err?.message?.slice(0, 200) || String(err) };
+    }
+
+    sendSetupDaemonStatus('setup.install.daemonStatus.preparing');
+    if (await waitForLocalDaemonReady(75000, 'setup.install.daemonStatus.preparing')) {
+      return { success: true };
+    }
+
+    try {
+      sendSetupDaemonStatus('setup.install.daemonStatus.repairing');
+      await forceStopLocalDaemon();
+      clearAwarenessLocalNpxCache();
+      daemonStartupLastKickoff = Date.now();
+      await startLocalDaemonDetached();
+    } catch (err: any) {
+      if (err?.code === 'ENOENT') {
+        return { success: false, error: 'Node/npm not found. Please install Node.js 22+ and reopen AwarenessClaw.' };
+      }
+      return { success: false, error: err?.message?.slice(0, 200) || String(err) };
+    }
+
+    sendSetupDaemonStatus('setup.install.daemonStatus.retrying');
+    if (await waitForLocalDaemonReady(90000, 'setup.install.daemonStatus.retrying')) {
+      return { success: true };
+    }
+
+    return { success: false, error: formatDaemonSetupError() };
+  })();
 
   try {
-    await forceStopLocalDaemon();
-    clearAwarenessLocalNpxCache();
-    await startLocalDaemonDetached();
-  } catch (err: any) {
-    if (err?.code === 'ENOENT') {
-      return { success: false, error: 'Node/npm not found. Please install Node.js 22+ and reopen AwarenessClaw.' };
-    }
-    return { success: false, error: err?.message?.slice(0, 200) || String(err) };
+    return await daemonStartupPromise;
+  } finally {
+    daemonStartupPromise = null;
   }
-
-  // Poll for readiness. First launch may need time for npx download + native module setup.
-  for (let i = 0; i < 45; i++) {
-    await sleep(1000);
-    if (await checkDaemonHealth()) return { success: true };
-  }
-
-  return { success: false, error: 'Daemon did not start in time' };
 });
 
 /**

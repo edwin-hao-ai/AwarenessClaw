@@ -17,6 +17,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   installOpenClaw: () => ipcRenderer.invoke('setup:install-openclaw'),
   installPlugin: () => ipcRenderer.invoke('setup:install-plugin'),
   startDaemon: () => ipcRenderer.invoke('setup:start-daemon'),
+  onSetupDaemonStatus: (callback: (status: { key: string; detail?: string }) => void) => {
+    const listener = (_e: any, status: { key: string; detail?: string }) => callback(status);
+    ipcRenderer.on('setup:daemon-status', listener);
+    return () => ipcRenderer.removeListener('setup:daemon-status', listener);
+  },
   saveConfig: (config: Record<string, unknown>) => ipcRenderer.invoke('setup:save-config', config),
   openAuthUrl: (url: string) => ipcRenderer.invoke('setup:open-auth-url', url),
   readExistingConfig: () => ipcRenderer.invoke('setup:read-existing-config'),

@@ -15,6 +15,7 @@ export interface ElectronAPI {
   installOpenClaw: () => Promise<{ success: boolean; alreadyInstalled?: boolean; error?: string }>;
   installPlugin: () => Promise<{ success: boolean; error?: string }>;
   startDaemon: () => Promise<{ success: boolean; alreadyRunning?: boolean; error?: string }>;
+  onSetupDaemonStatus?: (callback: (status: { key: string; detail?: string }) => void) => (() => void);
   saveConfig: (config: Record<string, unknown>) => Promise<{ success: boolean }>;
   openAuthUrl: (url: string) => Promise<void>;
   chatSend?: (message: string, sessionId?: string, options?: { thinkingLevel?: string; model?: string; files?: string[]; workspacePath?: string }) => Promise<{ success: boolean; text?: string; error?: string; sessionId?: string }>;

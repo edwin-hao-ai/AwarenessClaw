@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ChevronRight, ChevronLeft, Loader2, Check, Globe, AlertTriangle, RefreshCw } from 'lucide-react';
 import { useAppConfig, MODEL_PROVIDERS, type ModelProviderDef } from '../lib/store';
 import { useI18n } from '../lib/i18n';
@@ -47,6 +47,17 @@ export default function SetupWizard({ onComplete }: SetupProps) {
   const [memoryMode, setMemoryMode] = useState<'local' | 'cloud'>('local');
 
   // Language toggle syncs with global i18n via updateConfig
+
+  useEffect(() => {
+    const api = window.electronAPI;
+    if (!api?.onSetupDaemonStatus) return;
+
+    return api.onSetupDaemonStatus((status) => {
+      setInstallSteps((prev) => prev.map((step) => step.key === 'daemon'
+        ? { ...step, detail: status.detail ? `${t(status.key)} (${status.detail})` : t(status.key) }
+        : step));
+    });
+  }, [t]);
 
   const updateInstallStep = (key: string, status: 'running' | 'done' | 'error', detail?: string) => {
     setInstallSteps((prev) => prev.map((s) => s.key === key ? { ...s, status, ...(detail !== undefined ? { detail } : {}) } : s));
