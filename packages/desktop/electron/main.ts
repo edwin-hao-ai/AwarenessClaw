@@ -17,6 +17,12 @@ let daemonStartupPromise: Promise<{ success: boolean; alreadyRunning?: boolean; 
 let daemonStartupLastKickoff = 0;
 let gatewayWsClient: GatewayClient | null = null;
 
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!gotSingleInstanceLock) {
+  app.quit();
+}
+
 const isDev = !app.isPackaged;
 const HOME = os.homedir();
 
@@ -35,6 +41,69 @@ function getManagedOpenClawPrefix() {
 function getManagedOpenClawBinDir() {
   const prefix = getManagedOpenClawPrefix();
   return process.platform === 'win32' ? prefix : path.join(prefix, 'bin');
+}
+
+function getManagedOpenClawEntrypoint() {
+  const entry = path.join(getManagedOpenClawPrefix(), 'node_modules', 'openclaw', 'openclaw.mjs');
+  return fs.existsSync(entry) ? entry : null;
+}
+
+function findNodeExecutable() {
+  const executableName = process.platform === 'win32' ? 'node.exe' : 'node';
+  const pathEntries = (getEnhancedPath() || '').split(path.delimiter).filter(Boolean);
+
+  for (const entry of pathEntries) {
+    const candidate = path.join(entry, executableName);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+
+  const fallback = safeShellExec(process.platform === 'win32' ? 'where node' : 'which node', 3000);
+  if (fallback) {
+    const firstLine = fallback.split(/\r?\n/).map(line => line.trim()).find(Boolean);
+    if (firstLine) return firstLine;
+  }
+
+  return process.platform === 'win32' ? 'node.exe' : 'node';
+}
+
+function getNodeInvocationCommand() {
+  const nodeExecutable = findNodeExecutable();
+  return nodeExecutable.includes(' ') ? `"${nodeExecutable}"` : nodeExecutable;
+}
+
+function getManagedOpenClawCommand() {
+  const entry = getManagedOpenClawEntrypoint();
+  if (!entry) return null;
+  return `${getNodeInvocationCommand()} "${entry}"`;
+}
+
+function rewriteOpenClawCommand(cmd: string) {
+  const managedCommand = getManagedOpenClawCommand();
+  if (!managedCommand) return cmd;
+  return cmd.replace(/(^|&&\s+|;\s+|&\s+|start\s+""\s+\/B\s+)openclaw(?=\s|$)/g, (_match, prefix) => `${prefix}${managedCommand}`);
+}
+
+function ensureManagedOpenClawWindowsShim() {
+  if (process.platform !== 'win32') return;
+
+  const entry = getManagedOpenClawEntrypoint();
+  if (!entry) return;
+
+  const prefix = getManagedOpenClawPrefix();
+  fs.mkdirSync(prefix, { recursive: true });
+
+  const cmdShim = path.join(prefix, 'openclaw.cmd');
+  const ps1Shim = path.join(prefix, 'openclaw.ps1');
+  const shellShim = path.join(prefix, 'openclaw');
+  const nodeCommand = getNodeInvocationCommand();
+
+  const cmdContent = `@ECHO OFF\r\n${nodeCommand} "${entry}" %*\r\n`;
+  const ps1Content = `& ${nodeCommand} "${entry}" $args\r\n`;
+  const shellContent = `#!/bin/sh\n${nodeCommand} "${entry}" "$@"\n`;
+
+  fs.writeFileSync(cmdShim, cmdContent, 'utf8');
+  fs.writeFileSync(ps1Shim, ps1Content, 'utf8');
+  fs.writeFileSync(shellShim, shellContent, 'utf8');
 }
 
 function getManagedOpenClawInstallCommand(packageName = 'openclaw') {
@@ -83,10 +152,11 @@ function stripAnsi(text: string) {
 function safeShellExec(cmd: string, timeoutMs = 5000): string | null {
   try {
     const enhancedPath = getEnhancedPath();
+    const rewrittenCmd = rewriteOpenClawCommand(cmd);
     if (process.platform === 'win32') {
-      return execSync(wrapWindowsCommand(cmd), { encoding: 'utf8', timeout: timeoutMs, stdio: 'pipe', shell: 'cmd.exe', env: { ...process.env, PATH: enhancedPath, NO_COLOR: '1', FORCE_COLOR: '0' } }).trim();
+      return execSync(wrapWindowsCommand(rewrittenCmd), { encoding: 'utf8', timeout: timeoutMs, stdio: 'pipe', shell: 'cmd.exe', env: { ...process.env, PATH: enhancedPath, NO_COLOR: '1', FORCE_COLOR: '0' } }).trim();
     }
-    return execSync(`/bin/bash --norc --noprofile -c 'export PATH="${enhancedPath}"; ${cmd.replace(/'/g, "'\\''")}'`, {
+    return execSync(`/bin/bash --norc --noprofile -c 'export PATH="${enhancedPath}"; ${rewrittenCmd.replace(/'/g, "'\\''")}'`, {
       encoding: 'utf8', timeout: timeoutMs, stdio: 'pipe', env: { ...process.env, PATH: enhancedPath },
     }).trim();
   } catch {
@@ -99,7 +169,8 @@ function safeShellExec(cmd: string, timeoutMs = 5000): string | null {
 function safeShellExecAsync(cmd: string, timeoutMs = 5000): Promise<string | null> {
   return new Promise(resolve => {
     const enhancedPath = getEnhancedPath();
-    const shellCmd = process.platform === 'win32' ? wrapWindowsCommand(cmd) : `export PATH="${enhancedPath}"; ${cmd}`;
+    const rewrittenCmd = rewriteOpenClawCommand(cmd);
+    const shellCmd = process.platform === 'win32' ? wrapWindowsCommand(rewrittenCmd) : `export PATH="${enhancedPath}"; ${rewrittenCmd}`;
     const child = process.platform === 'win32'
       ? spawn(shellCmd, [], { shell: 'cmd.exe', env: { ...process.env, PATH: enhancedPath, NO_COLOR: '1', FORCE_COLOR: '0' }, stdio: 'pipe' })
       : spawn('/bin/bash', ['--norc', '--noprofile', '-c', shellCmd], { env: { ...process.env, PATH: enhancedPath }, stdio: 'pipe' });
@@ -117,7 +188,8 @@ function safeShellExecAsync(cmd: string, timeoutMs = 5000): Promise<string | nul
 function readShellOutputAsync(cmd: string, timeoutMs = 5000): Promise<string | null> {
   return new Promise(resolve => {
     const enhancedPath = getEnhancedPath();
-    const shellCmd = process.platform === 'win32' ? wrapWindowsCommand(cmd) : `export PATH="${enhancedPath}"; ${cmd}`;
+    const rewrittenCmd = rewriteOpenClawCommand(cmd);
+    const shellCmd = process.platform === 'win32' ? wrapWindowsCommand(rewrittenCmd) : `export PATH="${enhancedPath}"; ${rewrittenCmd}`;
     const child = process.platform === 'win32'
       ? spawn(shellCmd, [], { shell: 'cmd.exe', env: { ...process.env, PATH: enhancedPath, NO_COLOR: '1', FORCE_COLOR: '0' }, stdio: 'pipe' })
       : spawn('/bin/bash', ['--norc', '--noprofile', '-c', shellCmd], { env: { ...process.env, PATH: enhancedPath }, stdio: 'pipe' });
@@ -365,10 +437,11 @@ async function shutdownLocalDaemon(timeoutMs = 3000): Promise<boolean> {
  *  Uses --norc --noprofile on macOS/Linux to avoid .bashrc errors. */
 function run(cmd: string, opts: Record<string, unknown> = {}): string {
   const enhancedPath = getEnhancedPath();
+  const rewrittenCmd = rewriteOpenClawCommand(cmd);
   if (process.platform === 'win32') {
-    return execSync(cmd, { encoding: 'utf8', timeout: 180000, stdio: 'pipe', shell: 'cmd.exe', env: { ...process.env, PATH: enhancedPath }, ...opts } as any);
+    return execSync(rewrittenCmd, { encoding: 'utf8', timeout: 180000, stdio: 'pipe', shell: 'cmd.exe', env: { ...process.env, PATH: enhancedPath }, ...opts } as any);
   }
-  return execSync(`/bin/bash --norc --noprofile -c 'export PATH="${enhancedPath}"; ${cmd.replace(/'/g, "'\\''")}'`, {
+  return execSync(`/bin/bash --norc --noprofile -c 'export PATH="${enhancedPath}"; ${rewrittenCmd.replace(/'/g, "'\\''")}'`, {
     encoding: 'utf8', timeout: 180000, stdio: 'pipe', env: { ...process.env, PATH: enhancedPath }, ...opts,
   } as any);
 }
@@ -417,7 +490,8 @@ function runAsync(cmd: string, timeoutMs = 180000): Promise<string> {
       return `${process.execPath} "${npxCli}" ${rest}`;
     };
 
-    const shellCmdRaw = process.platform === 'win32' ? wrapWindowsCommand(cmd) : `export PATH="${enhancedPath}"; ${cmd}`;
+    const rewrittenCmd = rewriteOpenClawCommand(cmd);
+    const shellCmdRaw = process.platform === 'win32' ? wrapWindowsCommand(rewrittenCmd) : `export PATH="${enhancedPath}"; ${rewrittenCmd}`;
     const shellCmd = rewriteNpx(shellCmdRaw);
     const child = process.platform === 'win32'
       ? spawn(shellCmd, [], { shell: 'cmd.exe', env: { ...process.env, PATH: enhancedPath, NO_COLOR: '1', FORCE_COLOR: '0' }, stdio: 'pipe' })
@@ -447,6 +521,8 @@ function runAsync(cmd: string, timeoutMs = 180000): Promise<string> {
 // --- Window Creation ---
 
 function createWindow() {
+  ensureManagedOpenClawWindowsShim();
+
   mainWindow = new BrowserWindow({
     width: 1100,
     height: 750,
@@ -676,6 +752,7 @@ ipcMain.handle('setup:install-nodejs', async () => {
 ipcMain.handle('setup:install-openclaw', async () => {
   const existing = await safeShellExecAsync('openclaw --version');
   if (existing) {
+    ensureManagedOpenClawWindowsShim();
     return { success: true, alreadyInstalled: true, version: existing };
   }
 
@@ -685,6 +762,7 @@ ipcMain.handle('setup:install-openclaw', async () => {
   for (const reg of registries) {
     try {
       await runAsync(`${managedInstallBase} ${reg}`.trim(), 90000);
+      ensureManagedOpenClawWindowsShim();
       return { success: true };
     } catch { continue; }
   }
@@ -695,6 +773,7 @@ ipcMain.handle('setup:install-openclaw', async () => {
     } else {
       await runAsync('curl -fsSL https://openclaw.ai/install.sh | bash', 120000);
     }
+    ensureManagedOpenClawWindowsShim();
     return { success: true, method: 'official-script' };
   } catch (err) {
     return { success: false, error: String(err), hint: 'Install OpenClaw manually: npm install -g openclaw' };
@@ -724,7 +803,7 @@ ipcMain.handle('setup:install-plugin', async () => {
     fs.mkdirSync(extDir, { recursive: true });
     await runAsync(`tar -xzf "${tgzPath}" -C "${extDir}" --strip-components=1`, 30000);
     try { fs.unlinkSync(tgzPath); } catch { /* best-effort */ }
-    await runAsync(`cd "${extDir}" && npm install --omit=dev --no-audit --no-fund`, 60000);
+    persistAwarenessPluginConfig({ enableSlot: true });
     return { success: true, method: 'npm-direct' };
   } catch { /* fall through */ }
 
@@ -732,6 +811,7 @@ ipcMain.handle('setup:install-plugin', async () => {
   if (hasOpenClaw) {
     try {
       await runAsync(`cd "${HOME}" && openclaw plugins install @awareness-sdk/openclaw-memory`, 60000);
+      persistAwarenessPluginConfig({ enableSlot: true });
       return { success: true, method: 'openclaw-plugin' };
     } catch { /* fall through to clawhub */ }
   }
@@ -739,10 +819,12 @@ ipcMain.handle('setup:install-plugin', async () => {
   try {
     if (pluginTarball && npmCli) {
       await runAsync(`cd "${HOME}" && ${process.execPath} "${npmCli}" exec --yes ${pluginTarball} install awareness-memory --force`, 60000);
+      persistAwarenessPluginConfig({ enableSlot: true });
       return { success: true, method: 'clawhub-offline' };
     }
 
     await runAsync(`cd "${HOME}" && npx -y clawhub@latest install awareness-memory --force`, 60000);
+    persistAwarenessPluginConfig({ enableSlot: true });
     return { success: true, method: 'clawhub' };
   } catch {
     // Last resort: just configure the plugin in config file, skip actual install
@@ -755,23 +837,8 @@ ipcMain.handle('setup:install-plugin', async () => {
       let config: any = {};
       try { config = JSON.parse(fs.readFileSync(configPath, 'utf8')); } catch {}
 
-      if (!config.plugins) config.plugins = {};
-      if (!config.plugins.entries) config.plugins.entries = {};
-      for (const pluginId of ['openclaw-memory', 'memory-awareness']) {
-        config.plugins.entries[pluginId] = {
-          ...(config.plugins.entries[pluginId] || {}),
-          enabled: true,
-          config: {
-            ...(config.plugins.entries[pluginId]?.config || {}),
-            autoRecall: true,
-            autoCapture: true,
-            recallLimit: 8,
-            localUrl: 'http://localhost:37800',
-            baseUrl: 'https://awareness.market/api/v1',
-            embeddingLanguage: 'multilingual',
-          },
-        };
-      }
+      applyAwarenessPluginConfig(config, { enableSlot: false });
+      sanitizeAwarenessPluginConfig(config);
       fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
       return { success: true, method: 'config-only', note: 'Plugin config written, will install on first run' };
     } catch (err) {
@@ -1511,6 +1578,79 @@ function sleep(ms: number) {
 
 const REDACTED_VALUE = '__REDACTED__';
 
+function hasAwarenessPluginInstalled() {
+  return fs.existsSync(path.join(HOME, '.openclaw', 'extensions', 'openclaw-memory', 'package.json'));
+}
+
+function applyAwarenessPluginConfig(config: Record<string, any>, options?: { enableSlot?: boolean }) {
+  if (!config.plugins) config.plugins = {};
+  if (!config.plugins.entries) config.plugins.entries = {};
+
+  config.plugins.entries['openclaw-memory'] = {
+    ...(config.plugins.entries['openclaw-memory'] || {}),
+    enabled: true,
+    config: {
+      ...(config.plugins.entries['openclaw-memory']?.config || {}),
+      autoRecall: true,
+      autoCapture: true,
+      recallLimit: 8,
+      localUrl: 'http://localhost:37800',
+      baseUrl: 'https://awareness.market/api/v1',
+      embeddingLanguage: 'multilingual',
+    },
+  };
+
+  if (options?.enableSlot) {
+    config.plugins.allow = Array.from(new Set([...(config.plugins.allow || []), 'openclaw-memory']));
+    config.plugins.slots = { ...(config.plugins.slots || {}), memory: 'openclaw-memory' };
+  }
+}
+
+function sanitizeAwarenessPluginConfig(config: Record<string, any>) {
+  if (!config.plugins) return;
+
+  if (config.plugins.entries?.['memory-awareness']) {
+    delete config.plugins.entries['memory-awareness'];
+  }
+
+  if (Array.isArray(config.plugins.allow)) {
+    config.plugins.allow = config.plugins.allow.filter((pluginId: string) => pluginId !== 'memory-awareness');
+    if (!hasAwarenessPluginInstalled()) {
+      config.plugins.allow = config.plugins.allow.filter((pluginId: string) => pluginId !== 'openclaw-memory');
+    }
+    if (config.plugins.allow.length === 0) delete config.plugins.allow;
+  }
+
+  if (config.plugins.slots?.memory === 'memory-awareness') {
+    delete config.plugins.slots.memory;
+  }
+
+  if (!hasAwarenessPluginInstalled() && config.plugins.slots?.memory === 'openclaw-memory') {
+    delete config.plugins.slots.memory;
+  }
+
+  if (config.plugins.slots && Object.keys(config.plugins.slots).length === 0) {
+    delete config.plugins.slots;
+  }
+}
+
+function persistAwarenessPluginConfig(options?: { enableSlot?: boolean }) {
+  const configDir = path.join(HOME, '.openclaw');
+  const configPath = path.join(configDir, 'openclaw.json');
+  fs.mkdirSync(configDir, { recursive: true });
+
+  let config: Record<string, any> = {};
+  try {
+    config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  } catch {
+    config = {};
+  }
+
+  applyAwarenessPluginConfig(config, options);
+  sanitizeAwarenessPluginConfig(config);
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+}
+
 function mergeOpenClawConfig(existing: Record<string, any>, incoming: Record<string, any>) {
   const merged = JSON.parse(JSON.stringify(existing || {}));
 
@@ -1565,6 +1705,8 @@ function mergeOpenClawConfig(existing: Record<string, any>, incoming: Record<str
       merged[key] = value;
     }
   }
+
+  sanitizeAwarenessPluginConfig(merged);
 
   return merged;
 }
@@ -1906,7 +2048,7 @@ ipcMain.handle('chat:send', async (_e, message: string, sessionId?: string, opti
     // Gateway is already ensured running above.
     // Pass --agent flag to route message to a specific agent (defaults to "main" if omitted).
     const agentFlag = options?.agentId && options.agentId !== 'main' ? ` --agent "${options.agentId}"` : '';
-    const cmd = `openclaw agent --session-id "${sid}" -m "${fullMsg}" --verbose on${thinkingFlag}${agentFlag}`;
+    const cmd = rewriteOpenClawCommand(`openclaw agent --session-id "${sid}" -m "${fullMsg}" --verbose on${thinkingFlag}${agentFlag}`);
     const enhancedPath = getEnhancedPath();
     // Use home directory as cwd so agent is not restricted to a single directory.
     // The project path is passed via message context above.
@@ -3506,6 +3648,17 @@ app.whenReady().then(() => {
   setTimeout(() => {
     if (!watchdogInterval) startDaemonWatchdog();
   }, 30_000);
+});
+
+app.on('second-instance', () => {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+    return;
+  }
+
+  createWindow();
 });
 
 app.on('before-quit', () => {

@@ -65,6 +65,48 @@ function getManagedOpenClawInstallCommand(homedir: string, packageName = 'opencl
   return `npm install -g --prefix "${getManagedOpenClawPrefix(homedir)}" ${packageName}`;
 }
 
+function getManagedOpenClawEntrypoint(homedir: string) {
+  const entry = path.join(getManagedOpenClawPrefix(homedir), 'node_modules', 'openclaw', 'openclaw.mjs');
+  return fs.existsSync(entry) ? entry : null;
+}
+
+function persistAwarenessPluginConfig(homedir: string) {
+  const configDir = path.join(homedir, '.openclaw');
+  const configPath = path.join(configDir, 'openclaw.json');
+  fs.mkdirSync(configDir, { recursive: true });
+
+  let config: Record<string, any> = {};
+  try {
+    config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  } catch {
+    config = {};
+  }
+
+  if (!config.plugins) config.plugins = {};
+  if (!config.plugins.entries) config.plugins.entries = {};
+  config.plugins.entries['openclaw-memory'] = {
+    ...(config.plugins.entries['openclaw-memory'] || {}),
+    enabled: true,
+    config: {
+      ...(config.plugins.entries['openclaw-memory']?.config || {}),
+      autoRecall: true,
+      autoCapture: true,
+      recallLimit: 8,
+      localUrl: 'http://localhost:37800',
+      baseUrl: 'https://awareness.market/api/v1',
+      embeddingLanguage: 'multilingual',
+    },
+  };
+  config.plugins.allow = Array.from(new Set([...(config.plugins.allow || []), 'openclaw-memory']));
+  config.plugins.slots = { ...(config.plugins.slots || {}), memory: 'openclaw-memory' };
+  if (config.plugins.entries['memory-awareness']) delete config.plugins.entries['memory-awareness'];
+  if (Array.isArray(config.plugins.allow)) {
+    config.plugins.allow = config.plugins.allow.filter((pluginId: string) => pluginId !== 'memory-awareness');
+  }
+
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+}
+
 function pickFirstCommandPath(output: string | null): string | null {
   if (!output) return null;
   const lines = output.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
@@ -87,7 +129,8 @@ async function buildContext(deps: DoctorDeps): Promise<Ctx> {
   const nodeVersion = nodePath ? await deps.shellExec('node --version', 3000) : null;
   const openclawLookup = await deps.shellExec(`${findCommand} openclaw`, 3000);
   const openclawCandidates = parseCommandPaths(openclawLookup);
-  const openclawPath = openclawCandidates[0] || null;
+  const managedOpenclawPath = getManagedOpenClawEntrypoint(deps.homedir);
+  const openclawPath = openclawCandidates[0] || managedOpenclawPath || null;
   const openclawVersion = openclawPath ? await deps.shellExec('openclaw --version', 8000) : null;
   const npmPrefix = await deps.shellExec('npm config get prefix', 5000);
 
@@ -360,13 +403,14 @@ async function fixPluginInstall(ctx: Ctx): Promise<FixResult> {
     fs.mkdirSync(extDir, { recursive: true });
     await ctx.deps.shellRun(`tar -xzf "${tgzPath}" -C "${extDir}" --strip-components=1`, 30000);
     try { fs.unlinkSync(tgzPath); } catch { /* best-effort */ }
-    await ctx.deps.shellRun(`cd "${extDir}" && npm install --omit=dev --no-audit --no-fund`, 60000);
+    persistAwarenessPluginConfig(HOME);
     return { id: 'plugin-installed', success: true, message: 'Plugin installed' };
   } catch { /* fall through */ }
 
   // Fallback: openclaw plugins install with cd to HOME
   try {
     await ctx.deps.shellRun(`cd "${HOME}" && openclaw plugins install awareness-memory 2>&1`, 30000);
+    persistAwarenessPluginConfig(HOME);
     return { id: 'plugin-installed', success: true, message: 'Plugin installed via OpenClaw' };
   } catch (err: any) {
     return { id: 'plugin-installed', success: false, message: err.message?.slice(0, 200) || 'Installation failed' };
