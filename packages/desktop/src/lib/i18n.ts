@@ -550,6 +550,12 @@ const en: Record<string, string> = {
   'skills.configKeyPlaceholder': 'key',
   'skills.addConfig': '+ Add',
   'skills.saveConfig': 'Save Config',
+  'skills.builtin': 'Built-in Capabilities',
+  'skills.builtin.desc': 'These tools are available out of the box — no installation needed',
+  'skills.recommended': 'Recommended Skills',
+  'skills.recommended.desc': 'Popular skills to supercharge your AI assistant',
+  'skills.loadMore': 'Load More',
+  'skills.showBuiltin': 'Built-in',
 
   // Automation extended
   'auto.cronPlaceholder': '0 9 * * * (daily at 9 AM)',
@@ -1171,6 +1177,12 @@ const zh: Record<string, string> = {
   'skills.configKeyPlaceholder': '键名',
   'skills.addConfig': '+ 添加',
   'skills.saveConfig': '保存配置',
+  'skills.builtin': '内置能力',
+  'skills.builtin.desc': '这些工具开箱即用，无需安装',
+  'skills.recommended': '推荐安装',
+  'skills.recommended.desc': '热门技能，让你的 AI 助手更强大',
+  'skills.loadMore': '加载更多',
+  'skills.showBuiltin': '内置',
 
   // Automation extended
   'auto.cronPlaceholder': '0 9 * * *（每天早上 9 点）',

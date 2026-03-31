@@ -150,9 +150,9 @@ OpenClaw 的 chat 质量依赖 `~/.openclaw/workspace/` 下的 MD 文档：
 | **MEMORY.md** | 长期记忆配置 | 中 |
 | **HEARTBEAT.md** | 定时检查任务 | 低 |
 | **AGENTS.md** | 工作区设置 | 低 |
-- [ ] **Settings 页集成 MD 编辑器**：用户可在 UI 中直接编辑 SOUL.md、USER.md、IDENTITY.md
+- [x] **Settings 页集成 MD 编辑器**：Settings Workspace section 已有 SOUL.md/USER.md/IDENTITY.md/TOOLS.md 的模态编辑器，支持创建+修改+保存（2026-03-30）
 - [x] **首次使用 Bootstrap 引导**：新用户首次打开 Chat 时显示 3 步向导（名字→AI 风格→AI 名字），自动生成 SOUL.md/USER.md/IDENTITY.md，支持跳过。检测 USER.md 存在则跳过引导。中英双语。（2026-03-31）
-- [ ] **Agent 人格设定 UI**：SOUL.md 可视化编辑（不需要用户懂 Markdown）
+- [x] **Agent 人格设定 UI**：Settings Workspace + Agents 页均可编辑 SOUL.md（系统提示词），用户无需懂 Markdown（2026-03-30）
 
 ### 多 Agent 聊天切换（2026-03-31）
 - [x] **Agent 选择器**：聊天输入框底部工具栏新增 Agent 切换下拉菜单（当存在 2+ agents 时显示），选中的 agent ID 持久化到 localStorage + 传给 `chat:send`（2026-03-31）
@@ -169,6 +169,10 @@ OpenClaw 的 chat 质量依赖 `~/.openclaw/workspace/` 下的 MD 文档：
 - [x] **技能安装/卸载**：`runAsync('npx clawhub install/uninstall')` + 进度反馈 + 错误提示（2026-03-30）
 - [x] **技能详情页**：点击技能卡片弹出详情模态，显示 SKILL.md 内容、版本、作者、安装/卸载按钮（2026-03-30）
 - [x] **技能配置编辑**：读/写 `openclaw.json → skills.<slug>.config`，支持增删改键值对，dirty tracking + Save 按钮（2026-03-30）
+- [x] **内置能力展示**：新增 Built-in tab，展示 OpenClaw 内置的 8 大能力（浏览器/Shell/文件/图片/记忆/消息/自动化/搜索），让用户知道开箱即用的能力（2026-04-01）
+- [x] **推荐安装板块**：Explore tab 顶部显示 4 个精选推荐 skill（tavily-search/capability-evolver/github/obsidian），带推荐理由和一键安装（2026-04-01）
+- [x] **前端分页**：Load More 按钮，每次加载 20 条，避免一次性渲染全部技能（2026-04-01）
+- [x] **浏览器工具自动启用**：`syncToOpenClaw` 确保 `tools.profile: "coding"` 写入 openclaw.json，激活浏览器/Shell/文件等全部内置工具（2026-04-01）
 
 ### 权限管理
 - [x] **权限概览面板**：Settings 页显示 tools profile、alsoAllow 标签列表（可增删）、denied 命令标签列表（可增删）（2026-03-30）

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Search, Download, Check, ExternalLink, Loader2, Trash2, RefreshCw, Package, AlertCircle, X, Save } from 'lucide-react';
+import { Search, Download, Check, ExternalLink, Loader2, Trash2, RefreshCw, Package, AlertCircle, X, Save, Globe, Terminal, FolderOpen, Brain, Eye, MessageSquare, Clock, Zap } from 'lucide-react';
 import { useI18n } from '../lib/i18n';
 
 interface InstalledSkill {
@@ -34,22 +34,45 @@ interface SkillDetail {
   skillMd?: string;
 }
 
+// Built-in OpenClaw capabilities (no installation needed)
+const BUILTIN_CAPABILITIES = [
+  { icon: Globe, nameKey: 'Browser', descKey: 'Navigate, click, screenshot, fill forms — full browser control', color: 'text-blue-400' },
+  { icon: Terminal, nameKey: 'Shell / Code', descKey: 'Execute commands, run scripts, manage processes', color: 'text-emerald-400' },
+  { icon: FolderOpen, nameKey: 'File System', descKey: 'Read, write, edit files in your project', color: 'text-amber-400' },
+  { icon: Eye, nameKey: 'Image Analysis', descKey: 'Understand and describe images', color: 'text-purple-400' },
+  { icon: Brain, nameKey: 'Memory', descKey: 'Cross-session knowledge with Awareness Memory', color: 'text-brand-400' },
+  { icon: MessageSquare, nameKey: 'Messaging', descKey: 'Send messages via Telegram, WhatsApp, Discord', color: 'text-sky-400' },
+  { icon: Clock, nameKey: 'Automation', descKey: 'Schedule cron tasks, heartbeat checks', color: 'text-orange-400' },
+  { icon: Zap, nameKey: 'Web Search', descKey: 'Search the web via Brave, Perplexity, or browser', color: 'text-yellow-400' },
+];
+
+// Recommended skills to install for best experience
+const RECOMMENDED_SKILLS = [
+  { slug: 'tavily-search', reason: 'Best web search API — structured results for research' },
+  { slug: 'capability-evolver', reason: 'Self-improving agent — learns from conversations' },
+  { slug: 'github', reason: 'GitHub integration — issues, PRs, repos' },
+  { slug: 'obsidian', reason: 'Obsidian vault — knowledge management' },
+];
+
+const PAGE_SIZE = 20;
+
 export default function Skills() {
   const { t } = useI18n();
   const [installed, setInstalled] = useState<Record<string, InstalledSkill>>({});
   const [remoteSkills, setRemoteSkills] = useState<RemoteSkill[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<RemoteSkill[] | null>(null);
-  const [filter, setFilter] = useState<'all' | 'installed'>('all');
+  const [filter, setFilter] = useState<'all' | 'installed' | 'builtin'>('all');
   const [loading, setLoading] = useState(true);
   const [searching, setSearching] = useState(false);
-  const [actionSlug, setActionSlug] = useState<string | null>(null); // slug being installed/uninstalled
+  const [actionSlug, setActionSlug] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [detailSkill, setDetailSkill] = useState<SkillDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [skillConfig, setSkillConfig] = useState<Record<string, string>>({});
   const [configDirty, setConfigDirty] = useState(false);
   const [configSaving, setConfigSaving] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
   const api = window.electronAPI as any;
 
@@ -75,6 +98,7 @@ export default function Skills() {
     if (!searchQuery.trim() || !api) return;
     setSearching(true);
     setSearchResults(null);
+    setVisibleCount(PAGE_SIZE);
     const res = await api.skillSearch(searchQuery.trim());
     if (res.success) {
       setSearchResults(Array.isArray(res.results) ? res.results : []);
@@ -88,7 +112,6 @@ export default function Skills() {
     setActionError(null);
     const res = await api.skillInstall(slug);
     if (res.success) {
-      // Refresh installed list
       const r = await api.skillListInstalled();
       if (r.success) setInstalled(r.skills);
     } else {
@@ -123,8 +146,7 @@ export default function Skills() {
     if (detailRes.success && detailRes.skill) {
       setDetailSkill(detailRes.skill);
     } else {
-      // Fallback: use basic info from the list
-      const basic = displayList.find(s => s.slug === slug);
+      const basic = fullList.find(s => s.slug === slug);
       if (basic) setDetailSkill({ slug, name: basic.name, displayName: basic.displayName, description: basic.description, summary: basic.summary, owner: basic.owner, version: basic.version, emoji: basic.emoji });
     }
     setSkillConfig(configRes?.config || {});
@@ -139,8 +161,8 @@ export default function Skills() {
     setConfigSaving(false);
   };
 
-  // Determine which list to show
-  const displayList: RemoteSkill[] = (() => {
+  // Full list (before pagination)
+  const fullList: RemoteSkill[] = (() => {
     if (searchResults !== null) return searchResults;
     if (filter === 'installed') {
       return Object.entries(installed).map(([slug, info]) => ({
@@ -152,7 +174,22 @@ export default function Skills() {
     return remoteSkills;
   })();
 
+  // Paginated display list
+  const displayList = fullList.slice(0, visibleCount);
+  const hasMore = fullList.length > visibleCount;
+
   const installedSlugs = new Set(Object.keys(installed));
+
+  // Find recommended skills in remote list
+  const recommendedList = RECOMMENDED_SKILLS
+    .map(rec => {
+      const remote = remoteSkills.find(s => s.slug === rec.slug);
+      return remote ? { ...remote, reason: rec.reason } : null;
+    })
+    .filter(Boolean) as (RemoteSkill & { reason: string })[];
+
+  const showRecommended = filter === 'all' && !searchResults && recommendedList.length > 0;
+  const showBuiltin = filter === 'builtin';
 
   return (
     <div className="h-full flex flex-col">
@@ -191,7 +228,7 @@ export default function Skills() {
             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
             <input
               value={searchQuery}
-              onChange={e => { setSearchQuery(e.target.value); if (!e.target.value) setSearchResults(null); }}
+              onChange={e => { setSearchQuery(e.target.value); if (!e.target.value) { setSearchResults(null); setVisibleCount(PAGE_SIZE); } }}
               onKeyDown={e => e.key === 'Enter' && handleSearch()}
               placeholder={t('skills.search.placeholder')}
               className="w-full pl-10 pr-4 py-2.5 bg-slate-800 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/50"
@@ -200,14 +237,20 @@ export default function Skills() {
           {searching && <Loader2 size={16} className="animate-spin text-brand-400 self-center" />}
           <div className="flex bg-slate-800 rounded-xl overflow-hidden">
             <button
-              onClick={() => { setFilter('all'); setSearchResults(null); setSearchQuery(''); }}
-              className={`px-4 py-2 text-xs transition-colors ${filter === 'all' && !searchResults ? 'bg-brand-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+              onClick={() => { setFilter('all'); setSearchResults(null); setSearchQuery(''); setVisibleCount(PAGE_SIZE); }}
+              className={`px-3 py-2 text-xs transition-colors ${filter === 'all' && !searchResults ? 'bg-brand-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
             >
               {t('skills.explore')}
             </button>
             <button
-              onClick={() => { setFilter('installed'); setSearchResults(null); setSearchQuery(''); }}
-              className={`px-4 py-2 text-xs transition-colors ${filter === 'installed' ? 'bg-brand-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+              onClick={() => { setFilter('builtin'); setSearchResults(null); setSearchQuery(''); }}
+              className={`px-3 py-2 text-xs transition-colors ${filter === 'builtin' ? 'bg-brand-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+            >
+              {t('skills.showBuiltin')}
+            </button>
+            <button
+              onClick={() => { setFilter('installed'); setSearchResults(null); setSearchQuery(''); setVisibleCount(PAGE_SIZE); }}
+              className={`px-3 py-2 text-xs transition-colors ${filter === 'installed' ? 'bg-brand-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
             >
               {t('skills.installed')}
             </button>
@@ -224,77 +267,173 @@ export default function Skills() {
         </div>
       )}
 
-      {/* Skills grid */}
-      <div className="flex-1 overflow-y-auto p-6">
-        {loading ? (
-          <div className="flex items-center justify-center h-40 text-slate-500">
-            <Loader2 size={20} className="animate-spin mr-2" /> {t('skills.loading')}
+      {/* Content */}
+      <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        {/* Built-in Capabilities section */}
+        {showBuiltin && (
+          <div>
+            <h2 className="text-sm font-semibold text-slate-300 mb-1">{t('skills.builtin')}</h2>
+            <p className="text-xs text-slate-500 mb-4">{t('skills.builtin.desc')}</p>
+            <div className="grid grid-cols-2 gap-3">
+              {BUILTIN_CAPABILITIES.map(cap => (
+                <div key={cap.nameKey} className="p-4 bg-slate-800/50 border border-slate-700/50 rounded-xl">
+                  <div className="flex items-center gap-3">
+                    <div className={`p-2 rounded-lg bg-slate-800 ${cap.color}`}>
+                      <cap.icon size={18} />
+                    </div>
+                    <div className="min-w-0">
+                      <h4 className="text-sm font-medium text-slate-200">{cap.nameKey}</h4>
+                      <p className="text-xs text-slate-500 mt-0.5">{cap.descKey}</p>
+                    </div>
+                  </div>
+                  <div className="mt-2 flex justify-end">
+                    <span className="text-[10px] text-emerald-400/70 flex items-center gap-1">
+                      <Check size={10} /> Built-in
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
-        ) : displayList.length === 0 ? (
-          <div className="text-center py-12 text-slate-500">
-            <Package size={32} className="mx-auto mb-3 text-slate-600" />
-            <p className="text-sm">{searchResults !== null ? t('skills.noResults') : filter === 'installed' ? t('skills.noInstalled') : t('skills.noSkills')}</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 gap-3">
-            {displayList.map(skill => {
-              const isInstalled = installedSlugs.has(skill.slug);
-              const isActioning = actionSlug === skill.slug;
-              const installedInfo = installed[skill.slug];
+        )}
 
-              return (
-                <div
-                  key={skill.slug}
-                  onClick={() => openDetail(skill.slug)}
-                  className="p-4 bg-slate-800/50 border border-slate-700/50 rounded-xl hover:border-slate-600 transition-colors cursor-pointer"
-                >
-                  <div className="flex items-start gap-3">
-                    <span className="text-2xl">{skill.emoji || '🧩'}</span>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
+        {/* Recommended Skills section (only on Explore tab, not during search) */}
+        {showRecommended && (
+          <div>
+            <h2 className="text-sm font-semibold text-slate-300 mb-1">{t('skills.recommended')}</h2>
+            <p className="text-xs text-slate-500 mb-4">{t('skills.recommended.desc')}</p>
+            <div className="grid grid-cols-2 gap-3">
+              {recommendedList.map(skill => {
+                const isInstalled = installedSlugs.has(skill.slug);
+                const isActioning = actionSlug === skill.slug;
+                return (
+                  <div
+                    key={skill.slug}
+                    onClick={() => openDetail(skill.slug)}
+                    className="p-4 bg-gradient-to-br from-brand-600/5 to-transparent border border-brand-500/20 rounded-xl hover:border-brand-500/40 transition-colors cursor-pointer"
+                  >
+                    <div className="flex items-start gap-3">
+                      <span className="text-2xl">{skill.emoji || '⭐'}</span>
+                      <div className="flex-1 min-w-0">
                         <h4 className="font-medium text-sm truncate">{skill.displayName || skill.name || skill.slug}</h4>
-                        <span className="text-[10px] text-slate-600">
-                          v{isInstalled ? installedInfo?.version : skill.version || '?'}
-                        </span>
+                        <p className="text-xs text-brand-300/70 mt-0.5">{skill.reason}</p>
+                        <p className="text-xs text-slate-500 mt-1 line-clamp-1">{skill.summary || skill.description}</p>
                       </div>
-                      <p className="text-xs text-slate-400 mt-0.5 line-clamp-2">
-                        {skill.summary || skill.description || skill.slug}
-                      </p>
-                      {skill.owner && (
-                        <span className="text-[10px] text-slate-600 mt-1 inline-block">{skill.owner}</span>
+                    </div>
+                    <div className="mt-3 flex justify-end">
+                      {isInstalled ? (
+                        <span className="flex items-center gap-1 text-xs text-emerald-400">
+                          <Check size={12} /> {t('skills.installed')}
+                        </span>
+                      ) : (
+                        <button
+                          onClick={e => { e.stopPropagation(); handleInstall(skill.slug); }}
+                          disabled={isActioning}
+                          className="flex items-center gap-1 px-3 py-1.5 text-xs bg-brand-600 hover:bg-brand-500 disabled:bg-slate-700 text-white rounded-lg transition-colors"
+                        >
+                          {isActioning ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+                          {isActioning ? t('skills.installing') : t('skills.install')}
+                        </button>
                       )}
                     </div>
                   </div>
-                  <div className="mt-3 flex justify-end gap-2">
-                    {isInstalled ? (
-                      <>
-                        <span className="flex items-center gap-1 text-xs text-emerald-400 mr-auto">
-                          <Check size={12} /> {t('skills.installed')}
-                        </span>
-                        <button
-                          onClick={() => handleUninstall(skill.slug)}
-                          disabled={isActioning}
-                          className="flex items-center gap-1 px-2.5 py-1 text-xs text-red-400/70 hover:text-red-400 hover:bg-red-600/10 rounded-lg transition-colors"
-                        >
-                          {isActioning ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
-                          {t('skills.uninstall')}
-                        </button>
-                      </>
-                    ) : (
-                      <button
-                        onClick={() => handleInstall(skill.slug)}
-                        disabled={isActioning}
-                        className="flex items-center gap-1 px-3 py-1.5 text-xs bg-brand-600 hover:bg-brand-500 disabled:bg-slate-700 text-white rounded-lg transition-colors"
-                      >
-                        {isActioning ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
-                        {isActioning ? t('skills.installing') : t('skills.install')}
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
+        )}
+
+        {/* Skills grid (explore / installed / search results) */}
+        {!showBuiltin && (
+          <>
+            {showRecommended && displayList.length > 0 && (
+              <h2 className="text-sm font-semibold text-slate-300">{t('skills.explore')}</h2>
+            )}
+            {loading ? (
+              <div className="flex items-center justify-center h-40 text-slate-500">
+                <Loader2 size={20} className="animate-spin mr-2" /> {t('skills.loading')}
+              </div>
+            ) : displayList.length === 0 && !showRecommended ? (
+              <div className="text-center py-12 text-slate-500">
+                <Package size={32} className="mx-auto mb-3 text-slate-600" />
+                <p className="text-sm">{searchResults !== null ? t('skills.noResults') : filter === 'installed' ? t('skills.noInstalled') : t('skills.noSkills')}</p>
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  {displayList.map(skill => {
+                    const isInstalled = installedSlugs.has(skill.slug);
+                    const isActioning = actionSlug === skill.slug;
+                    const installedInfo = installed[skill.slug];
+
+                    return (
+                      <div
+                        key={skill.slug}
+                        onClick={() => openDetail(skill.slug)}
+                        className="p-4 bg-slate-800/50 border border-slate-700/50 rounded-xl hover:border-slate-600 transition-colors cursor-pointer"
+                      >
+                        <div className="flex items-start gap-3">
+                          <span className="text-2xl">{skill.emoji || '🧩'}</span>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <h4 className="font-medium text-sm truncate">{skill.displayName || skill.name || skill.slug}</h4>
+                              <span className="text-[10px] text-slate-600">
+                                v{isInstalled ? installedInfo?.version : skill.version || '?'}
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-400 mt-0.5 line-clamp-2">
+                              {skill.summary || skill.description || skill.slug}
+                            </p>
+                            {skill.owner && (
+                              <span className="text-[10px] text-slate-600 mt-1 inline-block">{skill.owner}</span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="mt-3 flex justify-end gap-2">
+                          {isInstalled ? (
+                            <>
+                              <span className="flex items-center gap-1 text-xs text-emerald-400 mr-auto">
+                                <Check size={12} /> {t('skills.installed')}
+                              </span>
+                              <button
+                                onClick={e => { e.stopPropagation(); handleUninstall(skill.slug); }}
+                                disabled={isActioning}
+                                className="flex items-center gap-1 px-2.5 py-1 text-xs text-red-400/70 hover:text-red-400 hover:bg-red-600/10 rounded-lg transition-colors"
+                              >
+                                {isActioning ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                                {t('skills.uninstall')}
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              onClick={e => { e.stopPropagation(); handleInstall(skill.slug); }}
+                              disabled={isActioning}
+                              className="flex items-center gap-1 px-3 py-1.5 text-xs bg-brand-600 hover:bg-brand-500 disabled:bg-slate-700 text-white rounded-lg transition-colors"
+                            >
+                              {isActioning ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+                              {isActioning ? t('skills.installing') : t('skills.install')}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Load More button */}
+                {hasMore && (
+                  <div className="text-center pt-2">
+                    <button
+                      onClick={() => setVisibleCount(prev => prev + PAGE_SIZE)}
+                      className="px-6 py-2 text-xs text-slate-400 hover:text-slate-200 bg-slate-800 hover:bg-slate-700 rounded-xl transition-colors"
+                    >
+                      {t('skills.loadMore')} ({fullList.length - visibleCount} more)
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+          </>
         )}
       </div>
 
@@ -328,12 +467,10 @@ export default function Skills() {
             {/* Content */}
             {detailSkill && (
               <div className="flex-1 overflow-y-auto p-5 space-y-4">
-                {/* Description */}
                 {(detailSkill.description || detailSkill.summary) && (
                   <p className="text-sm text-slate-300">{detailSkill.description || detailSkill.summary}</p>
                 )}
 
-                {/* SKILL.md / README content */}
                 {(detailSkill.skillMd || detailSkill.readme) && (
                   <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700/50">
                     <h4 className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">{t('skills.documentation', 'Documentation')}</h4>
@@ -343,7 +480,6 @@ export default function Skills() {
                   </div>
                 )}
 
-                {/* Configuration */}
                 {installedSlugs.has(detailSkill.slug) && (
                   <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700/50">
                     <h4 className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-3">{t('skills.configuration', 'Configuration')}</h4>
@@ -368,7 +504,6 @@ export default function Skills() {
                         </div>
                       ))}
                     </div>
-                    {/* Add new config key */}
                     <div className="mt-2 flex gap-2">
                       <input
                         placeholder={t('skills.configKeyPlaceholder', 'key')}
@@ -414,7 +549,7 @@ export default function Skills() {
                 {installedSlugs.has(detailSkill.slug) ? (
                   <>
                     <span className="flex items-center gap-1 text-xs text-emerald-400 mr-auto">
-                      <Check size={12} /> Installed
+                      <Check size={12} /> {t('skills.installed')}
                     </span>
                     <button
                       onClick={async () => { await handleUninstall(detailSkill.slug); setDetailSkill(null); }}
@@ -422,7 +557,7 @@ export default function Skills() {
                       className="flex items-center gap-1 px-4 py-2 text-sm text-red-400 hover:bg-red-600/10 rounded-xl transition-colors"
                     >
                       {actionSlug === detailSkill.slug ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
-                      Uninstall
+                      {t('skills.uninstall')}
                     </button>
                   </>
                 ) : (
@@ -432,7 +567,7 @@ export default function Skills() {
                     className="flex items-center gap-1 px-5 py-2 text-sm bg-brand-600 hover:bg-brand-500 disabled:bg-slate-700 text-white rounded-xl transition-colors"
                   >
                     {actionSlug === detailSkill.slug ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-                    {actionSlug === detailSkill.slug ? 'Installing...' : 'Install'}
+                    {actionSlug === detailSkill.slug ? t('skills.installing') : t('skills.install')}
                   </button>
                 )}
               </div>

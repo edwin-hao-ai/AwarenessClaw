@@ -75,8 +75,9 @@ async function syncToOpenClaw(config: AppConfig, providers: ModelProviderDef[]) 
     plugins: {
       allow: ['openclaw-memory', 'memory-awareness'],
     },
-    // Ensure all Awareness tools are whitelisted (agent needs explicit permission)
+    // Ensure coding profile (includes browser, file ops, exec, web tools) and Awareness tools
     tools: {
+      profile: 'coding',
       alsoAllow: [
         'awareness_init',
         'awareness_recall',
