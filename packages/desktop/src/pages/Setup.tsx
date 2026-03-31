@@ -75,10 +75,12 @@ export default function SetupWizard({ onComplete }: SetupProps) {
       }));
     }
 
+    // Shared environment detection result — available to all steps
+    let env: any = {};
+
     // Step 1: Detect environment
     if (startIdx <= 0) {
       updateInstallStep('detect', 'running');
-      let env: any = {};
       if (simulate) {
         await new Promise((r) => setTimeout(r, 800));
         env = { systemNodeInstalled: true, openclawInstalled: false };
@@ -110,12 +112,10 @@ export default function SetupWizard({ onComplete }: SetupProps) {
     // Step 3: Install OpenClaw
     if (startIdx <= stepKeys.indexOf('openclaw')) {
       updateInstallStep('openclaw', 'running');
-      let env: any = {};
-      if (!simulate && startIdx <= 0) {
-        // env already loaded above; re-detect if retrying from openclaw
-      } else if (!simulate) {
+      // Re-detect if retrying from a later step (env not populated by step 1)
+      if (!simulate && startIdx > 0) {
         env = await api!.detectEnvironment();
-      } else {
+      } else if (simulate && !env.systemNodeInstalled) {
         env = { openclawInstalled: false };
       }
 
