@@ -301,7 +301,7 @@ export default function Settings() {
 
   // Cleanup cloud auth polling on unmount
   useEffect(() => {
-    return () => { if (cloudPollRef.current) clearInterval(cloudPollRef.current); };
+    return () => { if (cloudPollRef.current) clearTimeout(cloudPollRef.current); };
   }, []);
 
   const startCloudAuth = async () => {
@@ -321,43 +321,45 @@ export default function Settings() {
     // Open browser automatically
     api.openExternal(res.verification_uri + '?code=' + res.user_code);
 
-    // Start polling with 10-minute timeout (matches server-side expiry)
-    if (cloudPollRef.current) clearInterval(cloudPollRef.current);
-    const interval = (res.interval || 5) * 1000;
+    // Sequential polling — daemon holds each request up to 30s (long poll),
+    // so we use recursive setTimeout to avoid request pileup.
+    if (cloudPollRef.current) clearTimeout(cloudPollRef.current);
     const expiresIn = (res.expires_in || 600) * 1000;
     const startTime = Date.now();
+    const deviceCode = res.device_code;
 
-    cloudPollRef.current = setInterval(async () => {
-      // Timeout check
+    const doPoll = async () => {
       if (Date.now() - startTime > expiresIn) {
-        if (cloudPollRef.current) clearInterval(cloudPollRef.current);
         setCloudAuthStep('error');
         return;
       }
-      const poll = await api.cloudAuthPoll(res.device_code);
-      if (poll?.status === 'approved' && poll.api_key) {
-        if (cloudPollRef.current) clearInterval(cloudPollRef.current);
-        setCloudApiKey(poll.api_key);
-        // Fetch memories list
-        const memRes = await api.cloudListMemories(poll.api_key);
-        const mems = memRes?.memories || [];
-        if (mems.length <= 1) {
-          // Auto-connect if 0 or 1 memory
-          const memId = mems[0]?.id || '';
-          await api.cloudConnect(poll.api_key, memId);
-          setCloudMode('hybrid');
-          updateConfig({ memoryMode: 'cloud' });
-          syncConfig(allProviders);
-          setCloudAuthStep('done');
-        } else {
-          setCloudMemories(mems);
-          setCloudAuthStep('select');
+      try {
+        const poll = await api.cloudAuthPoll(deviceCode);
+        // Daemon returns { api_key: "..." } on success (no status field),
+        // or { error: "Auth timeout" } while pending
+        if (poll?.api_key) {
+          setCloudApiKey(poll.api_key);
+          const memRes = await api.cloudListMemories(poll.api_key);
+          const mems = memRes?.memories || [];
+          if (mems.length <= 1) {
+            const memId = mems[0]?.id || '';
+            await api.cloudConnect(poll.api_key, memId);
+            setCloudMode('hybrid');
+            updateConfig({ memoryMode: 'cloud' });
+            syncConfig(allProviders);
+            setCloudAuthStep('done');
+          } else {
+            setCloudMemories(mems);
+            setCloudAuthStep('select');
+          }
+          return; // Stop polling
         }
-      } else if (poll?.status === 'expired' || poll?.status === 'denied') {
-        if (cloudPollRef.current) clearInterval(cloudPollRef.current);
-        setCloudAuthStep('error');
-      }
-    }, interval);
+      } catch { /* network error, retry */ }
+      // Schedule next poll after a short delay (daemon already waited ~30s internally)
+      cloudPollRef.current = setTimeout(doPoll, 2000);
+    };
+    // Start first poll after 1s (daemon does its own 30s long-poll internally)
+    cloudPollRef.current = setTimeout(doPoll, 1000);
   };
 
   const selectCloudMemory = async (memoryId: string) => {
@@ -1486,7 +1488,7 @@ export default function Settings() {
                   <Loader2 size={12} className="animate-spin" /> {t('settings.memory.cloud.waiting')}
                 </div>
                 <button
-                  onClick={() => { if (cloudPollRef.current) clearInterval(cloudPollRef.current); startCloudAuth(); }}
+                  onClick={() => { if (cloudPollRef.current) clearTimeout(cloudPollRef.current); startCloudAuth(); }}
                   className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
                 >
                   {t('settings.memory.cloud.refreshCode', 'Code expired? Get a new one')}
