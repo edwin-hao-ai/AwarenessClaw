@@ -116,7 +116,9 @@ async function syncToOpenClaw(config: AppConfig, providers: ModelProviderDef[]) 
   };
 
   if (config.modelId) {
-    const finalBaseUrl = config.baseUrl || provider.baseUrl;
+    // For known providers, always use their hardcoded baseUrl (user may have pasted
+    // a console/dashboard URL by mistake). Only use config.baseUrl for custom providers.
+    const finalBaseUrl = provider.baseUrl || config.baseUrl;
     openclawConfig.models = {
       providers: {
         [config.providerKey]: {
