@@ -75,8 +75,32 @@ interface KnownOverride {
   iconType?: 'svg';
   connectionType?: 'one-click' | 'multi-field';
   configFields?: ConfigField[];
+  saveStrategy?: 'json-direct'; // only set for channels NOT in `openclaw channels add --channel` enum
   setupFlow?: 'qr-login' | 'add-only' | 'add-then-login';
   order?: number;
+}
+
+// Dynamic: populated at runtime from `openclaw channels add --help`
+// Channels in this set use CLI `channels add`, others use json-direct write
+let _cliSupportedChannels = new Set<string>();
+
+/** Parse CLI-supported channels from `openclaw channels add --help` output */
+export function parseCliSupportedChannels(helpOutput: string): Set<string> {
+  const match = helpOutput.match(/--channel\s+<\w+>\s+Channel\s*\n\s*\(([^)]+)\)/);
+  if (match) {
+    return new Set(match[1].split('|').map(s => s.trim().toLowerCase()));
+  }
+  return new Set();
+}
+
+/** Set the CLI-supported channels (called from main.ts after running --help) */
+export function setCliSupportedChannels(channels: Set<string>): void {
+  _cliSupportedChannels = channels;
+}
+
+/** Check if a channel uses CLI or json-direct */
+export function isCliSupported(id: string): boolean {
+  return _cliSupportedChannels.has(id);
 }
 
 const KNOWN_OVERRIDES: Record<string, KnownOverride> = {
@@ -125,6 +149,14 @@ const KNOWN_OVERRIDES: Record<string, KnownOverride> = {
       { key: 'ship', label: 'Ship Name', placeholder: '~sampel-palnet', type: 'text', required: true, cliFlag: '--ship' },
       { key: 'url', label: 'Ship URL', placeholder: 'https://...', type: 'text', required: true, cliFlag: '--url' },
       { key: 'code', label: 'Login Code', placeholder: '', type: 'password', required: true, cliFlag: '--code' },
+    ],
+  },
+  msteams: {
+    label: 'Microsoft Teams', connectionType: 'multi-field',
+    configFields: [
+      { key: 'appId', label: 'App ID', placeholder: '', type: 'text', required: true, cliFlag: '' },
+      { key: 'appPassword', label: 'App Password', placeholder: '', type: 'password', required: true, cliFlag: '' },
+      { key: 'tenantId', label: 'Tenant ID', placeholder: '', type: 'text', required: true, cliFlag: '' },
     ],
   },
   bluebubbles: {
@@ -199,7 +231,7 @@ function buildDynamicChannel(id: string, label: string, opts: {
     iconType: override?.iconType || 'letter',
     connectionType: isOneClick ? 'one-click' : isMultiField ? 'multi-field' : 'token',
     configFields: isOneClick ? [] : (override?.configFields || [{ ...DEFAULT_TOKEN_FIELD }]),
-    saveStrategy: 'cli',
+    saveStrategy: _cliSupportedChannels.has(id) ? 'cli' : 'json-direct',
     pluginPackage: opts.npmSpec || `@openclaw/${id}`,
     setupFlow: override?.setupFlow,
     source: 'openclaw-dynamic',

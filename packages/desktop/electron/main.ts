@@ -2327,7 +2327,8 @@ async function chatSendViaCli(
 import {
   getChannel, getChannelByOpenclawId, toOpenclawId, toFrontendId,
   buildCLIFlags, getAllChannels, serializeRegistry,
-  mergeCatalog, mergeChannelOptions, type ChannelDef, type CatalogEntry,
+  mergeCatalog, mergeChannelOptions, parseCliSupportedChannels, setCliSupportedChannels,
+  type CatalogEntry,
 } from './channel-registry';
 
 // Discover channels from OpenClaw installation at startup
@@ -2365,6 +2366,19 @@ function discoverOpenClawChannels(): void {
     }
     debugLog(`dist found: ${distDir}`);
     console.log(`[channel-registry] Found OpenClaw at: ${distDir}`);
+
+    // Parse CLI-supported channels from `openclaw channels add --help`
+    // This determines which channels use CLI vs json-direct save strategy
+    try {
+      const helpOutput = safeShellExec('openclaw channels add --help 2>/dev/null');
+      if (helpOutput) {
+        const cliChannels = parseCliSupportedChannels(helpOutput);
+        if (cliChannels.size > 0) {
+          setCliSupportedChannels(cliChannels);
+          debugLog(`CLI-supported channels: ${[...cliChannels].join(', ')}`);
+        }
+      }
+    } catch { /* help not available */ }
 
     // Load channel-catalog.json
     try {
@@ -2406,6 +2420,14 @@ ipcMain.handle('channel:get-registry', async () => {
           const exists = fs.existsSync(distDir);
           debugLog(`async distDir: ${distDir} exists=${exists}`);
           if (exists) {
+            // Parse CLI enum for save strategy detection
+            try {
+              const helpOut = await safeShellExecAsync('openclaw channels add --help 2>/dev/null', 5000);
+              if (helpOut) {
+                const cliCh = parseCliSupportedChannels(helpOut);
+                if (cliCh.size > 0) { setCliSupportedChannels(cliCh); debugLog(`async CLI channels: ${[...cliCh].join(', ')}`); }
+              }
+            } catch { /* help not available */ }
             try {
               const catalog = JSON.parse(fs.readFileSync(path.join(distDir, 'channel-catalog.json'), 'utf8'));
               if (catalog.entries) { mergeCatalog(catalog.entries as CatalogEntry[]); debugLog(`catalog merged: ${catalog.entries.length} entries`); }
@@ -2436,7 +2458,7 @@ ipcMain.handle('channel:save', async (_e, channelId: string, config: Record<stri
     try { await runAsync(`openclaw plugins install "${pluginPkg}" 2>&1`, 60000); } catch { /* already installed */ }
 
     if (saveStrategy === 'json-direct') {
-      // WeChat (third-party plugin) — write directly to openclaw.json
+      // Channels not in CLI enum (msteams, nostr, tlon, wechat, etc.) — write directly to openclaw.json
       const configPath = path.join(HOME, '.openclaw', 'openclaw.json');
       let existing: any = {};
       try { existing = JSON.parse(fs.readFileSync(configPath, 'utf8')); } catch {}

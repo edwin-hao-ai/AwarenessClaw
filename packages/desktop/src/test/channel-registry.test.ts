@@ -90,7 +90,8 @@ describe('Channel Registry', () => {
       const tw = getChannel('twitch');
       expect(tw).toBeDefined();
       expect(tw!.connectionType).toBe('token');
-      expect(tw!.saveStrategy).toBe('cli');
+      // twitch is not in CLI enum, so it defaults to json-direct
+      expect(tw!.saveStrategy).toBe('json-direct');
     });
 
     it('skips builtin channels', () => {
