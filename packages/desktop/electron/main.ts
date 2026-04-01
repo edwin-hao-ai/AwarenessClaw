@@ -3176,10 +3176,30 @@ ipcMain.handle('cloud:auth-start', async () => {
   }
 });
 
-// Poll for auth completion
+// Poll for auth completion — call awareness.market directly (not daemon proxy).
+// Daemon's long-poll (30s internal loop) can miss the brief "approved" window:
+// if user authorizes AFTER daemon's 30s loop ends, the approved state gets
+// consumed and subsequent polls see "expired" instead.
 ipcMain.handle('cloud:auth-poll', async (_e, deviceCode: string) => {
   try {
-    const result = await daemonPost('/cloud/auth/poll', { device_code: deviceCode });
+    const result = await new Promise<any>((resolve, reject) => {
+      const data = JSON.stringify({ device_code: deviceCode });
+      const req = https.request('https://awareness.market/api/v1/auth/device/poll', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) },
+        timeout: 10000,
+      }, (res) => {
+        let raw = '';
+        res.on('data', (chunk: string) => { raw += chunk; });
+        res.on('end', () => {
+          try { resolve(JSON.parse(raw)); } catch { reject(new Error('Invalid JSON')); }
+        });
+      });
+      req.on('error', reject);
+      req.on('timeout', () => { req.destroy(); reject(new Error('Timeout')); });
+      req.write(data);
+      req.end();
+    });
     return { success: true, ...result };
   } catch (err: any) {
     return { success: false, error: err.message };

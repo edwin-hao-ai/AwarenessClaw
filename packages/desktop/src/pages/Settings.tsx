@@ -335,8 +335,8 @@ export default function Settings() {
       }
       try {
         const poll = await api.cloudAuthPoll(deviceCode);
-        // Daemon returns { api_key: "..." } on success (no status field),
-        // or { error: "Auth timeout" } while pending
+        // Direct awareness.market response: { status: "approved", api_key: "..." }
+        // or { status: "pending" } or { status: "expired" }
         if (poll?.api_key) {
           setCloudApiKey(poll.api_key);
           const memRes = await api.cloudListMemories(poll.api_key);
@@ -354,9 +354,13 @@ export default function Settings() {
           }
           return; // Stop polling
         }
+        if (poll?.status === 'expired' || poll?.status === 'denied') {
+          setCloudAuthStep('error');
+          return;
+        }
       } catch { /* network error, retry */ }
-      // Schedule next poll after a short delay (daemon already waited ~30s internally)
-      cloudPollRef.current = setTimeout(doPoll, 2000);
+      // Poll every 5s (direct API call, no daemon long-poll)
+      cloudPollRef.current = setTimeout(doPoll, 5000);
     };
     // Start first poll after 1s (daemon does its own 30s long-poll internally)
     cloudPollRef.current = setTimeout(doPoll, 1000);
