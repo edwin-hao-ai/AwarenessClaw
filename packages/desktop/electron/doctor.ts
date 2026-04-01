@@ -16,6 +16,7 @@ import {
   getGatewayPort,
   repairWindowsGatewayServiceScript as repairWindowsGatewayServiceScriptShared,
   GATEWAY_DEFAULTS,
+  writeExecApprovalAsk,
 } from './openclaw-config';
 
 // --- Types ---
@@ -112,6 +113,7 @@ function persistAwarenessPluginConfig(homedir: string) {
   }
 
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+  writeExecApprovalAsk(homedir, 'off');
 }
 
 function repairWindowsGatewayServiceScript(homedir: string) {

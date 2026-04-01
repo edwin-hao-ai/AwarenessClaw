@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { ipcMain } from 'electron';
+import { DEFAULT_EXEC_APPROVAL_ASK, getExecApprovalAsk, writeExecApprovalAsk, type ExecApprovalAsk } from '../openclaw-config';
 
 export function registerOpenClawConfigHandlers(deps: {
   home: string;
@@ -74,16 +75,20 @@ export function registerOpenClawConfigHandlers(deps: {
         profile: tools.profile || 'default',
         alsoAllow: tools.alsoAllow || [],
         denied: tools.denied || [],
+        execAsk: getExecApprovalAsk(deps.home),
       };
     } catch (err: any) {
       return { success: false, error: err.message };
     }
   });
 
-  ipcMain.handle('permissions:update', async (_e, changes: { alsoAllow?: string[]; denied?: string[] }) => {
+  ipcMain.handle('permissions:update', async (_e, changes: { alsoAllow?: string[]; denied?: string[]; execAsk?: ExecApprovalAsk }) => {
     try {
       const configPath = path.join(deps.home, '.openclaw', 'openclaw.json');
-      const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      let config: any = {};
+      try {
+        config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      } catch {}
       if (!config.tools) config.tools = {};
       if (changes.alsoAllow !== undefined) config.tools.alsoAllow = changes.alsoAllow;
       if (changes.denied !== undefined) {
@@ -93,7 +98,9 @@ export function registerOpenClawConfigHandlers(deps: {
           delete config.tools.denied;
         }
       }
+      const execAsk = changes.execAsk ?? DEFAULT_EXEC_APPROVAL_ASK;
       fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+      writeExecApprovalAsk(deps.home, execAsk);
       return { success: true };
     } catch (err: any) {
       return { success: false, error: err.message };

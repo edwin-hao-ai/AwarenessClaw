@@ -18,6 +18,21 @@ export const GATEWAY_DEFAULTS = {
   port: GATEWAY_DEFAULT_PORT,
 };
 
+export const DEFAULT_EXEC_APPROVAL_ASK = 'on-miss' as const;
+
+export type ExecApprovalAsk = 'off' | 'on-miss';
+
+interface ExecApprovalsConfig {
+  version: number;
+  defaults?: {
+    ask?: string;
+    [key: string]: unknown;
+  };
+  agents?: Record<string, unknown>;
+  socket?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
 // --- Plugin allow-list normalization ---
 
 /**
@@ -92,6 +107,52 @@ export function getGatewayPort(homedir: string): number {
   } catch {
     return GATEWAY_DEFAULT_PORT;
   }
+}
+
+export function getExecApprovalsPath(homedir: string): string {
+  return path.join(homedir, '.openclaw', 'exec-approvals.json');
+}
+
+export function readExecApprovalsConfig(homedir: string): ExecApprovalsConfig {
+  const configPath = getExecApprovalsPath(homedir);
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8')) as ExecApprovalsConfig;
+    return {
+      version: typeof parsed.version === 'number' ? parsed.version : 1,
+      defaults: typeof parsed.defaults === 'object' && parsed.defaults ? parsed.defaults : {},
+      agents: typeof parsed.agents === 'object' && parsed.agents ? parsed.agents : {},
+      socket: typeof parsed.socket === 'object' && parsed.socket ? parsed.socket : undefined,
+      ...parsed,
+    };
+  } catch {
+    return {
+      version: 1,
+      defaults: {},
+      agents: {},
+    };
+  }
+}
+
+export function getExecApprovalAsk(homedir: string): ExecApprovalAsk {
+  const config = readExecApprovalsConfig(homedir);
+  return config.defaults?.ask === 'off' ? 'off' : DEFAULT_EXEC_APPROVAL_ASK;
+}
+
+export function writeExecApprovalAsk(homedir: string, ask: ExecApprovalAsk): void {
+  const configPath = getExecApprovalsPath(homedir);
+  const config = readExecApprovalsConfig(homedir);
+
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, JSON.stringify({
+    ...config,
+    version: typeof config.version === 'number' ? config.version : 1,
+    defaults: {
+      ...(config.defaults || {}),
+      ask,
+    },
+    agents: typeof config.agents === 'object' && config.agents ? config.agents : {},
+  }, null, 2));
 }
 
 // --- Windows Gateway service script repair ---

@@ -37,6 +37,7 @@ describe('Settings Page — Permissions Panel', () => {
       profile: 'coding',
       alsoAllow: ['awareness_recall'],
       denied: ['camera.snap'],
+      execAsk: 'on-miss',
     });
     api.permissionsUpdate = updateSpy;
 
@@ -68,6 +69,53 @@ describe('Settings Page — Permissions Panel', () => {
     expect(updateSpy).toHaveBeenCalledWith({ denied: [] });
 
     // Restore
+    api.permissionsGet = origGet;
+    api.permissionsUpdate = origUpdate;
+  });
+
+  it('applies developer preset with host approvals disabled', async () => {
+    const api = window.electronAPI as any;
+    const origGet = api.permissionsGet;
+    const origUpdate = api.permissionsUpdate;
+    const updateSpy = vi.fn(() => Promise.resolve({ success: true }));
+
+    api.permissionsGet = () => Promise.resolve({
+      success: true,
+      profile: 'coding',
+      alsoAllow: ['awareness_init', 'awareness_get_agent_prompt'],
+      denied: ['exec'],
+      execAsk: 'on-miss',
+    });
+    api.permissionsUpdate = updateSpy;
+
+    await act(async () => { render(<Settings />); });
+
+    await waitFor(() => {
+      expect(screen.getByText('Developer')).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('Developer'));
+    });
+
+    await waitFor(() => {
+      expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({ execAsk: 'off' }));
+    });
+
+    expect(updateSpy).toHaveBeenCalledWith({
+      alsoAllow: [
+        'awareness_init',
+        'awareness_get_agent_prompt',
+        'exec',
+        'awareness_recall',
+        'awareness_record',
+        'awareness_lookup',
+        'awareness_perception',
+      ],
+      denied: [],
+      execAsk: 'off',
+    });
+
     api.permissionsGet = origGet;
     api.permissionsUpdate = origUpdate;
   });

@@ -27,6 +27,8 @@ export interface ElectronAPI {
   filePreview?: (filePath: string) => Promise<unknown>;
   selectFile?: (options?: { filters?: Array<{ name: string; extensions: string[] }> }) => Promise<{ filePath: string | null }>;
   selectDirectory?: () => Promise<{ directoryPath: string | null }>;
+  permissionsGet?: () => Promise<{ success: boolean; profile: string; alsoAllow: string[]; denied: string[]; execAsk?: 'off' | 'on-miss'; error?: string }>;
+  permissionsUpdate?: (changes: { alsoAllow?: string[]; denied?: string[]; execAsk?: 'off' | 'on-miss' }) => Promise<{ success: boolean; error?: string }>;
 }
 
 export interface EnvironmentInfo {

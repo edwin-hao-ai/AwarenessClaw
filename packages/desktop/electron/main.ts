@@ -46,6 +46,7 @@ import {
   normalizePluginAllow,
   isGatewayRunningOutput,
   GATEWAY_DEFAULTS,
+  writeExecApprovalAsk,
 } from './openclaw-config';
 
 let mainWindow: typeof BrowserWindow.prototype | null = null;
@@ -266,6 +267,7 @@ function persistAwarenessPluginConfig(options?: { enableSlot?: boolean }) {
   applyAwarenessPluginConfig(config, options);
   sanitizeAwarenessPluginConfig(config);
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+  writeExecApprovalAsk(HOME, 'off');
 }
 
 function mergeOpenClawConfig(existing: Record<string, any>, incoming: Record<string, any>) {

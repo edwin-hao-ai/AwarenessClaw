@@ -118,7 +118,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Permissions & Workspace
   permissionsGet: () => ipcRenderer.invoke('permissions:get'),
-  permissionsUpdate: (changes: { alsoAllow?: string[]; denied?: string[] }) => ipcRenderer.invoke('permissions:update', changes),
+  permissionsUpdate: (changes: { alsoAllow?: string[]; denied?: string[]; execAsk?: 'off' | 'on-miss' }) => ipcRenderer.invoke('permissions:update', changes),
   workspaceReadFile: (filename: string) => ipcRenderer.invoke('workspace:read-file', filename),
   workspaceWriteFile: (filename: string, content: string) => ipcRenderer.invoke('workspace:write-file', filename, content),
 

@@ -9,6 +9,10 @@ import pkg from '../../package.json';
 export default function Settings() {
   const { t } = useI18n();
   const { config, updateConfig, syncConfig } = useAppConfig();
+  const DEFAULT_EXEC_ASK = 'on-miss' as const;
+  const BASE_REQUIRED_TOOLS = ['awareness_init', 'awareness_get_agent_prompt'] as const;
+  const STANDARD_ALLOWED_TOOLS = ['exec', 'awareness_recall', 'awareness_record', 'awareness_lookup'] as const;
+  const DEVELOPER_EXTRA_TOOLS = ['awareness_perception'] as const;
   const [showModelPicker, setShowModelPicker] = useState(false);
   const [gatewayStatus, setGatewayStatus] = useState<'checking' | 'running' | 'stopped'>('checking');
   const [gatewayLoading, setGatewayLoading] = useState(false);
@@ -22,7 +26,7 @@ export default function Settings() {
   const [tempBaseUrl, setTempBaseUrl] = useState('');
 
   // Permissions state
-  const [permissions, setPermissions] = useState<{ profile: string; alsoAllow: string[]; denied: string[] } | null>(null);
+  const [permissions, setPermissions] = useState<{ profile: string; alsoAllow: string[]; denied: string[]; execAsk: 'off' | 'on-miss' } | null>(null);
   const [newAllowTool, setNewAllowTool] = useState('');
   const [newDenyCmd, setNewDenyCmd] = useState('');
   const [showAdvancedPerms, setShowAdvancedPerms] = useState(false);
@@ -45,24 +49,27 @@ export default function Settings() {
       desc: t('settings.permissions.safe.desc', 'Minimal access — no shell commands, privacy tools blocked'),
       icon: <Lock size={16} />,
       color: 'blue',
-      alsoAllow: [] as string[],
+      alsoAllow: [...BASE_REQUIRED_TOOLS] as string[],
       denied: ['exec', 'bash', 'shell', 'camera.snap', 'screen.record', 'contacts.add', 'calendar.add', 'sms.send'],
+      execAsk: 'on-miss' as const,
     },
     standard: {
       label: t('settings.permissions.standard', 'Standard'),
       desc: t('settings.permissions.standard.desc', 'Code editing + Awareness memory, privacy tools blocked'),
       icon: <Shield size={16} />,
       color: 'emerald',
-      alsoAllow: ['awareness_recall', 'awareness_record', 'awareness_lookup'],
+      alsoAllow: [...BASE_REQUIRED_TOOLS, ...STANDARD_ALLOWED_TOOLS] as string[],
       denied: ['camera.snap', 'screen.record', 'contacts.add', 'calendar.add', 'sms.send'],
+      execAsk: 'on-miss' as const,
     },
     developer: {
       label: t('settings.permissions.developer', 'Developer'),
       desc: t('settings.permissions.developer.desc', 'Full tool access, all capabilities enabled'),
       icon: <Code2 size={16} />,
       color: 'purple',
-      alsoAllow: ['awareness_recall', 'awareness_record', 'awareness_lookup', 'awareness_perception'],
+      alsoAllow: [...BASE_REQUIRED_TOOLS, ...STANDARD_ALLOWED_TOOLS, ...DEVELOPER_EXTRA_TOOLS] as string[],
       denied: [] as string[],
+      execAsk: 'off' as const,
     },
   };
 
@@ -73,14 +80,15 @@ export default function Settings() {
     for (const [key, preset] of Object.entries(PERMISSION_PRESETS)) {
       const allowMatch = JSON.stringify([...preset.alsoAllow].sort()) === JSON.stringify([...permissions.alsoAllow].sort());
       const denyMatch = JSON.stringify([...preset.denied].sort()) === JSON.stringify([...permissions.denied].sort());
-      if (allowMatch && denyMatch) return key as PresetKey;
+      const execAskMatch = preset.execAsk === permissions.execAsk;
+      if (allowMatch && denyMatch && execAskMatch) return key as PresetKey;
     }
     return null; // custom
   };
 
   const applyPreset = async (key: PresetKey) => {
     const preset = PERMISSION_PRESETS[key];
-    await savePermissions({ alsoAllow: preset.alsoAllow, denied: preset.denied });
+    await savePermissions({ alsoAllow: preset.alsoAllow, denied: preset.denied, execAsk: preset.execAsk });
   };
 
   // Plugins state — entries is Record<name, {enabled}> in openclaw.json
@@ -140,7 +148,7 @@ export default function Settings() {
     const api = window.electronAPI as any;
     if (!api) return;
     api.permissionsGet().then((res: any) => {
-      if (res.success) setPermissions({ profile: res.profile, alsoAllow: res.alsoAllow, denied: res.denied });
+      if (res.success) setPermissions({ profile: res.profile, alsoAllow: res.alsoAllow, denied: res.denied, execAsk: res.execAsk || DEFAULT_EXEC_ASK });
     });
     api.pluginsList?.().then((res: any) => {
       if (res.success && res.entries && typeof res.entries === 'object') setPlugins(res.entries);
@@ -175,9 +183,9 @@ export default function Settings() {
     setFixingId(null);
   };
 
-  const savePermissions = async (changes: { alsoAllow?: string[]; denied?: string[] }) => {
+  const savePermissions = async (changes: { alsoAllow?: string[]; denied?: string[]; execAsk?: 'off' | 'on-miss' }) => {
     if (!window.electronAPI || !permissions) return;
-    const updated = { ...permissions, ...changes };
+    const updated = { ...permissions, ...changes, execAsk: changes.execAsk || permissions.execAsk || DEFAULT_EXEC_ASK };
     setPermissions(updated);
     await (window.electronAPI as any).permissionsUpdate(changes);
   };
@@ -700,9 +708,19 @@ export default function Settings() {
               {(() => {
                 const active = detectPreset();
                 return active ? (
-                  <p className="text-[11px] text-slate-500 text-center">{PERMISSION_PRESETS[active].desc}</p>
+                  <div className="space-y-1 text-center">
+                    <p className="text-[11px] text-slate-500">{PERMISSION_PRESETS[active].desc}</p>
+                    <p className="text-[10px] text-slate-600">{permissions.execAsk === 'off'
+                      ? t('settings.permissions.execApproval.off', 'Host exec approvals are disabled for this preset')
+                      : t('settings.permissions.execApproval.onMiss', 'Host exec approvals still ask when a command is not already trusted')}</p>
+                  </div>
                 ) : (
-                  <p className="text-[11px] text-amber-500/80 text-center">{t('settings.permissions.custom', 'Custom configuration')}</p>
+                  <div className="space-y-1 text-center">
+                    <p className="text-[11px] text-amber-500/80">{t('settings.permissions.custom', 'Custom configuration')}</p>
+                    <p className="text-[10px] text-slate-600">{permissions.execAsk === 'off'
+                      ? t('settings.permissions.execApproval.off', 'Host exec approvals are disabled for this preset')
+                      : t('settings.permissions.execApproval.onMiss', 'Host exec approvals still ask when a command is not already trusted')}</p>
+                  </div>
                 );
               })()}
 
@@ -730,6 +748,9 @@ export default function Settings() {
                     {/* Known tool picker */}
                     <div className="space-y-1.5 mb-2">
                       {[
+                        { id: 'awareness_init', label: t('perm.tool.init', 'Initialize Awareness memory'), desc: t('perm.tool.init.desc', 'Let the agent bootstrap memory instructions automatically') },
+                        { id: 'awareness_get_agent_prompt', label: t('perm.tool.prompt', 'Load agent prompt'), desc: t('perm.tool.prompt.desc', 'Let the agent load the installed Awareness prompt pack') },
+                        { id: 'exec', label: t('perm.tool.exec', 'Run shell commands'), desc: t('perm.tool.exec.desc', 'Let the agent execute coding and terminal commands') },
                         { id: 'awareness_recall', label: t('perm.tool.recall', 'Search memory'), desc: t('perm.tool.recall.desc', 'Let AI search past decisions and knowledge') },
                         { id: 'awareness_record', label: t('perm.tool.record', 'Save memory'), desc: t('perm.tool.record.desc', 'Let AI save new knowledge to memory') },
                         { id: 'awareness_lookup', label: t('perm.tool.lookup', 'Lookup knowledge cards'), desc: t('perm.tool.lookup.desc', 'Let AI read structured knowledge cards') },
@@ -763,7 +784,7 @@ export default function Settings() {
                     </div>
                     {/* Custom tool name — for power users */}
                     {(() => {
-                      const knownIds = ['awareness_recall', 'awareness_record', 'awareness_lookup', 'awareness_perception'];
+                      const knownIds = ['awareness_init', 'awareness_get_agent_prompt', 'exec', 'awareness_recall', 'awareness_record', 'awareness_lookup', 'awareness_perception'];
                       const custom = permissions.alsoAllow.filter(t => !knownIds.includes(t));
                       return (
                         <div>
