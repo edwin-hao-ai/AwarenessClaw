@@ -634,15 +634,13 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
     setInput('');
     setAttachedFiles([]);
 
-    if (isProcessingRef.current) {
-      // Agent is busy — queue the message
-      messageQueueRef.current.push({ text, files: filePaths });
-      setQueueLength(messageQueueRef.current.length);
-    } else {
-      // Agent is idle — process immediately, then drain any queued messages
-      messageQueueRef.current.push({ text, files: filePaths });
-      setQueueLength(messageQueueRef.current.length);
-      await drainQueue();
+    // Always queue — drainQueue processes one at a time sequentially.
+    // This prevents concurrent openclaw agent processes on the same session-id
+    // which causes "Message ordering conflict" from Gateway.
+    messageQueueRef.current.push({ text, files: filePaths });
+    setQueueLength(messageQueueRef.current.length);
+    if (!isProcessingRef.current) {
+      drainQueue(); // fire-and-forget — drainQueue manages its own lock
     }
   };
 
