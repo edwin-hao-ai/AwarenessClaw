@@ -530,17 +530,32 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
     if (result?.directoryPath) setProjectRoot(result.directoryPath);
   };
 
-  // --- Message queue: allows user to type while agent is running ---
-  const messageQueueRef = useRef<Array<{ text: string; files?: string[] }>>([]);
-  const [queueLength, setQueueLength] = useState(0);
-  const isProcessingRef = useRef(false);
+  // --- Send message — Gateway handles queuing via its Command Queue (collect mode) ---
 
-  /** Core send logic — processes one message at a time, then drains queue. */
-  const processMessage = async (text: string, filePaths?: string[]) => {
-    // Gateway mode: OpenClaw maintains session history via --session-id,
-    // so we do NOT prepend conversation history (causes "Message ordering conflict").
-    let fullMessage = text;
+  const handleSend = async () => {
+    const text = input.trim();
+    if (!text) return;
 
+    const filePaths = attachedFiles.length > 0 ? attachedFiles.map(f => f.path) : undefined;
+
+    // Add user message to session immediately (visible in chat)
+    const userMsg: Message = {
+      id: `msg-${Date.now()}`,
+      role: 'user',
+      content: text,
+      timestamp: Date.now(),
+      files: attachedFiles.length > 0 ? [...attachedFiles] : undefined,
+    };
+    updateSession(activeSessionId, s => ({
+      ...s,
+      messages: [...s.messages, userMsg],
+      title: s.messages.length === 0 ? text.slice(0, 30) : s.title,
+      updatedAt: Date.now(),
+    }));
+    setInput('');
+    setAttachedFiles([]);
+
+    // Reset streaming state
     setAgentStatus('thinking');
     toolCallsRef.current = [];
     setActiveToolCalls([]);
@@ -550,7 +565,9 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
     streamTimeoutRef.current = setTimeout(() => { setAgentStatus('error'); }, STREAM_TIMEOUT_MS);
 
     if (window.electronAPI) {
-      const result = await (window.electronAPI as any).chatSend(fullMessage, activeSessionId, {
+      // Send to Gateway — it queues if agent is busy (collect mode by default).
+      // No client-side queue needed.
+      const result = await (window.electronAPI as any).chatSend(text, activeSessionId, {
         thinkingLevel: config.thinkingLevel || 'low',
         files: filePaths,
         workspacePath: projectRoot || undefined,
@@ -577,70 +594,7 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
       if (streamTimeoutRef.current) clearTimeout(streamTimeoutRef.current);
       streamingRef.current = '';
       setStreamingContent('');
-    } else {
-      // Dev mock
-      await new Promise(r => setTimeout(r, 1500));
-      const mockMsg: Message = {
-        id: `msg-${Date.now()}`,
-        role: 'assistant',
-        content: `这是一个演示回复。你说的是: "${text}"\n\n## 功能预览\n- **Markdown** 渲染\n- \`代码\` 高亮\n- 列表支持\n\n\`\`\`python\nprint("Hello AwarenessClaw!")\n\`\`\``,
-        timestamp: Date.now(),
-        model: 'demo',
-      };
-      setNewestMsgId(mockMsg.id);
-      updateSession(activeSessionId, s => ({
-        ...s,
-        messages: [...s.messages, mockMsg],
-        updatedAt: Date.now(),
-      }));
-    }
-  };
-
-  /** Drain queue: process messages one by one until empty. */
-  const drainQueue = async () => {
-    if (isProcessingRef.current) return;
-    isProcessingRef.current = true;
-
-    while (messageQueueRef.current.length > 0) {
-      const next = messageQueueRef.current.shift()!;
-      setQueueLength(messageQueueRef.current.length);
-      await processMessage(next.text, next.files);
-    }
-
-    isProcessingRef.current = false;
-    setAgentStatus('idle');
-  };
-
-  const handleSend = async () => {
-    const text = input.trim();
-    if (!text) return;
-
-    const filePaths = attachedFiles.length > 0 ? attachedFiles.map(f => f.path) : undefined;
-
-    // Add user message to session immediately (visible in chat)
-    const userMsg: Message = {
-      id: `msg-${Date.now()}`,
-      role: 'user',
-      content: text,
-      timestamp: Date.now(),
-      files: attachedFiles.length > 0 ? [...attachedFiles] : undefined,
-    };
-    updateSession(activeSessionId, s => ({
-      ...s,
-      messages: [...s.messages, userMsg],
-      title: s.messages.length === 0 ? text.slice(0, 30) : s.title,
-      updatedAt: Date.now(),
-    }));
-    setInput('');
-    setAttachedFiles([]);
-
-    // Always queue — drainQueue processes one at a time sequentially.
-    // This prevents concurrent openclaw agent processes on the same session-id
-    // which causes "Message ordering conflict" from Gateway.
-    messageQueueRef.current.push({ text, files: filePaths });
-    setQueueLength(messageQueueRef.current.length);
-    if (!isProcessingRef.current) {
-      drainQueue(); // fire-and-forget — drainQueue manages its own lock
+      setAgentStatus('idle');
     }
   };
 
@@ -715,7 +669,7 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
   };
 
   const statusLabel = agentStatus === 'thinking' ? t('chat.status.thinking') :
-    agentStatus === 'generating' ? (queueLength > 0 ? `${t('chat.status.generating')} (${queueLength} queued)` : t('chat.status.generating')) :
+    agentStatus === 'generating' ? t('chat.status.generating') :
     agentStatus === 'error' ? t('chat.status.error') : null;
 
   return (
@@ -1250,7 +1204,7 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
                   {agentStatus !== 'error' && (
                     <button
                       onClick={async () => {
-                        await (window.electronAPI as any)?.chatAbort?.();
+                        await (window.electronAPI as any)?.chatAbort?.(activeSessionId);
                         if (streamTimeoutRef.current) clearTimeout(streamTimeoutRef.current);
                         setAgentStatus('idle');
                       }}
@@ -1319,9 +1273,7 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
                 onKeyDown={handleKeyDown}
                 placeholder={
                   agentStatus === 'thinking' || agentStatus === 'generating'
-                    ? (queueLength > 0
-                      ? t('chat.input.queued', `${queueLength} queued — type more or wait...`)
-                      : t('chat.input.canQueue', 'Type to queue next message...'))
+                    ? t('chat.input.canQueue', 'AI is working... you can still type')
                     : t('chat.input.placeholder')
                 }
                 rows={1}

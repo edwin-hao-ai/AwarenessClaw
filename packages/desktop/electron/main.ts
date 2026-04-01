@@ -2028,7 +2028,15 @@ async function ensureGatewayRunning(): Promise<{ ok: boolean; error?: string }> 
 // Track active chat child process for abort support
 let activeChatChild: ReturnType<typeof spawn> | null = null;
 
-ipcMain.handle('chat:abort', async () => {
+ipcMain.handle('chat:abort', async (_e, sessionKey?: string) => {
+  // Try WebSocket abort first (graceful)
+  if (gatewayWsClient?.isConnected && sessionKey) {
+    try {
+      await gatewayWsClient.chatAbort(sessionKey);
+      return { success: true };
+    } catch { /* fall through to CLI kill */ }
+  }
+  // Fallback: kill CLI child process
   if (activeChatChild) {
     try { activeChatChild.kill('SIGTERM'); } catch { /* already dead */ }
     activeChatChild = null;
@@ -2038,257 +2046,196 @@ ipcMain.handle('chat:abort', async () => {
 });
 
 ipcMain.handle('chat:send', async (_e, message: string, sessionId?: string, options?: { thinkingLevel?: string; model?: string; files?: string[]; workspacePath?: string; agentId?: string }) => {
-  // Auto-start Gateway if not running (users should never need to manually start it)
+  const send = (ch: string, data: any) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(ch, data);
+  };
+
+  // Auto-start Gateway if not running
   const gatewayReady = await ensureGatewayRunning();
   if (!gatewayReady.ok) {
     return { success: false, text: '', error: gatewayReady.error || 'Gateway failed to start. Please check Settings → Gateway and try again.' };
   }
 
+  const sid = sessionId || `ac-${Date.now()}`;
+
+  // Build full message with file/workspace context
+  let fullMessage = message;
+  if (options?.files && options.files.length > 0) {
+    const imageExts = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'];
+    const images: string[] = [];
+    const others: string[] = [];
+    for (const f of options.files) {
+      const ext = path.extname(f).toLowerCase();
+      (imageExts.includes(ext) ? images : others).push(f);
+    }
+    const parts: string[] = [];
+    if (images.length > 0) parts.push(`[Images to analyze: ${images.join(', ')}] (use exec tool to read or describe these image files)`);
+    if (others.length > 0) parts.push(`[Attached files: ${others.join(', ')}]`);
+    fullMessage = `${parts.join('\n')}\n\n${message}`;
+  }
+  const requestedWorkspace = options?.workspacePath?.trim();
+  if (requestedWorkspace) {
+    try {
+      if (!fs.statSync(requestedWorkspace).isDirectory()) {
+        return { success: false, text: '', error: 'The selected project folder is not available.', sessionId: sid };
+      }
+    } catch {
+      return { success: false, text: '', error: 'The selected project folder could not be found.', sessionId: sid };
+    }
+    fullMessage = `[Current project directory: ${requestedWorkspace}] (use this as base for relative file paths)\n${fullMessage}`;
+  }
+
+  // --- WebSocket RPC to Gateway (replaces CLI spawn) ---
+  // Gateway's Command Queue handles message ordering automatically (default: collect mode).
+  // Chat events (delta/tool_use/thinking) stream via WebSocket events → forwarded to frontend.
+
+  let fullResponseText = '';
+  let chatEventHandler: ((payload: any) => void) | null = null;
+  let activeRunId = '';
+
+  try {
+    const ws = await getGatewayWs();
+
+    // Subscribe to chat events for this session BEFORE sending
+    chatEventHandler = (payload: any) => {
+      if (!payload) return;
+      const payloadSession = payload.sessionKey || payload.key || '';
+      // Only process events for our session
+      if (payloadSession && payloadSession !== sid) return;
+
+      const state = payload.state; // delta | final | aborted | error
+      const msg = payload.message;
+
+      if (state === 'delta' && msg) {
+        // Streaming text content
+        if (msg.role === 'assistant') {
+          const content = Array.isArray(msg.content)
+            ? msg.content.map((c: any) => c.type === 'text' ? (c.text || '') : '').join('')
+            : (typeof msg.content === 'string' ? msg.content : '');
+          if (content) {
+            fullResponseText += content;
+            send('chat:stream', content);
+            send('chat:status', { type: 'generating' });
+          }
+
+          // Tool use detection in content blocks
+          if (Array.isArray(msg.content)) {
+            for (const block of msg.content) {
+              if (block.type === 'tool_use') {
+                send('chat:status', {
+                  type: 'tool_call',
+                  tool: block.name || 'tool',
+                  toolStatus: 'running',
+                  toolId: block.id || `tc-${Date.now()}`,
+                });
+              }
+              if (block.type === 'tool_result') {
+                send('chat:status', {
+                  type: 'tool_update',
+                  toolId: block.tool_use_id || '',
+                  toolStatus: 'completed',
+                });
+              }
+              if (block.type === 'thinking') {
+                send('chat:status', { type: 'thinking' });
+              }
+            }
+          }
+        }
+      } else if (state === 'final') {
+        // Run completed
+        send('chat:stream-end', {});
+      } else if (state === 'aborted') {
+        send('chat:status', { type: 'error' });
+        send('chat:stream-end', {});
+      } else if (state === 'error') {
+        send('chat:status', { type: 'error' });
+        send('chat:stream-end', {});
+      }
+    };
+
+    ws.on('event:chat', chatEventHandler);
+    send('chat:status', { type: 'thinking' });
+
+    // Send message via Gateway WebSocket RPC
+    // Gateway returns when the run completes (or after 120s timeout)
+    const result = await ws.chatSend(sid, fullMessage, {
+      thinking: options?.thinkingLevel && options.thinkingLevel !== 'off' ? options.thinkingLevel : undefined,
+    });
+
+    // Unsubscribe from chat events
+    ws.removeListener('event:chat', chatEventHandler);
+
+    activeRunId = result?.runId || '';
+    const text = fullResponseText.trim() || 'No response';
+    send('chat:stream-end', {});
+
+    // Fire-and-forget: write desktop chat to Awareness memory
+    if (text && text !== 'No response') {
+      callMcp('awareness_record', {
+        content: `Request: ${message}\nResult: ${text}`,
+        event_type: 'turn_brief',
+        source: 'desktop',
+      }).catch(() => {});
+    }
+
+    return { success: true, text, sessionId: sid };
+  } catch (err: any) {
+    if (chatEventHandler && gatewayWsClient) {
+      gatewayWsClient.removeListener('event:chat', chatEventHandler);
+    }
+    send('chat:stream-end', {});
+    const errorMsg = err?.message || String(err);
+    // If WebSocket fails, fallback to CLI spawn (degraded mode without tool visibility)
+    if (errorMsg.includes('WebSocket') || errorMsg.includes('connect') || errorMsg.includes('timed out')) {
+      console.warn('[chat] WebSocket failed, falling back to CLI:', errorMsg);
+      return chatSendViaCli(message, sid, options, send);
+    }
+    return { success: false, text: '', error: errorMsg, sessionId: sid };
+  }
+});
+
+/** Fallback: send chat via CLI spawn when WebSocket is unavailable */
+async function chatSendViaCli(
+  message: string, sid: string,
+  options: { thinkingLevel?: string; files?: string[]; workspacePath?: string; agentId?: string } | undefined,
+  send: (ch: string, data: any) => void,
+): Promise<any> {
   return new Promise((resolve) => {
     let stdout = '';
-    const sid = sessionId || `ac-${Date.now()}`;
-    const escapedMsg = message.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\$/g, '\\$').replace(/`/g, '\\`');
-    // Use --verbose on to get thinking/tool status events
     const thinkingFlag = options?.thinkingLevel && options.thinkingLevel !== 'off'
       ? ` --thinking ${options.thinkingLevel}` : '';
-    // Note: openclaw agent does NOT support --model flag.
-    // Model is configured in openclaw.json → agents.defaults.model (synced by store.ts syncToOpenClaw).
-    // File attachments: openclaw agent does not have --files flag either.
-    // Files are passed by prepending file context to the message.
-    // Images get a special hint so the agent knows to analyze visually.
-    let fullMsg = escapedMsg;
-    if (options?.files && options.files.length > 0) {
-      const imageExts = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'];
-      const images: string[] = [];
-      const others: string[] = [];
-      for (const f of options.files) {
-        const ext = path.extname(f).toLowerCase();
-        (imageExts.includes(ext) ? images : others).push(f.replace(/"/g, '\\"'));
-      }
-      const parts: string[] = [];
-      if (images.length > 0) parts.push(`[Images to analyze: ${images.join(', ')}] (use exec tool to read or describe these image files)`);
-      if (others.length > 0) parts.push(`[Attached files: ${others.join(', ')}]`);
-      fullMsg = `${parts.join('\\n')}\\n\\n${escapedMsg}`;
-    }
-    // Pass project directory as message context instead of cwd restriction.
-    // This allows agent to access files anywhere while knowing the active project.
-    const requestedWorkspace = options?.workspacePath?.trim();
-    if (requestedWorkspace) {
-      try {
-        const stat = fs.statSync(requestedWorkspace);
-        if (!stat.isDirectory()) {
-          return resolve({
-            success: false,
-            text: '',
-            error: 'The selected project folder is not available. Please choose a valid local folder and try again.',
-            sessionId: sid,
-          });
-        }
-      } catch {
-        return resolve({
-          success: false,
-          text: '',
-          error: 'The selected project folder could not be found. Please choose it again and try again.',
-          sessionId: sid,
-        });
-      }
-      fullMsg = `[Current project directory: ${requestedWorkspace}] (use this as base for relative file paths)\\n${fullMsg}`;
-    }
-
-    // Use Gateway mode (no --local) for proper session management and context continuity.
-    // Gateway is already ensured running above.
-    // Pass --agent flag to route message to a specific agent (defaults to "main" if omitted).
     const agentFlag = options?.agentId && options.agentId !== 'main' ? ` --agent "${options.agentId}"` : '';
-    const cmd = rewriteOpenClawCommand(`openclaw agent --session-id "${sid}" -m "${fullMsg}" --verbose on${thinkingFlag}${agentFlag}`);
+    const escapedMsg = message.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\$/g, '\\$').replace(/`/g, '\\`');
+    const cmd = rewriteOpenClawCommand(`openclaw agent --session-id "${sid}" -m "${escapedMsg}" --verbose on${thinkingFlag}${agentFlag}`);
     const enhancedPath = getEnhancedPath();
-    // Use home directory as cwd so agent is not restricted to a single directory.
-    // The project path is passed via message context above.
-    const chatWorkingDirectory = os.homedir();
-
-    const shellCmd = process.platform === 'win32' ? wrapWindowsCommand(cmd) : cmd;
     const child = process.platform === 'win32'
-      ? spawn(shellCmd, [], {
-        cwd: chatWorkingDirectory,
-        shell: 'cmd.exe',
-        env: { ...process.env, PATH: enhancedPath, NO_COLOR: '1', FORCE_COLOR: '0' },
-      })
-      : spawn('/bin/bash', ['--norc', '--noprofile', '-c',
-        `export PATH="${enhancedPath}"; ${cmd}`
-      ], {
-        cwd: chatWorkingDirectory,
-        env: { ...process.env, PATH: enhancedPath },
-      });
+      ? spawn(wrapWindowsCommand(cmd), [], { cwd: os.homedir(), shell: 'cmd.exe', env: { ...process.env, PATH: enhancedPath, NO_COLOR: '1', FORCE_COLOR: '0' } })
+      : spawn('/bin/bash', ['--norc', '--noprofile', '-c', `export PATH="${enhancedPath}"; ${cmd}`], { cwd: os.homedir(), env: { ...process.env, PATH: enhancedPath } });
 
     activeChatChild = child;
-
-    const send = (channel: string, data: any) => {
-      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, data);
-    };
-
-    // Line buffer for handling partial lines across chunks
-    let lineBuffer = '';
-
-    const normalizeStreamLine = (line: string) => stripAnsi(line).replace(/\r/g, '');
-
-    const isToolRoutingNoise = (line: string) => {
-      const t = normalizeStreamLine(line).trimStart();
-      return t.includes('exec host not allowed') ||
-        t.includes('configure tools.exec.host=sandbox to allow') ||
-        (t.includes('requested node') && t.includes('host not allowed'));
-    };
-
-    const isSearchProviderFallbackNoise = (line: string) => {
-      const t = normalizeStreamLine(line).trimStart().toLowerCase();
-      return t.startsWith('web_search: no provider configured') ||
-        (t.includes('falling back to keyless provider') && t.includes('duckduckgo'));
-    };
-
-    const isGatewayClientNoise = (line: string) => {
-      const t = normalizeStreamLine(line).trimStart().toLowerCase();
-      return t.startsWith('gateway client error:') ||
-        (t.includes('connect econnrefused') && t.includes('127.0.0.1:18789'));
-    };
-
-    const isNoiseLine = (line: string) => {
-      const t = normalizeStreamLine(line).trimStart();
-      return t.startsWith('[plugins]') || t.startsWith('[tools]') ||
-        t.startsWith('[agent/') || t.startsWith('[agents/') ||
-        t.startsWith('[diagnostic]') ||
-        t.startsWith('[gateway]') ||
-        t.startsWith('[health-monitor]') ||
-        t.startsWith('[heartbeat]') ||
-        t.startsWith('[bonjour]') ||
-        t.startsWith('[canvas]') ||
-        t.startsWith('Registered plugin') || t.startsWith('[context-diag]') ||
-        t.startsWith('[tool]') || t.startsWith('[tool update]') ||
-        t.startsWith('[permission') || t.startsWith('[info]') ||
-        t.startsWith('[warn]') || t.startsWith('[error]') ||
-        t.startsWith('[acp-client]') || t.startsWith('[commands]') ||
-        t.startsWith('[reload]') || t.startsWith('Config warnings') ||
-        isToolRoutingNoise(t) ||
-        isSearchProviderFallbackNoise(t) ||
-        isGatewayClientNoise(t) ||
-        t.includes('plugin disabled') || t.includes('bootstrap config fallback') ||
-        t.includes('Local daemon not running, attempting auto-start');
-    };
-
-    const parseStatusLine = (t: string) => {
-      // Agent lifecycle
-      if (t.includes('run agent start')) {
-        send('chat:status', { type: 'thinking' });
-        return;
-      }
-      if (t.includes('run agent end') && t.includes('isError=false')) {
-        send('chat:status', { type: 'generating' });
-        return;
-      }
-      if (t.includes('run agent end') && t.includes('isError=true')) {
-        send('chat:status', { type: 'error' });
-        return;
-      }
-
-      // Tool call events: [tool] <title> (<status>)
-      const toolMatch = t.match(/^\[tool\]\s+(.+?)\s+\((\w+)\)$/);
-      if (toolMatch) {
-        send('chat:status', { type: 'tool_call', tool: toolMatch[1], toolStatus: toolMatch[2] });
-        return;
-      }
-      // Embedded agent tool events: [agent/embedded] embedded run tool start/end: ... tool=<name> toolCallId=<id>
-      const embeddedToolStart = t.match(/embedded run tool start:.*tool=(\w+)\s+toolCallId=(\S+)/);
-      if (embeddedToolStart) {
-        send('chat:status', { type: 'tool_call', tool: embeddedToolStart[1], toolStatus: 'running', toolId: embeddedToolStart[2] });
-        return;
-      }
-      const embeddedToolEnd = t.match(/embedded run tool end:.*tool=(\w+)\s+toolCallId=(\S+)/);
-      if (embeddedToolEnd) {
-        send('chat:status', { type: 'tool_update', toolId: embeddedToolEnd[2], toolStatus: 'completed' });
-        return;
-      }
-      // Tool update: [tool update] <id>: <status>
-      const toolUpdateMatch = t.match(/^\[tool update\]\s+(.+?):\s+(.+)$/);
-      if (toolUpdateMatch) {
-        send('chat:status', { type: 'tool_update', toolId: toolUpdateMatch[1], toolStatus: toolUpdateMatch[2] });
-        return;
-      }
-      // Permission: [permission auto-approved] <tool> (<kind>)
-      const permMatch = t.match(/^\[permission (?:auto-approved|approved)\]\s+(.+?)(?:\s+\(.+\))?$/);
-      if (permMatch) {
-        send('chat:status', { type: 'tool_call', tool: permMatch[1], toolStatus: 'approved' });
-        return;
-      }
-
-      // Awareness memory events
-      if (t.includes('Awareness auto-recall injected')) {
-        send('chat:status', { type: 'tool_call', tool: 'Awareness Memory', toolStatus: 'recalling' });
-      } else if (t.includes('Awareness auto-capture')) {
-        send('chat:status', { type: 'tool_call', tool: 'Awareness Memory', toolStatus: 'saving' });
-      } else if (t.includes('Awareness perception')) {
-        send('chat:status', { type: 'tool_call', tool: 'Awareness Perception', toolStatus: 'cached' });
-      }
-    };
-
     child.stdout?.on('data', (data: Buffer) => {
-      const chunk = normalizeStreamLine(data.toString());
+      const chunk = stripAnsi(data.toString()).replace(/\r/g, '');
       stdout += chunk;
-
-      // Handle line buffering for proper parsing
-      const combined = lineBuffer + chunk;
-      const parts = combined.split('\n');
-      // Last element might be incomplete — buffer it
-      lineBuffer = parts.pop() || '';
-
-      for (const line of parts) {
-        const t = normalizeStreamLine(line).trim();
-        if (!t) continue;
-
-        if (isNoiseLine(line)) {
-          parseStatusLine(t);
-        } else {
-          // Real content — stream it to frontend
+      // Simple streaming — send non-noise lines
+      for (const line of chunk.split('\n')) {
+        const t = line.trim();
+        if (t && !t.startsWith('[') && !t.startsWith('Config') && !t.startsWith('Registered') && !t.includes('plugin')) {
           send('chat:stream', t + '\n');
         }
       }
     });
-
-    child.stderr?.on('data', () => { /* ignore stderr */ });
-
+    child.stderr?.on('data', () => {});
     child.on('exit', () => {
       activeChatChild = null;
-      // Flush remaining buffer
-      const normalizedBuffer = normalizeStreamLine(lineBuffer).trim();
-      if (normalizedBuffer && !isNoiseLine(normalizedBuffer)) {
-        send('chat:stream', normalizedBuffer);
-      }
       send('chat:stream-end', {});
-
-      // Also resolve with full clean text as fallback
-      const cleanText = stdout
-        .split('\n')
-        .map(normalizeStreamLine)
-        .filter(l => l.trim() && !isNoiseLine(l))
-        .join('\n')
-        .trim();
-      resolve({ success: true, text: cleanText || 'No response', sessionId: sid });
-
-      // Fire-and-forget: write desktop chat to Awareness memory
-      if (cleanText && cleanText !== 'No response') {
-        const brief = `Request: ${message}\nResult: ${cleanText}`;
-        callMcp('awareness_record', {
-          content: brief,
-          event_type: 'turn_brief',
-          source: 'desktop',
-        }).catch(() => { /* daemon may not be running */ });
-      }
+      const clean = stdout.split('\n').filter(l => l.trim() && !l.trim().startsWith('[') && !l.includes('Config') && !l.includes('plugin')).join('\n').trim();
+      resolve({ success: true, text: clean || 'No response', sessionId: sid });
     });
-
     child.on('error', (err) => resolve({ success: false, error: String(err), sessionId: sid }));
-
-    setTimeout(() => {
-      try { child.kill(); } catch {}
-      resolve({ success: false, error: '响应超时', sessionId: sid });
-    }, 120000);
+    setTimeout(() => { try { child.kill(); } catch {} resolve({ success: false, error: 'Response timeout', sessionId: sid }); }, 120000);
   });
-});
+}
 
 // --- Channel Configuration ---
 

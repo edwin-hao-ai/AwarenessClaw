@@ -303,15 +303,21 @@ export class GatewayClient extends EventEmitter {
     });
   }
 
-  /** Send a chat message (non-blocking, returns runId immediately). */
-  async chatSend(sessionKey: string, text: string): Promise<{ runId: string }> {
-    return this.rpc('chat.send', {
+  /** Send a chat message (non-blocking — Gateway queues if agent is busy). */
+  async chatSend(sessionKey: string, text: string, options?: {
+    thinking?: string;
+    attachments?: any[];
+    agentId?: string;
+  }): Promise<any> {
+    const params: any = {
       sessionKey,
-      message: {
-        role: 'user',
-        content: [{ type: 'text', text }],
-      },
-    });
+      message: text,
+      idempotencyKey: `ac-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    };
+    if (options?.thinking) params.thinking = options.thinking;
+    if (options?.attachments?.length) params.attachments = options.attachments;
+    // chat.send uses 120s timeout (agent may take a while with tool calls)
+    return this.rpc('chat.send', params, 120000);
   }
 
   /** Abort the current run for a session. */
