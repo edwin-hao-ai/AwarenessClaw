@@ -104,12 +104,16 @@ export default function Channels() {
     }
     // Load dynamic channel registry from backend (OpenClaw catalog discovery)
     try {
-      const regResult = await (window.electronAPI as any).channelGetRegistry?.();
+      const api = window.electronAPI as any;
+      console.log('[Channels] channelGetRegistry exists:', typeof api?.channelGetRegistry);
+      const regResult = await api?.channelGetRegistry?.();
+      console.log('[Channels] registry result:', regResult?.channels?.length, 'channels');
       if (regResult?.channels?.length > 0) {
         loadFromSerialized(regResult.channels);
         setChannels(getAllChannels());
+        console.log('[Channels] loaded', getAllChannels().length, 'total channels');
       }
-    } catch { /* fallback to builtin */ }
+    } catch (e) { console.error('[Channels] registry error:', e); }
     setLoadingChannels(false);
     hasLoadedOnce.current = true;
   };

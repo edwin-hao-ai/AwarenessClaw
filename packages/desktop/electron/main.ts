@@ -2147,11 +2147,12 @@ ipcMain.handle('chat:send', async (_e, message: string, sessionId?: string, opti
     const completedToolIds = new Set<string>();
     let lastThinkingText = '';
 
-    // --- 1) Log ALL gateway events for diagnostics (Cmd+Option+I to see in DevTools) ---
+    // --- 1) Log ALL gateway events to renderer DevTools for diagnostics ---
+    // (console.log in main process doesn't show in Chromium DevTools, must use IPC)
     allEventsHandler = (evt: any) => {
       const eventName = evt?.event || 'unknown';
-      const preview = JSON.stringify(evt?.payload || evt).slice(0, 600);
-      console.log(`[gw:${eventName}]`, preview);
+      const preview = JSON.stringify(evt?.payload || evt).slice(0, 800);
+      send('chat:debug', `[gw:${eventName}] ${preview}`);
     };
     ws.on('gateway-event', allEventsHandler);
 
@@ -2232,14 +2233,8 @@ ipcMain.handle('chat:send', async (_e, message: string, sessionId?: string, opti
     ws.on('event:chat', chatEventHandler);
     send('chat:status', { type: 'thinking' });
 
-    // --- 3) Prepend inline directives for verbose + reasoning visibility ---
-    // OpenClaw parses /v and /reasoning from message text and strips them before LLM.
-    // This enables tool call events and thinking content for this specific message.
-    const directives = '/v on /reasoning on ';
-    const messageWithDirectives = directives + fullMessage;
-
     // Send message via Gateway WebSocket RPC
-    await ws.chatSend(sid, messageWithDirectives, {
+    await ws.chatSend(sid, fullMessage, {
       thinking: options?.thinkingLevel && options.thinkingLevel !== 'off' ? options.thinkingLevel : undefined,
     });
 
@@ -2333,7 +2328,7 @@ import {
   getChannel, getChannelByOpenclawId, toOpenclawId, toFrontendId,
   buildCLIFlags, getAllChannels, serializeRegistry,
   mergeCatalog, mergeChannelOptions, type ChannelDef, type CatalogEntry,
-} from '../src/lib/channel-registry';
+} from './channel-registry';
 
 // Discover channels from OpenClaw installation at startup
 function discoverOpenClawChannels(): void {
@@ -2362,10 +2357,13 @@ function discoverOpenClawChannels(): void {
       } catch { /* which failed */ }
     }
 
+    const debugLog = (msg: string) => { try { fs.appendFileSync(path.join(HOME, '.awareness-channel-debug.log'), `[${new Date().toISOString()}] ${msg}\n`); } catch {} };
     if (!distDir) {
+      debugLog('dist NOT found. sync safeShellExec npm-root-g and which-openclaw both failed');
       console.log('[channel-registry] OpenClaw dist not found, using builtins only');
       return;
     }
+    debugLog(`dist found: ${distDir}`);
     console.log(`[channel-registry] Found OpenClaw at: ${distDir}`);
 
     // Load channel-catalog.json
@@ -2390,29 +2388,38 @@ let _discoveryDone = false;
 
 // IPC: return full channel registry to frontend
 ipcMain.handle('channel:get-registry', async () => {
+  const dlog = (msg: string) => { try { fs.appendFileSync(path.join(os.homedir(), '.awareness-channel-debug.log'), `[${new Date().toISOString()}] ${msg}\n`); } catch (e) { /* last resort */ } };
+  dlog(`ENTRY: channel:get-registry called. _discoveryDone=${_discoveryDone}, HOME=${os.homedir()}`);
   if (!_discoveryDone) {
     _discoveryDone = true;
     // Try sync first, fallback to async npm root
     discoverOpenClawChannels();
     // If sync discovery found nothing, try async with full PATH
+    const debugLog = (msg: string) => { try { fs.appendFileSync(path.join(HOME, '.awareness-channel-debug.log'), `[${new Date().toISOString()}] ${msg}\n`); } catch {} };
     if (getAllChannels().length <= 2) {
+      debugLog(`Sync discovery found only ${getAllChannels().length} channels, trying async...`);
       try {
         const globalRoot = await safeShellExecAsync('npm root -g 2>/dev/null', 5000);
+        debugLog(`async npm root -g: "${globalRoot?.trim()}"`);
         if (globalRoot) {
           const distDir = path.join(globalRoot.trim(), 'openclaw', 'dist');
-          if (fs.existsSync(distDir)) {
+          const exists = fs.existsSync(distDir);
+          debugLog(`async distDir: ${distDir} exists=${exists}`);
+          if (exists) {
             try {
               const catalog = JSON.parse(fs.readFileSync(path.join(distDir, 'channel-catalog.json'), 'utf8'));
-              if (catalog.entries) mergeCatalog(catalog.entries as CatalogEntry[]);
-            } catch {}
+              if (catalog.entries) { mergeCatalog(catalog.entries as CatalogEntry[]); debugLog(`catalog merged: ${catalog.entries.length} entries`); }
+            } catch (e: any) { debugLog(`catalog error: ${e.message}`); }
             try {
               const meta = JSON.parse(fs.readFileSync(path.join(distDir, 'cli-startup-metadata.json'), 'utf8'));
-              if (meta.channelOptions) mergeChannelOptions(meta.channelOptions);
-            } catch {}
-            console.log(`[channel-registry] Async discovery found ${getAllChannels().length} channels at: ${distDir}`);
+              if (meta.channelOptions) { mergeChannelOptions(meta.channelOptions); debugLog(`metadata merged: ${meta.channelOptions.length} options`); }
+            } catch (e: any) { debugLog(`metadata error: ${e.message}`); }
+            debugLog(`Final channel count: ${getAllChannels().length}`);
           }
         }
-      } catch {}
+      } catch (e: any) { debugLog(`async fallback error: ${e.message}`); }
+    } else {
+      debugLog(`Sync discovery OK: ${getAllChannels().length} channels`);
     }
   }
   return { channels: serializeRegistry() };
