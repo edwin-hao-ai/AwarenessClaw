@@ -505,7 +505,9 @@ export default function Channels() {
                             <p className="text-sm text-slate-300 text-center font-medium">
                               {activeWizard === 'whatsapp'
                                 ? t('channels.whatsapp.scanHint', 'Open WhatsApp → Linked Devices → Link a Device')
-                                : t('channels.signal.scanHint', 'Open Signal → Settings → Linked Devices → Link New Device')}
+                                : activeWizard === 'wechat'
+                                  ? t('channels.guide.wechat.scan', 'Scan QR with WeChat to link')
+                                  : t('channels.signal.scanHint', 'Open Signal → Settings → Linked Devices → Link New Device')}
                             </p>
                             <div className="bg-white rounded-xl p-3 overflow-x-auto">
                               <pre className="text-black text-[10px] leading-none font-mono whitespace-pre select-text">{asciiQR}</pre>
