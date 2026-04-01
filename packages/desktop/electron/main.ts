@@ -1857,6 +1857,14 @@ function repairOpenClawConfigFile() {
     if (!fs.existsSync(configPath)) return;
     const current = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     sanitizeAwarenessPluginConfig(current);
+    // Compatibility: OpenClaw >= 2026.3.31 rejects channels.telegram.token.
+    // Migrate legacy token -> botToken and remove token to keep config valid.
+    if (current?.channels?.telegram?.token) {
+      if (!current.channels.telegram.botToken) {
+        current.channels.telegram.botToken = current.channels.telegram.token;
+      }
+      delete current.channels.telegram.token;
+    }
     fs.writeFileSync(configPath, JSON.stringify(current, null, 2));
   } catch {
     // Best-effort config repair only.
