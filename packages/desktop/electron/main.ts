@@ -529,7 +529,7 @@ function runAsync(cmd: string, timeoutMs = 180000): Promise<string> {
         settled = true;
         clearTimeout(timer);
         if (code === 0) resolve(stdout.trim());
-        else reject(new Error(stderr.trim() || `Exit code ${code}`));
+        else reject(new Error(stderr.trim() || stdout.trim().slice(-500) || `Exit code ${code}`));
       }
     });
     child.on('error', (err: Error) => {
@@ -1037,37 +1037,52 @@ ipcMain.handle('app:upgrade-component', async (_e, component: string) => {
       const preMatch = preVer?.match(/(\d+\.\d+\.\d+)/);
       const preSemver = preMatch ? preMatch[1] : null;
 
-      // Detect package manager (pnpm > yarn > npm)
-      const hasPnpm = await safeShellExecAsync('pnpm --version', 3000);
-      const hasYarn = !hasPnpm ? await safeShellExecAsync('yarn --version', 3000) : null;
-      const installCmd = hasPnpm ? 'pnpm add -g openclaw@latest'
-        : hasYarn ? 'yarn global add openclaw@latest'
-        : 'npm install -g openclaw@latest';
+      let upgraded = false;
 
-      // Pre-check: verify npm/pnpm global prefix is writable
-      const prefixCmd = hasPnpm ? 'pnpm config get global-bin-dir' : 'npm config get prefix';
-      const prefix = await safeShellExecAsync(prefixCmd, 5000);
-      if (prefix && !hasPnpm) {
+      // Strategy 1: Official `openclaw update` command (best — handles npm/pnpm/git detection)
+      // --yes = non-interactive, --no-restart = don't restart gateway (we manage it ourselves)
+      if (preVer) {
         try {
-          fs.accessSync(prefix.trim(), fs.constants.W_OK);
-        } catch {
-          // Fallback: try npx (no global install needed)
+          await runAsync('openclaw update --yes --no-restart 2>&1', 180000);
+          upgraded = true;
+        } catch { /* openclaw update failed, try fallback */ }
+      }
+
+      // Strategy 2: Managed runtime install (writes to ~/.awareness-claw/openclaw-runtime/, always writable)
+      if (!upgraded) {
+        const managedCmd = getManagedOpenClawInstallCommand('openclaw@latest');
+        const registries = ['', '--registry=https://registry.npmmirror.com'];
+        for (const reg of registries) {
           try {
-            await runAsync('npx openclaw@latest --version', 30000);
-            return {
-              success: true,
-              version: 'latest (via npx)',
-              hint: `npm global dir not writable. Using npx fallback. To fix permanently:\n  npm config set prefix ~/.npm-global`,
-            };
-          } catch { /* npx also failed, report the original permission error */ }
-          return {
-            success: false,
-            error: `npm global directory (${prefix.trim()}) is not writable. Run this in terminal:\n  npm config set prefix ~/.npm-global\n  export PATH=~/.npm-global/bin:$PATH`,
-          };
+            await runAsync(`${managedCmd} ${reg}`.trim(), 120000);
+            upgraded = true;
+            break;
+          } catch { continue; }
         }
       }
 
-      await runAsync(installCmd, 120000);
+      // Strategy 3: Official install script (last resort)
+      if (!upgraded) {
+        try {
+          if (process.platform === 'win32') {
+            await runAsync('powershell -Command "irm https://openclaw.ai/install.ps1 | iex"', 120000);
+          } else {
+            await runAsync('curl -fsSL https://openclaw.ai/install.sh | bash', 120000);
+          }
+          upgraded = true;
+        } catch { /* fall through to error */ }
+      }
+
+      if (!upgraded) {
+        return {
+          success: false,
+          error: 'OpenClaw upgrade failed. Check your network connection and try again.',
+        };
+      }
+
+      // Refresh Windows shims after managed runtime upgrade
+      ensureManagedOpenClawWindowsShim();
+
       const newVer = await safeShellExecAsync('openclaw --version');
       const vMatch = newVer?.match(/(\d+\.\d+\.\d+)/);
       const newSemver = vMatch ? vMatch[1] : newVer?.trim();
@@ -2107,14 +2122,16 @@ ipcMain.handle('chat:send', async (_e, message: string, sessionId?: string, opti
       const msg = payload.message;
 
       if (state === 'delta' && msg) {
-        // Streaming text content
+        // Streaming text — delta events are CUMULATIVE (each contains full text so far)
         if (msg.role === 'assistant') {
           const content = Array.isArray(msg.content)
             ? msg.content.map((c: any) => c.type === 'text' ? (c.text || '') : '').join('')
             : (typeof msg.content === 'string' ? msg.content : '');
-          if (content) {
-            fullResponseText += content;
-            send('chat:stream', content);
+          if (content && content.length > fullResponseText.length) {
+            // Send only the NEW portion since last event
+            const newChunk = content.slice(fullResponseText.length);
+            fullResponseText = content;
+            send('chat:stream', newChunk);
             send('chat:status', { type: 'generating' });
           }
 
@@ -2172,11 +2189,17 @@ ipcMain.handle('chat:send', async (_e, message: string, sessionId?: string, opti
 
     // Fire-and-forget: write desktop chat to Awareness memory
     if (text && text !== 'No response') {
-      callMcp('awareness_record', {
+      callMcpStrict('awareness_record', {
         content: `Request: ${message}\nResult: ${text}`,
         event_type: 'turn_brief',
         source: 'desktop',
-      }).catch(() => {});
+      }).catch((err) => {
+        console.warn('[chat] Memory record failed:', err.message);
+        mainWindow?.webContents.send('chat:memory-warning', {
+          type: 'record-failed',
+          message: err.message,
+        });
+      });
     }
 
     return { success: true, text, sessionId: sid };
@@ -3267,6 +3290,40 @@ function callMcp(toolName: string, args: Record<string, any>): Promise<any> {
   });
 }
 
+/** callMcp variant that rejects on error — use for operations that must succeed */
+function callMcpStrict(toolName: string, args: Record<string, any>): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const req = http.request('http://127.0.0.1:37800/mcp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 15000,
+    }, (res) => {
+      let data = '';
+      res.on('data', (chunk: Buffer) => { data += chunk; });
+      res.on('end', () => {
+        try {
+          const result = JSON.parse(data);
+          if (result?.error) {
+            reject(new Error(typeof result.error === 'string' ? result.error : JSON.stringify(result.error)));
+          } else {
+            resolve(result);
+          }
+        } catch {
+          reject(new Error('Invalid JSON from daemon'));
+        }
+      });
+    });
+    req.on('error', (err) => reject(new Error(`Daemon connection failed: ${err.message}`)));
+    req.on('timeout', () => { req.destroy(); reject(new Error('Daemon request timed out')); });
+    req.write(JSON.stringify({
+      jsonrpc: '2.0', id: Date.now(),
+      method: 'tools/call',
+      params: { name: toolName, arguments: args },
+    }));
+    req.end();
+  });
+}
+
 ipcMain.handle('memory:search', async (_e, query: string) => {
   return callMcp('awareness_recall', {
     semantic_query: query,
@@ -3653,7 +3710,6 @@ let daemonEverConnected = false;
 function startDaemonWatchdog() {
   if (watchdogInterval) return;
   watchdogInterval = setInterval(async () => {
-    if (!daemonEverConnected) return;
     const health = await getLocalDaemonHealth(3000);
     if (health) return; // healthy
     // Daemon is down — attempt restart
@@ -3681,9 +3737,111 @@ ipcMain.handle('daemon:mark-connected', () => {
   startDaemonWatchdog();
 });
 
+// --- Internal Hook Deployment ---
+
+const HOOK_VERSION = '1.0.0';
+
+function ensureInternalHook() {
+  try {
+    const hooksDir = path.join(HOME, '.openclaw', 'hooks');
+    if (!fs.existsSync(hooksDir)) fs.mkdirSync(hooksDir, { recursive: true });
+
+    const hookPath = path.join(hooksDir, 'awareness-memory-backup.mjs');
+
+    // Check if hook exists and is current version
+    if (fs.existsSync(hookPath)) {
+      const existing = fs.readFileSync(hookPath, 'utf8');
+      if (existing.includes(`HOOK_VERSION=${HOOK_VERSION}`)) return; // already deployed
+    }
+
+    const hookContent = `#!/usr/bin/env node
+/**
+ * Awareness Memory backup hook — captures message:sent events as fallback.
+ * Deployed by AwarenessClaw installer. Source: openclaw-hook
+ * HOOK_VERSION=${HOOK_VERSION}
+ *
+ * OpenClaw Internal Hook format: receives JSON events on stdin (one per line).
+ * This acts as a backup to the plugin's agent_end hook.
+ */
+import http from 'node:http';
+
+const DAEMON_URL = 'http://127.0.0.1:37800/mcp';
+const TIMEOUT_MS = 5000;
+
+function postToDaemon(payload) {
+  return new Promise((resolve) => {
+    try {
+      const data = JSON.stringify({
+        jsonrpc: '2.0', id: Date.now(),
+        method: 'tools/call',
+        params: {
+          name: 'awareness_record',
+          arguments: {
+            action: 'remember',
+            content: payload.content,
+            event_type: 'message_backup',
+            source: 'openclaw-hook',
+            session_id: payload.sessionId || '',
+          },
+        },
+      });
+      const req = http.request(DAEMON_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) },
+        timeout: TIMEOUT_MS,
+      }, (res) => { res.resume(); resolve(); });
+      req.on('error', () => resolve());
+      req.on('timeout', () => { req.destroy(); resolve(); });
+      req.write(data);
+      req.end();
+    } catch { resolve(); }
+  });
+}
+
+// Buffer messages and flush every 3s or when buffer reaches 3 items
+const buffer = [];
+let flushTimer = null;
+
+async function flush() {
+  if (buffer.length === 0) return;
+  const batch = buffer.splice(0);
+  const combined = batch.map(m => \`[\${m.role}] \${m.content}\`).join('\\n---\\n');
+  if (combined.length > 20) {
+    await postToDaemon({ content: combined, sessionId: batch[0]?.sessionId });
+  }
+}
+
+import readline from 'node:readline';
+const rl = readline.createInterface({ input: process.stdin, terminal: false });
+
+rl.on('line', (line) => {
+  try {
+    const evt = JSON.parse(line);
+    if (evt.event !== 'message:sent' && evt.event !== 'message:received') return;
+    if (!evt.content || evt.content.length < 15) return;
+    buffer.push({ role: evt.role || 'unknown', content: evt.content.slice(0, 1500), sessionId: evt.sessionId });
+    if (flushTimer) clearTimeout(flushTimer);
+    if (buffer.length >= 3) { flush(); }
+    else { flushTimer = setTimeout(flush, 3000); }
+  } catch { /* ignore non-JSON lines */ }
+});
+
+rl.on('close', () => flush());
+`;
+
+    fs.writeFileSync(hookPath, hookContent, { mode: 0o755 });
+    console.log('[startup] Deployed awareness-memory-backup hook');
+  } catch (err) {
+    console.warn('[startup] Failed to deploy internal hook:', err);
+  }
+}
+
 // --- App Lifecycle ---
 
 app.whenReady().then(() => {
+  // Deploy internal hook for awareness memory backup (idempotent, version-gated)
+  ensureInternalHook();
+
   // Ensure config has required gateway defaults before anything tries to start
   repairOpenClawConfigFile();
   repairWindowsGatewayServiceScript();

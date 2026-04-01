@@ -222,14 +222,20 @@ export class GatewayClient extends EventEmitter {
           }));
         };
 
-        // Challenge arrives as an event before we send connect — poll briefly
+        // Challenge arrives as an event right after open — wait up to 3s for it.
+        // Device identity auth REQUIRES the challenge nonce; without it, connect fails.
         const pollStart = Date.now();
         const poll = setInterval(() => {
-          if (challengeNonce || Date.now() - pollStart > 500) {
+          if (challengeNonce) {
+            clearInterval(poll);
+            sendConnect();
+          } else if (Date.now() - pollStart > 3000) {
+            // No challenge received — send connect without device identity (will likely fail,
+            // but lets the error propagate to the caller instead of hanging)
             clearInterval(poll);
             sendConnect();
           }
-        }, 20);
+        }, 50);
       });
 
       this.ws.on('error', (err) => {
