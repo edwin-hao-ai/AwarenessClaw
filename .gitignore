@@ -12,3 +12,6 @@ Thumbs.db
 .env.production
 *.tgz
 package-lock.json
+.awareness/
+packages/desktop/.awareness/
+packages/desktop/main.js
