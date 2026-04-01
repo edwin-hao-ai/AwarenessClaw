@@ -305,6 +305,7 @@ OpenClaw 的 chat 质量依赖 `~/.openclaw/workspace/` 下的 MD 文档：
 - [x] **通道列表对齐 OpenClaw**：验证 `openclaw channels --help` 支持的通道（telegram/discord/slack/whatsapp/signal/imessage/googlechat/line/matrix），新增 LINE 和 Matrix 通道卡片，feishu 保留（via plugin）（2026-03-30）
 - [x] **通道测试改进**：`channel:test` 改为三步验证：①检查 openclaw.json 凭证 ②`openclaw channels status` 检测 Gateway ③`openclaw channels list` 确认注册状态，提供详细诊断（2026-03-30）
 - [x] **通道列表从 OpenClaw 动态获取**：新增 `channel:list-supported` IPC，读 `openclaw channels list` 解析支持的通道，动态追加到硬编码列表中（2026-03-30）
+- [x] **统一通道注册表（Unified Channel Registry）**：只保留 wechat（json-direct）+ local 为内置，其余 22 个通道全部从 OpenClaw `channel-catalog.json` + `cli-startup-metadata.json` 动态发现。通道配置表单由注册表 `configFields` 驱动（DynamicConfigForm 替代 6 个 switch-case）。已知通道有品牌 SVG 图标 + 准确的 CLI flag 映射（slack 双 token、matrix 三字段、googlechat webhook 等）；未知通道显示首字母图标 + 通用 token 表单。Dashboard 统一收件箱从 emoji 改为 SVG 图标。28 文件 165 测试全过（2026-04-01）
 
 ### i18n 国际化
 - [x] **i18n 基础系统**：`src/lib/i18n.ts` — 零依赖、中英双语、`useI18n()` hook（2026-03-30）
