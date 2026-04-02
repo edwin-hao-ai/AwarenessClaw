@@ -112,30 +112,36 @@ async function simulateUpgradeOpenClaw(deps: UpgradeDeps) {
   const preSemver = preMatch ? preMatch[1] : null;
 
   let upgraded = false;
+  const isAlreadyManaged = !!deps.getManagedOpenClawEntrypoint();
 
-  // Tier 1: openclaw update
-  if (preVer) {
+  if (isAlreadyManaged) {
+    // Managed OpenClaw: skip `openclaw update` (it updates global, not managed prefix)
+    // Go straight to managed npm install.
+    const managedCmd = deps.getManagedOpenClawInstallCommand('openclaw@latest');
+    try {
+      await deps.runAsync(managedCmd, 120000);
+      upgraded = true;
+    } catch {}
+  } else if (preVer) {
+    // Global OpenClaw: use its native update command
     try {
       await deps.runAsync('openclaw update --yes --no-restart 2>&1', 180000);
       upgraded = true;
     } catch {}
   }
 
-  // Tier 2: managed install (only if already managed or no global)
-  if (!upgraded) {
-    const isAlreadyManaged = !!deps.getManagedOpenClawEntrypoint();
-    if (isAlreadyManaged || !preVer) {
-      const managedCmd = deps.getManagedOpenClawInstallCommand('openclaw@latest');
-      try {
-        await deps.runAsync(managedCmd, 120000);
-        upgraded = true;
-      } catch {}
-    }
+  // Fresh install (no managed, no global)
+  if (!upgraded && !isAlreadyManaged && !preVer) {
+    const managedCmd = deps.getManagedOpenClawInstallCommand('openclaw@latest');
+    try {
+      await deps.runAsync(managedCmd, 120000);
+      upgraded = true;
+    } catch {}
   }
 
-  // Tier 3: block if global exists and no managed
+  // Block creating second copy alongside global
   if (!upgraded) {
-    const hasGlobal = !!preVer && !deps.getManagedOpenClawEntrypoint();
+    const hasGlobal = !!preVer && !isAlreadyManaged;
     if (hasGlobal) {
       return {
         success: false,
@@ -287,14 +293,39 @@ describe('OpenClaw upgrade — no dual install', () => {
     expect(result.error).toContain('globally installed');
   });
 
+  it('managed OpenClaw skips openclaw update (would update wrong location)', async () => {
+    const home = createTempHome();
+    createManagedEntrypoint(home);
+    const entry = managedEntrypointPath(home);
+
+    const runAsync = vi.fn(async () => 'installed');
+
+    const result = await simulateUpgradeOpenClaw({
+      safeShellExecAsync: vi.fn(async (cmd) => {
+        if (cmd.includes('openclaw --version')) return 'OpenClaw 2026.3.31';
+        return null;
+      }),
+      runAsync,
+      getManagedOpenClawInstallCommand: (pkg) => `npm install -g --prefix /tmp ${pkg}`,
+      getManagedOpenClawEntrypoint: () => entry,
+      ensureManagedOpenClawWindowsShim: vi.fn(),
+    });
+
+    expect(result.success).toBe(true);
+    // Should NOT have called openclaw update
+    const calls = runAsync.mock.calls.map(c => c[0]);
+    expect(calls.some((c: string) => c.includes('openclaw update'))).toBe(false);
+    // Should have called managed install
+    expect(calls.some((c: string) => c.includes('npm install -g --prefix'))).toBe(true);
+  });
+
   it('upgrades managed when already using managed prefix', async () => {
     const home = createTempHome();
     createManagedEntrypoint(home);
     const entry = managedEntrypointPath(home);
 
-    const runAsync = vi.fn()
-      .mockRejectedValueOnce(new Error('update cmd not found')) // openclaw update fails
-      .mockResolvedValueOnce('installed'); // managed install succeeds
+    // Managed OpenClaw: goes straight to managed install, no openclaw update
+    const runAsync = vi.fn(async () => 'installed');
 
     const result = await simulateUpgradeOpenClaw({
       safeShellExecAsync: vi.fn(async (cmd) => {
@@ -308,7 +339,10 @@ describe('OpenClaw upgrade — no dual install', () => {
     });
 
     expect(result.success).toBe(true);
+    // Should use managed install directly, not openclaw update
     expect(runAsync).toHaveBeenCalledWith(expect.stringContaining('npm install -g --prefix'), 120000);
+    const calls = runAsync.mock.calls.map(c => c[0]);
+    expect(calls.some((c: string) => c.includes('openclaw update'))).toBe(false);
   });
 
   it('installs managed when no OpenClaw exists at all', async () => {

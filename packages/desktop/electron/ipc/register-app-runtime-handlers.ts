@@ -119,30 +119,38 @@ export function registerAppRuntimeHandlers(deps: {
         const preSemver = preMatch ? preMatch[1] : null;
 
         let upgraded = false;
+        const isAlreadyManaged = !!deps.getManagedOpenClawEntrypoint();
 
-        if (preVer) {
+        if (isAlreadyManaged) {
+          // Managed OpenClaw: `openclaw update` updates the GLOBAL npm, not
+          // the managed prefix — so skip it and go straight to managed install.
+          const managedCmd = deps.getManagedOpenClawInstallCommand('openclaw@latest');
+          const registries = ['', '--registry=https://registry.npmmirror.com'];
+          for (const reg of registries) {
+            try {
+              await deps.runAsync(`${managedCmd} ${reg}`.trim(), 120000);
+              upgraded = true;
+              break;
+            } catch {}
+          }
+        } else if (preVer) {
+          // Global OpenClaw: use its native update command
           try {
             await deps.runAsync('openclaw update --yes --no-restart 2>&1', 180000);
             upgraded = true;
           } catch {}
         }
 
-        if (!upgraded) {
-          // Only install to managed prefix if we're ALREADY using managed,
-          // or if no global OpenClaw exists. Installing a second copy alongside
-          // a global install causes Gateway port conflicts.
-          const isAlreadyManaged = !!deps.getManagedOpenClawEntrypoint();
-
-          if (isAlreadyManaged || !preVer) {
-            const managedCmd = deps.getManagedOpenClawInstallCommand('openclaw@latest');
-            const registries = ['', '--registry=https://registry.npmmirror.com'];
-            for (const reg of registries) {
-              try {
-                await deps.runAsync(`${managedCmd} ${reg}`.trim(), 120000);
-                upgraded = true;
-                break;
-              } catch {}
-            }
+        if (!upgraded && !isAlreadyManaged && !preVer) {
+          // No OpenClaw at all — fresh install to managed prefix
+          const managedCmd = deps.getManagedOpenClawInstallCommand('openclaw@latest');
+          const registries = ['', '--registry=https://registry.npmmirror.com'];
+          for (const reg of registries) {
+            try {
+              await deps.runAsync(`${managedCmd} ${reg}`.trim(), 120000);
+              upgraded = true;
+              break;
+            } catch {}
           }
         }
 
