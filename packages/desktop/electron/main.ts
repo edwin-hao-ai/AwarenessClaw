@@ -709,6 +709,7 @@ registerOpenClawConfigHandlers({
 registerSkillHandlers({
   home: HOME,
   runAsync,
+  readShellOutputAsync,
 });
 registerCloudWorkspaceHandlers({
   home: HOME,

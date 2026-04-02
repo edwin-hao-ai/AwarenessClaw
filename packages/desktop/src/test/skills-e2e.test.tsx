@@ -4,7 +4,6 @@ import Skills from '../pages/Skills';
 
 describe('Skills E2E', () => {
   beforeEach(() => {
-    // Override skillExplore to return a skill list
     const api = window.electronAPI as any;
     api.skillExplore = vi.fn().mockResolvedValue({
       success: true,
@@ -12,8 +11,26 @@ describe('Skills E2E', () => {
         { slug: 'test-skill', name: 'Test Skill', description: 'A test', version: '1.0.0' },
       ],
     });
-    api.skillListInstalled = vi.fn().mockResolvedValue({ success: true, skills: {} });
+    api.skillListInstalled = vi.fn().mockResolvedValue({
+      success: true,
+      skills: {},
+      report: {
+        skills: [
+          {
+            name: 'coding-agent',
+            description: 'Delegate coding tasks.',
+            source: 'openclaw-bundled',
+            bundled: true,
+            eligible: true,
+            disabled: false,
+            blockedByAllowlist: false,
+          },
+        ],
+      },
+    });
     api.skillSearch = vi.fn().mockResolvedValue({ success: true, results: [] });
+    api.skillDetail = vi.fn().mockResolvedValue({ success: false });
+    api.skillGetConfig = vi.fn().mockResolvedValue({ success: true, config: {} });
   });
 
   it('displays skill name after loading completes', async () => {
@@ -23,7 +40,8 @@ describe('Skills E2E', () => {
       expect(screen.queryByText(/Loading skills/)).not.toBeInTheDocument();
     });
 
-    expect(screen.getByText('Test Skill')).toBeInTheDocument();
+    expect(screen.getAllByText('Test Skill').length).toBeGreaterThan(0);
+    expect(screen.getByText('coding-agent')).toBeInTheDocument();
   });
 
   it('calls skillSearch when user types and presses Enter', async () => {
