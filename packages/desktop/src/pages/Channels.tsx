@@ -79,6 +79,7 @@ export default function Channels() {
 
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [testError, setTestError] = useState<string | null>(null);
+  const [testNotice, setTestNotice] = useState<string | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const [asciiQR, setAsciiQR] = useState<string | null>(null);
   const [channelProgress, setChannelProgress] = useState<string | null>(null);
@@ -137,7 +138,7 @@ export default function Channels() {
     setWizardStep('intro');
     setFormValues({});
     setAsciiQR(null); setChannelProgress(null);
-    setTestStatus('idle'); setTestError(null); setLastError(null);
+    setTestStatus('idle'); setTestError(null); setTestNotice(null); setLastError(null);
 
     // Pre-fill from existing config
     if (window.electronAPI && configuredChannels.has(channelId)) {
@@ -186,7 +187,7 @@ export default function Channels() {
 
   const handleConnect = async () => {
     if (!activeWizard || !activeChannel) return;
-    setTestStatus('testing'); setTestError(null);
+    setTestStatus('testing'); setTestError(null); setTestNotice(null);
 
     if (!window.electronAPI) {
       setTimeout(() => setTestStatus(isFormValid() ? 'success' : 'error'), 1500);
@@ -196,6 +197,9 @@ export default function Channels() {
     if (isOneClick) {
       const result = await (window.electronAPI as any).channelSetup(activeWizard);
       setTestStatus(result.success ? 'success' : 'error');
+      if (result.success && result.pendingConfirmation) {
+        setTestNotice(t('channels.pendingConfirmation', 'Login completed. OpenClaw is still confirming the channel. This can take a few seconds.'));
+      }
       if (!result.success) {
         setTestError(result.error || t('channels.setupFailed', 'Setup failed. Check Gateway in Settings.'));
       }
@@ -475,6 +479,11 @@ export default function Channels() {
                           <Check size={32} className="text-emerald-400" />
                         </div>
                         <p className="text-emerald-300 font-medium">{t('channels.success')}</p>
+                        {testNotice && (
+                          <p className="text-xs text-slate-400 bg-slate-800/60 rounded-lg px-3 py-2 max-w-sm mx-auto">
+                            {testNotice}
+                          </p>
+                        )}
                       </div>
                     )}
                     {testStatus === 'error' && (

@@ -264,6 +264,7 @@ OpenClaw 的 chat 质量依赖 `~/.openclaw/workspace/` 下的 MD 文档：
 - [x] ~~Settings 页白屏~~ — plugins.entries 是对象不是数组，P3 代码假设错误导致 .map() crash（2026-03-30）
 - [x] ~~Plugin 版本检测读错位置~~ — 改为读 `~/.openclaw/extensions/openclaw-memory/package.json`（实际安装位置）（2026-03-30）
 - [x] **通道连接全面修复**：所有通道（Telegram/Discord/LINE/Slack/飞书/Matrix/Google Chat）的 `channel:save` 均已统一修复为三步流程（plugin install → channels add / config write → gateway restart + agent bind）。`channel:test` 凭据检查已覆盖所有字段（token/botToken/appId/appSecret/serviceAccountFile/homeserver 等）。Telegram 手动验证通过（Windows CLI + 桌面端代码审计）。飞书/Matrix/Google Chat 直接写 JSON 的路径同样补齐了 plugin install + gateway restart + agent bind（2026-04-01）
+- [x] **一键通道连接确认优化**：`channel:setup` 改为登录成功后短轮询 `openclaw channels list`，确认超时时返回“仍在确认中”而不是直接失败；`openclaw-shell-output` 新增混合 stderr/JSON 解析测试，减少 agent/channel 列表偶发空白（2026-04-02）
 - [ ] **权限管理 UI 重设计**：Settings 页的 tools.alsoAllow / tools.denied 编辑太技术化，普通用户不知道该填什么。需要改为：预设权限方案（"安全模式"/"标准模式"/"开发者模式"）+ 开关式 UI，而非让用户手写工具名
 - [ ] **新建会话按钮美化**：侧边栏的"+ 新对话"按钮样式粗糙，参考 Claude Desktop 的新建按钮风格（圆角、hover 动画、快捷键提示 ⌘N）
 - [ ] **聊天 UI 细节打磨**：消息气泡间距、代码块样式、工具调用折叠动画、滚动行为、空态页面等细节对齐 Claude Desktop / ChatGPT 水准

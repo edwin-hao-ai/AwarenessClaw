@@ -175,8 +175,11 @@ const en: Record<string, string> = {
   'channels.status.configuringImessage': 'Configuring iMessage...',
   'channels.status.configuring': 'Configuring {0}...',
   'channels.status.connecting': 'Connecting to {0}...',
+  'channels.status.confirming': 'Confirming {0}...',
+  'channels.status.awaitingConfirmation': '{0} is still syncing in OpenClaw...',
   'channels.oneclick.wait': 'Initializing...',
   'channels.oneclick.patience': 'First time may take 15-20s to load',
+  'channels.pendingConfirmation': 'Login completed. OpenClaw is still confirming the channel. This can take a few seconds.',
 
   // Skills
   'skills.title': 'Skills',
@@ -830,8 +833,11 @@ const zh: Record<string, string> = {
   'channels.status.configuringImessage': '正在配置 iMessage...',
   'channels.status.configuring': '正在配置 {0}...',
   'channels.status.connecting': '正在连接 {0}...',
+  'channels.status.confirming': '正在确认 {0}...',
+  'channels.status.awaitingConfirmation': '{0} 仍在 OpenClaw 中同步...',
   'channels.oneclick.wait': '正在初始化...',
   'channels.oneclick.patience': '首次加载可能需要 15-20 秒',
+  'channels.pendingConfirmation': '登录已完成，OpenClaw 仍在确认该通道，通常还需要几秒钟。',
 
   // Skills
   'skills.title': '技能',

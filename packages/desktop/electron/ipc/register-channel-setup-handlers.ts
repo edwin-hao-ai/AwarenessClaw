@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron';
+import { parseJsonShellOutput } from '../openclaw-shell-output';
 
 export function registerChannelSetupHandlers(deps: {
   getMainWindow: () => typeof Electron.BrowserWindow.prototype | null;
@@ -8,8 +9,32 @@ export function registerChannelSetupHandlers(deps: {
   readShellOutputAsync: (cmd: string, timeoutMs?: number) => Promise<string | null>;
   channelLoginWithQR: (loginCmd: string, timeoutMs?: number) => Promise<{ success: boolean; output?: string; error?: string }>;
 }) {
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  const isLinkedStatus = (value: string | null | undefined) => /configured|linked|active|enabled/i.test(value || '');
+
   const isChannelLinked = (output: string | null, openclawId: string) => {
     if (!output) return false;
+
+    const parsed = parseJsonShellOutput<any>(output);
+    if (parsed) {
+      const channels = Array.isArray(parsed)
+        ? parsed
+        : Array.isArray(parsed.channels)
+          ? parsed.channels
+          : Array.isArray(parsed.items)
+            ? parsed.items
+            : [];
+
+      if (channels.some((channel: any) => {
+        const id = String(channel?.id || channel?.name || '').toLowerCase();
+        const status = String(channel?.status || channel?.state || channel?.mode || '');
+        return id === openclawId.toLowerCase() && isLinkedStatus(status);
+      })) {
+        return true;
+      }
+    }
+
     const needle = openclawId.toLowerCase();
     return output
       .split('\n')
@@ -18,6 +43,24 @@ export function registerChannelSetupHandlers(deps: {
         if (!lower.includes(needle)) return false;
         return /(configured|linked|active|enabled)/i.test(line);
       });
+  };
+
+  const waitForChannelConfirmation = async (openclawId: string, label: string, sendStatus: (msg: string) => void) => {
+    const attempts = [12000, 8000, 8000];
+
+    for (let index = 0; index < attempts.length; index += 1) {
+      sendStatus(`channels.status.confirming::${label}`);
+      const output = await deps.readShellOutputAsync('openclaw channels list 2>&1', attempts[index]);
+      if (isChannelLinked(output, openclawId)) {
+        return true;
+      }
+
+      if (index < attempts.length - 1) {
+        await sleep(1500);
+      }
+    }
+
+    return false;
   };
 
   ipcMain.handle('channel:setup', async (_e: any, channelId: string) => {
@@ -38,17 +81,18 @@ export function registerChannelSetupHandlers(deps: {
 
     const channelDef = deps.getChannel(safeChannelId);
     const openclawId = channelDef?.openclawId || safeChannelId;
+    const channelLabel = channelDef?.label || safeChannelId;
     const pluginPkg = channelDef?.pluginPackage || `@openclaw/${openclawId}`;
     const setupFlow = channelDef?.setupFlow || 'qr-login';
 
-    sendStatus(`channels.status.configuring::${channelDef?.label || safeChannelId}`);
+    sendStatus(`channels.status.configuring::${channelLabel}`);
     try { await deps.runAsync(`openclaw plugins install "${pluginPkg}" 2>&1`, 30000); } catch {}
 
     if (setupFlow === 'add-only') {
       try {
         await deps.runAsync(`openclaw channels add --channel ${openclawId} 2>&1`, 15000);
         await bindToMainAgent(openclawId);
-        return { success: true, output: `${channelDef?.label || safeChannelId} connected.` };
+        return { success: true, output: `${channelLabel} connected.` };
       } catch (err: any) {
         return { success: false, error: err.message?.slice(0, 300) };
       }
@@ -58,13 +102,18 @@ export function registerChannelSetupHandlers(deps: {
       try { await deps.runAsync(`openclaw channels add --channel ${openclawId} 2>&1`, 15000); } catch {}
     }
 
-    sendStatus(`channels.status.connecting::${channelDef?.label || safeChannelId}`);
+    sendStatus(`channels.status.connecting::${channelLabel}`);
     const result = await deps.channelLoginWithQR(`openclaw channels login --channel ${openclawId} --verbose`);
     if (result.success) {
       await bindToMainAgent(openclawId);
-      const listOutput = await deps.readShellOutputAsync('openclaw channels list 2>&1', 20000);
-      if (!isChannelLinked(listOutput, openclawId)) {
-        return { success: false, error: 'Connection not confirmed yet. Please finish linking on your phone and try again.' };
+      const confirmed = await waitForChannelConfirmation(openclawId, channelLabel, sendStatus);
+      if (!confirmed) {
+        sendStatus(`channels.status.awaitingConfirmation::${channelLabel}`);
+        return {
+          success: true,
+          pendingConfirmation: true,
+          output: 'Login completed. OpenClaw is still confirming the channel.',
+        };
       }
     }
     return result;
