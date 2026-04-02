@@ -624,6 +624,7 @@ ipcMain.handle('daemon:mark-connected', () => {
 
 registerAppUtilityHandlers({
   safeShellExecAsync,
+  readShellOutputAsync,
   homedir: HOME,
 });
 registerAppRuntimeHandlers({
@@ -655,12 +656,14 @@ registerChatHandlers({
 registerAgentHandlers({
   home: HOME,
   safeShellExecAsync,
+  readShellOutputAsync,
   ensureGatewayRunning,
   runAsync,
 });
 registerChannelConfigHandlers({
   home: HOME,
   safeShellExecAsync,
+  readShellOutputAsync,
   runAsync,
   discoverOpenClawChannels,
   parseCliHelp,
@@ -676,6 +679,7 @@ registerChannelConfigHandlers({
 registerChannelListHandlers({
   home: HOME,
   safeShellExecAsync,
+  readShellOutputAsync,
   toFrontendId,
 });
 registerChannelSessionHandlers({
@@ -687,6 +691,7 @@ registerChannelSetupHandlers({
   getChannel,
   runAsync,
   safeShellExecAsync,
+  readShellOutputAsync,
   channelLoginWithQR,
 });
 registerCronHandlers({

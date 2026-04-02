@@ -1,19 +1,24 @@
 import fs from 'fs';
 import path from 'path';
 import { ipcMain } from 'electron';
+import { parseJsonShellOutput } from '../openclaw-shell-output';
 
 export function registerAgentHandlers(deps: {
   home: string;
   safeShellExecAsync: (cmd: string, timeoutMs?: number) => Promise<string | null>;
+  readShellOutputAsync: (cmd: string, timeoutMs?: number) => Promise<string | null>;
   ensureGatewayRunning: () => Promise<{ ok: boolean; error?: string }>;
   runAsync: (cmd: string, timeoutMs?: number) => Promise<string>;
 }) {
   ipcMain.handle('agents:list', async () => {
     try {
-      const output = await deps.safeShellExecAsync('openclaw agents list --json --bindings', 8000);
+      const output = await deps.readShellOutputAsync('openclaw agents list --json --bindings', 15000);
       if (output) {
         try {
-          const parsed = JSON.parse(output);
+          const parsed = parseJsonShellOutput<any>(output);
+          if (!parsed) {
+            throw new Error('Could not parse agents JSON');
+          }
           let list: any[] = [];
           if (Array.isArray(parsed)) {
             list = parsed;

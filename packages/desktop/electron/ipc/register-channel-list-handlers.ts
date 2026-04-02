@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { ipcMain } from 'electron';
+import { parseJsonShellOutput } from '../openclaw-shell-output';
 
 const channelStatusCache: { configured: string[]; ts: number } = { configured: [], ts: 0 };
 
@@ -22,6 +23,7 @@ function readConfiguredFromFile(home: string, toFrontendId: (openclawId: string)
 export function registerChannelListHandlers(deps: {
   home: string;
   safeShellExecAsync: (cmd: string, timeoutMs?: number) => Promise<string | null>;
+  readShellOutputAsync: (cmd: string, timeoutMs?: number) => Promise<string | null>;
   toFrontendId: (openclawId: string) => string;
 }) {
   ipcMain.handle('channel:list-configured', async () => {
@@ -31,10 +33,13 @@ export function registerChannelListHandlers(deps: {
       return { success: true, configured: channelStatusCache.configured };
     }
 
-    deps.safeShellExecAsync('openclaw channels list 2>/dev/null', 15000).then((output) => {
+    deps.readShellOutputAsync('openclaw channels list 2>&1', 20000).then((output) => {
       if (!output) return;
       try {
-        const jsonParsed = JSON.parse(output);
+        const jsonParsed = parseJsonShellOutput<any>(output);
+        if (!jsonParsed) {
+          throw new Error('Could not parse configured channels JSON');
+        }
         const arr = Array.isArray(jsonParsed) ? jsonParsed : (jsonParsed.channels || jsonParsed.items || []);
         const jsonConfigured: string[] = arr
           .filter((ch: any) => {
@@ -81,10 +86,13 @@ export function registerChannelListHandlers(deps: {
 
   ipcMain.handle('channel:list-supported', async () => {
     try {
-      const output = await deps.safeShellExecAsync('openclaw channels list', 8000);
+      const output = await deps.readShellOutputAsync('openclaw channels list 2>&1', 15000);
       if (output) {
         try {
-          const parsed = JSON.parse(output);
+          const parsed = parseJsonShellOutput<any>(output);
+          if (!parsed) {
+            throw new Error('Could not parse supported channels JSON');
+          }
           const arr = Array.isArray(parsed) ? parsed : (parsed.channels || parsed.items || []);
           const channels = arr.map((ch: any) => (ch.id || ch.name || '').toLowerCase()).filter(Boolean);
           if (channels.length > 0) return { success: true, channels };

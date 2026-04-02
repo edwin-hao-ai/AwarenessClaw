@@ -4,10 +4,11 @@ import { ipcMain } from 'electron';
 
 export function registerAppUtilityHandlers(deps: {
   safeShellExecAsync: (cmd: string, timeoutMs?: number) => Promise<string | null>;
+  readShellOutputAsync: (cmd: string, timeoutMs?: number) => Promise<string | null>;
   homedir: string;
 }) {
   ipcMain.handle('app:get-dashboard-url', async () => {
-    const output = await deps.safeShellExecAsync('openclaw dashboard --no-open', 10000);
+    const output = await deps.readShellOutputAsync('openclaw dashboard --no-open', 10000);
     if (!output) return { url: null };
 
     const patterns = [
@@ -25,9 +26,9 @@ export function registerAppUtilityHandlers(deps: {
   });
 
   ipcMain.handle('logs:recent', async () => {
-    let output = await deps.safeShellExecAsync('openclaw gateway logs --lines 100 2>&1', 10000);
+    let output = await deps.readShellOutputAsync('openclaw gateway logs --lines 100 2>&1', 10000);
     if (!output || output.includes('not found')) {
-      output = await deps.safeShellExecAsync('openclaw logs --lines 100 2>&1', 10000);
+      output = await deps.readShellOutputAsync('openclaw logs --lines 100 2>&1', 10000);
     }
 
     const appLogPath = path.join(deps.homedir, '.openclaw', 'gateway.log');

@@ -7,6 +7,26 @@ import { migrateLegacyChannelConfig } from '../openclaw-config';
 
 let discoveryDone = false;
 
+function coerceTelegramCliConfig(channelDef: ChannelDef | undefined, config: Record<string, string>) {
+  if (!channelDef) return config;
+  if (channelDef.openclawId !== 'telegram' && channelDef.id !== 'telegram') return config;
+
+  const tokenValue = config.botToken || config.token;
+  if (!tokenValue) return config;
+
+  const wantsToken = channelDef.configFields?.some((field) => field.key === 'token');
+  const wantsBotToken = channelDef.configFields?.some((field) => field.key === 'botToken');
+  const next = { ...config };
+  if (wantsToken && !next.token) next.token = tokenValue;
+  if (wantsBotToken && !next.botToken) next.botToken = tokenValue;
+  return next;
+}
+
+function normalizeTelegramConfigInFile(config: any) {
+  migrateLegacyChannelConfig(config);
+  return config;
+}
+
 function getManagedRuntimeDist(home: string): string | undefined {
   return [
     path.join(home, '.awareness-claw', 'openclaw-runtime', 'node_modules', 'openclaw', 'dist'),
@@ -17,6 +37,7 @@ function getManagedRuntimeDist(home: string): string | undefined {
 export function registerChannelConfigHandlers(deps: {
   home: string;
   safeShellExecAsync: (cmd: string, timeoutMs?: number) => Promise<string | null>;
+  readShellOutputAsync: (cmd: string, timeoutMs?: number) => Promise<string | null>;
   runAsync: (cmd: string, timeoutMs?: number) => Promise<string>;
   discoverOpenClawChannels: () => void;
   parseCliHelp: (helpOutput: string) => {
@@ -133,6 +154,7 @@ export function registerChannelConfigHandlers(deps: {
       const openclawId = channelDef?.openclawId || channelId;
       const pluginPkg = channelDef?.pluginPackage || `@openclaw/${openclawId}`;
       const saveStrategy = channelDef?.saveStrategy || 'cli';
+      const configForCli = openclawId === 'telegram' ? coerceTelegramCliConfig(channelDef, config) : config;
 
       try { await deps.runAsync(`openclaw plugins install "${pluginPkg}" 2>&1`, 60000); } catch {}
 
@@ -145,7 +167,7 @@ export function registerChannelConfigHandlers(deps: {
         migrateLegacyChannelConfig(existing);
         fs.writeFileSync(configPath, JSON.stringify(existing, null, 2));
       } else {
-        const cliFlags = channelDef ? deps.buildCLIFlags(channelDef, config) : '';
+        const cliFlags = channelDef ? deps.buildCLIFlags(channelDef, configForCli) : '';
         const addCmd = `openclaw channels add --channel ${openclawId} ${cliFlags} 2>&1`;
         try {
           await deps.runAsync(addCmd, 15000);
@@ -158,6 +180,15 @@ export function registerChannelConfigHandlers(deps: {
             return { success: false, error: msg.slice(0, 300) };
           }
         }
+      }
+
+      if (openclawId === 'telegram') {
+        try {
+          const configPath = path.join(deps.home, '.openclaw', 'openclaw.json');
+          const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+          migrateLegacyChannelConfig(existing);
+          fs.writeFileSync(configPath, JSON.stringify(existing, null, 2));
+        } catch {}
       }
 
       try { await deps.runAsync('openclaw gateway restart 2>&1', 20000); } catch {}
@@ -182,10 +213,13 @@ export function registerChannelConfigHandlers(deps: {
         return { success: false, error: 'No credentials found' };
       }
 
-      const gwStatus = await deps.safeShellExecAsync('openclaw channels status 2>&1', 8000);
+      // Use readShellOutputAsync — OpenClaw emits config warnings to stderr which causes
+      // non-zero exit codes on Windows; safeShellExecAsync would return null.
+      // Timeout 20s — plugin loading (awareness-memory, weixin, etc.) takes 10-15s.
+      const gwStatus = await deps.readShellOutputAsync('openclaw channels status 2>&1', 20000);
       const gwRunning = gwStatus && (gwStatus.includes('running') || gwStatus.includes('active'));
 
-      const listOutput = await deps.safeShellExecAsync('openclaw channels list 2>&1', 8000);
+      const listOutput = await deps.readShellOutputAsync('openclaw channels list 2>&1', 20000);
       const isListed = listOutput && listOutput.toLowerCase().includes(channelId);
 
       if (isListed && gwRunning) {

@@ -5,8 +5,21 @@ export function registerChannelSetupHandlers(deps: {
   getChannel: (channelId: string) => any;
   runAsync: (cmd: string, timeoutMs?: number) => Promise<string>;
   safeShellExecAsync: (cmd: string, timeoutMs?: number) => Promise<string | null>;
+  readShellOutputAsync: (cmd: string, timeoutMs?: number) => Promise<string | null>;
   channelLoginWithQR: (loginCmd: string, timeoutMs?: number) => Promise<{ success: boolean; output?: string; error?: string }>;
 }) {
+  const isChannelLinked = (output: string | null, openclawId: string) => {
+    if (!output) return false;
+    const needle = openclawId.toLowerCase();
+    return output
+      .split('\n')
+      .some((line) => {
+        const lower = line.toLowerCase();
+        if (!lower.includes(needle)) return false;
+        return /(configured|linked|active|enabled)/i.test(line);
+      });
+  };
+
   ipcMain.handle('channel:setup', async (_e: any, channelId: string) => {
     const safeChannelId = channelId.replace(/[^a-zA-Z0-9_-]/g, '');
     if (!safeChannelId || safeChannelId !== channelId) {
@@ -47,7 +60,13 @@ export function registerChannelSetupHandlers(deps: {
 
     sendStatus(`channels.status.connecting::${channelDef?.label || safeChannelId}`);
     const result = await deps.channelLoginWithQR(`openclaw channels login --channel ${openclawId} --verbose`);
-    if (result.success) await bindToMainAgent(openclawId);
+    if (result.success) {
+      await bindToMainAgent(openclawId);
+      const listOutput = await deps.readShellOutputAsync('openclaw channels list 2>&1', 20000);
+      if (!isChannelLinked(listOutput, openclawId)) {
+        return { success: false, error: 'Connection not confirmed yet. Please finish linking on your phone and try again.' };
+      }
+    }
     return result;
   });
 }
