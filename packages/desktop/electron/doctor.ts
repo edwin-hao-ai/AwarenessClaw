@@ -60,6 +60,8 @@ interface Ctx {
   nodePath: string | null;
   openclawVersion: string | null;
   openclawPath: string | null;
+  managedOpenclawPath: string | null;
+  usingManagedOpenclaw: boolean;
   openclawCandidates: string[];
   npmPrefix: string | null;
   configPath: string;
@@ -153,6 +155,45 @@ function normalizeWindowsCommandCandidates(paths: string[]): string[] {
   return normalized;
 }
 
+function parseAgentBindings(output: string | null): any[] {
+  if (!output) return [];
+
+  const objectStart = output.indexOf('{');
+  const arrayStart = output.indexOf('[');
+  const jsonStart = [objectStart, arrayStart].filter(index => index >= 0).sort((a, b) => a - b)[0];
+  if (jsonStart === undefined) return [];
+
+  try {
+    const parsed = JSON.parse(output.slice(jsonStart));
+    if (Array.isArray(parsed)) return parsed;
+    if (Array.isArray(parsed.bindings)) return parsed.bindings;
+    if (Array.isArray(parsed.data)) return parsed.data;
+  } catch {
+    return [];
+  }
+
+  return [];
+}
+
+function getEnabledChannels(config: any | null): string[] {
+  if (!config?.channels || typeof config.channels !== 'object') return [];
+  return Object.entries(config.channels)
+    .filter(([, value]: [string, any]) => value?.enabled)
+    .map(([channelId]) => channelId);
+}
+
+async function getUnboundChannels(ctx: Ctx): Promise<string[] | null> {
+  const enabledChannels = getEnabledChannels(ctx.config);
+  if (enabledChannels.length === 0) return [];
+
+  const output = await ctx.deps.shellExec('openclaw agents bindings --json 2>/dev/null', 10000);
+  const bindings = parseAgentBindings(output);
+  if (!output || bindings.length === 0) return null;
+
+  const boundChannels = new Set(bindings.map((binding: any) => binding.match?.channel).filter(Boolean));
+  return enabledChannels.filter((channelId) => !boundChannels.has(channelId));
+}
+
 async function buildContext(deps: DoctorDeps): Promise<Ctx> {
   const configPath = path.join(deps.homedir, '.openclaw', 'openclaw.json');
   let config: any = null;
@@ -168,7 +209,7 @@ async function buildContext(deps: DoctorDeps): Promise<Ctx> {
     ? normalizeWindowsCommandCandidates(openclawCandidatesRaw)
     : openclawCandidatesRaw;
   const managedOpenclawPath = getManagedOpenClawEntrypoint(deps.homedir);
-  const openclawPath = openclawCandidates[0] || managedOpenclawPath || null;
+  const openclawPath = managedOpenclawPath || openclawCandidates[0] || null;
   const openclawVersion = openclawPath ? await deps.shellExec('openclaw --version', 8000) : null;
   const npmPrefix = await deps.shellExec('npm config get prefix', 5000);
 
@@ -177,6 +218,8 @@ async function buildContext(deps: DoctorDeps): Promise<Ctx> {
     nodePath: nodePath?.trim() || null,
     openclawVersion: openclawVersion?.trim() || null,
     openclawPath: openclawPath?.trim() || null,
+    managedOpenclawPath: managedOpenclawPath?.trim() || null,
+    usingManagedOpenclaw: !!managedOpenclawPath,
     openclawCandidates,
     npmPrefix: npmPrefix?.trim() || null,
     configPath, config, deps,
@@ -205,40 +248,47 @@ async function checkOpenclawCommandHealth(ctx: Ctx): Promise<CheckResult> {
     return { id: 'openclaw-command-health', label: 'OpenClaw command path', status: 'skipped', message: 'Skipped (OpenClaw not installed)', fixable: 'none' };
   }
 
-  const duplicates = ctx.openclawCandidates.filter(candidate => candidate !== ctx.openclawPath);
-  if (duplicates.length === 0) {
-    return { id: 'openclaw-command-health', label: 'OpenClaw command path', status: 'pass', message: 'Command path is healthy', fixable: 'none' };
-  }
-
-  if (ctx.deps.platform === 'win32') {
+  if (ctx.usingManagedOpenclaw) {
     return {
       id: 'openclaw-command-health',
       label: 'OpenClaw command path',
-      status: 'warn',
-      message: 'Multiple OpenClaw command shims found. This can cause slow startup or launch the wrong version.',
-      fixable: 'auto',
-      fixDescription: 'Refresh the Windows OpenClaw command shims',
-      detail: ctx.openclawCandidates.join('; '),
+      status: 'pass',
+      message: 'AwarenessClaw is pinned to its managed OpenClaw runtime',
+      fixable: 'none',
     };
+  }
+
+  const duplicates = ctx.openclawCandidates.filter(candidate => candidate !== ctx.openclawPath);
+  if (duplicates.length === 0) {
+    return { id: 'openclaw-command-health', label: 'OpenClaw command path', status: 'pass', message: 'Command path is healthy', fixable: 'none' };
   }
 
   return {
     id: 'openclaw-command-health',
     label: 'OpenClaw command path',
     status: 'warn',
-    message: 'Multiple OpenClaw command paths found. The app may start the wrong version.',
-    fixable: 'manual',
-    fixDescription: 'Remove old OpenClaw installs so only one command path remains',
+    message: ctx.deps.platform === 'win32'
+      ? 'Multiple OpenClaw command shims found. This can cause slow startup or launch the wrong version.'
+      : 'Multiple OpenClaw command paths found. The app may start the wrong version.',
+    fixable: 'auto',
+    fixDescription: ctx.deps.platform === 'win32'
+      ? 'Refresh the Windows OpenClaw command shims'
+      : 'Install and pin the AwarenessClaw managed OpenClaw runtime',
     detail: ctx.openclawCandidates.join('; '),
   };
 }
 
 async function fixOpenclawCommandHealth(ctx: Ctx): Promise<FixResult> {
-  if (ctx.deps.platform !== 'win32') {
-    return { id: 'openclaw-command-health', success: false, message: 'Automatic cleanup is only available on Windows' };
-  }
-
   try {
+    if (ctx.deps.platform !== 'win32') {
+      await ctx.deps.shellRun(`${getManagedOpenClawInstallCommand(ctx.deps.homedir, 'openclaw@latest')} 2>&1`, 120000);
+      return {
+        id: 'openclaw-command-health',
+        success: true,
+        message: 'AwarenessClaw is now pinned to its managed OpenClaw runtime',
+      };
+    }
+
     const shimDir = path.join(process.env.APPDATA || path.join(ctx.deps.homedir, 'AppData', 'Roaming'), 'npm');
     const managedPrefix = getManagedOpenClawPrefix(ctx.deps.homedir);
     try {
@@ -504,22 +554,21 @@ async function fixDaemonStart(ctx: Ctx): Promise<FixResult> {
 
 async function checkChannelBindings(ctx: Ctx): Promise<CheckResult> {
   if (!ctx.openclawPath || !ctx.config) return { id: 'channel-bindings', label: 'Channel routing', status: 'skipped', message: 'Skipped', fixable: 'none' };
-  const channels = ctx.config.channels || {};
-  const enabledChannels = Object.entries(channels).filter(([, v]: [string, any]) => v?.enabled).map(([k]) => k);
+  const enabledChannels = getEnabledChannels(ctx.config);
   if (enabledChannels.length === 0) return { id: 'channel-bindings', label: 'Channel routing', status: 'pass', message: 'No channels configured', fixable: 'none' };
 
   try {
-    const output = await ctx.deps.shellExec('openclaw agents bindings --json 2>/dev/null', 10000);
-    if (output) {
-      const bindings = JSON.parse(output.substring(output.indexOf('[')));
-      const boundChannels = new Set(bindings.map((b: any) => b.match?.channel).filter(Boolean));
-      const unbound = enabledChannels.filter(ch => !boundChannels.has(ch));
-      if (unbound.length > 0) {
-        return { id: 'channel-bindings', label: 'Channel routing', status: 'warn',
-          message: `${unbound.length} channel(s) not bound to any agent`, fixable: 'auto',
-          fixDescription: `Bind ${unbound.join(', ')} to the main agent`, detail: unbound.join(', ') };
-      }
+    const unbound = await getUnboundChannels(ctx);
+    if (unbound === null) {
+      return { id: 'channel-bindings', label: 'Channel routing', status: 'warn', message: 'Could not verify channel routing', fixable: 'none' };
     }
+
+    if (unbound.length > 0) {
+      return { id: 'channel-bindings', label: 'Channel routing', status: 'warn',
+        message: `${unbound.length} channel(s) not bound to any agent`, fixable: 'auto',
+        fixDescription: `Bind ${unbound.join(', ')} to the main agent`, detail: unbound.join(', ') };
+    }
+
     return { id: 'channel-bindings', label: 'Channel routing', status: 'pass', message: 'All channels routed', fixable: 'none' };
   } catch {
     return { id: 'channel-bindings', label: 'Channel routing', status: 'warn', message: 'Could not verify channel routing', fixable: 'none' };
@@ -527,15 +576,31 @@ async function checkChannelBindings(ctx: Ctx): Promise<CheckResult> {
 }
 
 async function fixChannelBindings(ctx: Ctx): Promise<FixResult> {
-  const channels = ctx.config?.channels || {};
-  const enabledChannels = Object.entries(channels).filter(([, v]: [string, any]) => v?.enabled).map(([k]) => k);
+  const unboundChannels = await getUnboundChannels(ctx);
+  if (unboundChannels === null) {
+    return { id: 'channel-bindings', success: false, message: 'Could not verify which channels still need binding' };
+  }
+
+  if (unboundChannels.length === 0) {
+    return { id: 'channel-bindings', success: true, message: 'All channels are already bound' };
+  }
+
   let fixed = 0;
-  for (const ch of enabledChannels) {
+  const failed: string[] = [];
+
+  for (const ch of unboundChannels) {
     try {
       await ctx.deps.shellRun(`openclaw agents bind --agent main --bind "${ch}" 2>&1`, 10000);
       fixed++;
-    } catch { /* may already be bound */ }
+    } catch {
+      failed.push(ch);
+    }
   }
+
+  if (failed.length > 0) {
+    return { id: 'channel-bindings', success: false, message: `Could not bind: ${failed.join(', ')}` };
+  }
+
   return { id: 'channel-bindings', success: true, message: `Bound ${fixed} channel(s) to main agent` };
 }
 

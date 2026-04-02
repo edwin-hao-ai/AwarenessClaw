@@ -208,6 +208,7 @@ export function registerRuntimeHealthHandlers(deps: {
       'plugin-installed',
       'daemon-running',
       'gateway-running',
+      'channel-bindings',
     ]);
 
     if (process.platform === 'darwin') {
@@ -216,7 +217,7 @@ export function registerRuntimeHealthHandlers(deps: {
 
     const startupChecks = [
       'node-installed', 'openclaw-installed', 'openclaw-command-health',
-      'gateway-running', 'plugin-installed', 'daemon-running',
+      'gateway-running', 'plugin-installed', 'daemon-running', 'channel-bindings',
       ...(process.platform === 'darwin' ? ['launchagent-path'] : []),
     ];
 
