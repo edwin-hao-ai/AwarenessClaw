@@ -202,12 +202,12 @@ describe('Dashboard (Chat)', () => {
       fireEvent.click(screen.getByTitle(/Switch permissions/));
     });
 
-    expect(screen.getAllByText('Safe').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Standard').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Developer').length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/^(Safe|安全模式)$/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/^(Standard|标准模式)$/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/^(Developer|开发者模式)$/).length).toBeGreaterThan(0);
 
     await act(async () => {
-      fireEvent.click(screen.getAllByText('Developer')[0]);
+      fireEvent.click(screen.getAllByText(/^(Developer|开发者模式)$/)[0]);
     });
 
     await waitFor(() => {
@@ -255,8 +255,12 @@ describe('Dashboard (Chat)', () => {
       fireEvent.click(screen.getByTitle(/Switch permissions/));
     });
 
+    await waitFor(() => {
+      expect(screen.getAllByText(/^(Developer|开发者模式)$/).length).toBeGreaterThan(0);
+    });
+
     await act(async () => {
-      fireEvent.click(screen.getAllByText('Developer')[0]);
+      fireEvent.click(screen.getAllByText(/^(Developer|开发者模式)$/)[0]);
     });
 
     await waitFor(() => {

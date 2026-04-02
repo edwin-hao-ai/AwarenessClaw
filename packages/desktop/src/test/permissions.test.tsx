@@ -114,6 +114,9 @@ describe('Settings Page — Permissions Panel', () => {
       ],
       denied: [],
       execAsk: 'off',
+      execSecurity: 'full',
+      execAskFallback: 'full',
+      execAutoAllowSkills: true,
     });
 
     api.permissionsGet = origGet;
