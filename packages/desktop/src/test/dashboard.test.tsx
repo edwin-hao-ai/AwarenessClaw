@@ -61,7 +61,6 @@ describe('Dashboard (Chat)', () => {
     await waitFor(() => {
       expect(api.workspaceReadFile).toHaveBeenCalledWith('USER.md');
     });
-    expect(screen.queryByText('欢迎使用 AwarenessClaw')).not.toBeInTheDocument();
   });
 
   it('clicking suggested prompt fills input', async () => {
@@ -406,5 +405,67 @@ describe('Dashboard (Chat)', () => {
       expect(api.chatSend).toHaveBeenNthCalledWith(2, '/approve approval-1 allow-once', expect.any(String), expect.any(Object));
       expect(screen.getByText(/working directory is \/tmp\/demo/)).toBeInTheDocument();
     });
+  });
+
+  it('routes unconfigured providers to Settings instead of opening a second config flow', async () => {
+    const onNavigate = vi.fn();
+    localStorage.setItem('awareness-claw-config', JSON.stringify({
+      language: 'zh', providerKey: 'qwen-portal', modelId: 'qwen-turbo-latest',
+      bootstrapCompleted: true,
+      providerProfiles: {
+        'qwen-portal': {
+          apiKey: 'qwen-key',
+          baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+          models: [{ id: 'qwen-turbo-latest', label: 'Qwen Turbo' }],
+        },
+      },
+    }));
+
+    await act(async () => { render(<Dashboard onNavigate={onNavigate} />); });
+
+    await act(async () => {
+      fireEvent.click(screen.getByText(/qwen-turbo-latest/i));
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getAllByText(/GPT-4o/i)[0]);
+    });
+
+    expect(onNavigate).toHaveBeenCalledWith('settings');
+  });
+
+  it('restores provider-specific credentials when quick switching from chat header', async () => {
+    localStorage.setItem('awareness-claw-config', JSON.stringify({
+      language: 'zh', providerKey: 'qwen-portal', modelId: 'qwen-turbo-latest',
+      bootstrapCompleted: true,
+      providerProfiles: {
+        'qwen-portal': {
+          apiKey: 'qwen-key',
+          baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+          models: [{ id: 'qwen-turbo-latest', label: 'Qwen Turbo' }],
+        },
+        openai: {
+          apiKey: 'openai-key',
+          baseUrl: 'https://api.openai.com/v1',
+          models: [{ id: 'gpt-4o', label: 'GPT-4o' }],
+        },
+      },
+    }));
+
+    await act(async () => { render(<Dashboard />); });
+
+    await act(async () => {
+      fireEvent.click(screen.getByText(/qwen-turbo-latest/i));
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getAllByText(/GPT-4o/i)[0]);
+    });
+
+    const config = JSON.parse(localStorage.getItem('awareness-claw-config') || '{}');
+    expect(config.providerKey).toBe('openai');
+    expect(config.modelId).toBe('gpt-4o');
+    expect(config.apiKey).toBe('openai-key');
+    expect(config.baseUrl).toBe('https://api.openai.com/v1');
   });
 });

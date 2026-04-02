@@ -11,7 +11,7 @@ describe('Settings Page', () => {
 
   it('renders settings header', async () => {
     await act(async () => { render(<Settings />); });
-    expect(screen.getByText(/Settings/)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /Settings/ })).toBeInTheDocument();
   });
 
   it('renders model section', async () => {

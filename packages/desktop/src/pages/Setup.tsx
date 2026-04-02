@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ChevronRight, ChevronLeft, Loader2, Check, Globe, AlertTriangle, RefreshCw } from 'lucide-react';
-import { useAppConfig, MODEL_PROVIDERS, type ModelProviderDef } from '../lib/store';
+import { useAppConfig, MODEL_PROVIDERS, type ModelProviderDef, getProviderProfile } from '../lib/store';
 import { useI18n } from '../lib/i18n';
 import PasswordInput from '../components/PasswordInput';
 import logoUrl from '../assets/logo.png';
@@ -16,7 +16,7 @@ const PROVIDERS = MODEL_PROVIDERS;
 
 
 export default function SetupWizard({ onComplete }: SetupProps) {
-  const { updateConfig, syncConfig } = useAppConfig();
+  const { config, updateConfig, syncConfig, saveProviderConfig } = useAppConfig();
   const { t, locale } = useI18n();
   const [step, setStep] = useState<Step>('welcome');
   const [lang, setLang] = useState<'zh' | 'en'>(locale === 'zh' ? 'zh' : 'en');
@@ -203,15 +203,24 @@ export default function SetupWizard({ onComplete }: SetupProps) {
   };
 
   const handleModelNext = async () => {
-    // Save to shared store (persists to localStorage)
-    updateConfig({
-      providerKey: selectedProvider || '',
+    if (!selectedProvider) return;
+
+    const provider = PROVIDERS.find((item) => item.key === selectedProvider);
+    saveProviderConfig({
+      providerKey: selectedProvider,
       modelId: selectedModel,
       apiKey,
       baseUrl: customBaseUrl,
-    });
-    // Sync to openclaw.json
-    syncConfig(PROVIDERS);
+      apiType: provider?.apiType,
+      name: provider?.name,
+      needsKey: provider?.needsKey,
+      models: (provider?.models || []).map((model) => ({
+        id: model.id,
+        label: model.label,
+        name: model.label,
+      })),
+    }, PROVIDERS);
+    await syncConfig(PROVIDERS);
     setStep('memory');
   };
 
@@ -384,10 +393,11 @@ export default function SetupWizard({ onComplete }: SetupProps) {
                   <button
                     key={p.key}
                     onClick={() => {
+                      const profile = getProviderProfile(config, p.key);
                       setSelectedProvider(p.key);
-                      setSelectedModel(p.models[0]?.id || '');
-                      setApiKey('');
-                      setCustomBaseUrl('');
+                      setSelectedModel(profile.models[0]?.id || p.models[0]?.id || '');
+                      setApiKey(profile.apiKey);
+                      setCustomBaseUrl(profile.baseUrl);
                       setShowAdvanced(false);
                     }}
                     className={`p-4 rounded-xl text-left transition-all border ${

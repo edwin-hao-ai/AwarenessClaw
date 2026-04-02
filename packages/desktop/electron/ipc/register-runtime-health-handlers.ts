@@ -2,6 +2,50 @@ import fs from 'fs';
 import path from 'path';
 import { ipcMain } from 'electron';
 
+function normalizeModelsUrl(baseUrl: string): string {
+  const trimmed = (baseUrl || '').trim().replace(/\/+$/, '');
+  if (!trimmed) return '';
+  return trimmed.endsWith('/models') ? trimmed : `${trimmed}/models`;
+}
+
+function buildModelDiscoveryHeaders(providerKey: string, apiKey: string) {
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+  };
+
+  if (apiKey) {
+    headers.Authorization = `Bearer ${apiKey}`;
+    headers['x-api-key'] = apiKey;
+    headers['api-key'] = apiKey;
+  }
+
+  if (providerKey === 'anthropic') {
+    headers['anthropic-version'] = '2023-06-01';
+  }
+
+  return headers;
+}
+
+function parseDiscoveredModels(payload: any): Array<{ id: string; name: string; reasoning?: boolean; contextWindow?: number; maxTokens?: number }> {
+  const candidates = Array.isArray(payload?.data)
+    ? payload.data
+    : Array.isArray(payload?.models)
+      ? payload.models
+      : Array.isArray(payload?.result?.models)
+        ? payload.result.models
+        : [];
+
+  return candidates
+    .filter((item: any) => !!item && typeof item.id === 'string')
+    .map((item: any) => ({
+      id: item.id,
+      name: item.display_name || item.name || item.id,
+      ...(typeof item.reasoning === 'boolean' ? { reasoning: item.reasoning } : {}),
+      ...(typeof item.context_window === 'number' ? { contextWindow: item.context_window } : typeof item.contextWindow === 'number' ? { contextWindow: item.contextWindow } : {}),
+      ...(typeof item.max_output_tokens === 'number' ? { maxTokens: item.max_output_tokens } : typeof item.maxTokens === 'number' ? { maxTokens: item.maxTokens } : {}),
+    }));
+}
+
 export function registerRuntimeHealthHandlers(deps: {
   home: string;
   app: any;
@@ -77,6 +121,48 @@ export function registerRuntimeHealthHandlers(deps: {
       return { success: true, providers: result, primaryModel };
     } catch {
       return { success: false, providers: [], primaryModel: '' };
+    }
+  });
+
+  ipcMain.handle('models:discover', async (_e, input: { providerKey: string; baseUrl: string; apiKey?: string }) => {
+    const providerKey = input?.providerKey || '';
+    const baseUrl = input?.baseUrl || '';
+    const apiKey = input?.apiKey || '';
+    const url = normalizeModelsUrl(baseUrl);
+
+    if (!providerKey || !url) {
+      return { success: false, models: [], error: 'Missing provider key or base URL' };
+    }
+
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: buildModelDiscoveryHeaders(providerKey, apiKey),
+        signal: AbortSignal.timeout(10000),
+      });
+
+      if (!response.ok) {
+        return {
+          success: false,
+          models: [],
+          error: `HTTP ${response.status}`,
+        };
+      }
+
+      const payload = await response.json();
+      const models = parseDiscoveredModels(payload);
+
+      return {
+        success: models.length > 0,
+        models,
+        error: models.length > 0 ? '' : 'No models discovered',
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        models: [],
+        error: error?.message || String(error),
+      };
     }
   });
 

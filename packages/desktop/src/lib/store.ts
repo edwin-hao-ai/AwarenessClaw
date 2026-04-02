@@ -15,12 +15,36 @@ const DEFAULT_ALLOWED_TOOLS = [
   'awareness_get_agent_prompt',
 ];
 
+export interface ProviderStoredModel {
+  id: string;
+  label?: string;
+  name?: string;
+  reasoning?: boolean;
+  contextWindow?: number;
+  maxTokens?: number;
+  input?: string[];
+}
+
+export interface ProviderProfile {
+  apiKey: string;
+  baseUrl: string;
+  apiType?: string;
+  models: ProviderStoredModel[];
+  name?: string;
+  emoji?: string;
+  tag?: string;
+  desc?: string;
+  needsKey?: boolean;
+  lastSyncedAt?: string;
+}
+
 export interface AppConfig {
   // Model
   providerKey: string;
   modelId: string;
   apiKey: string;
   baseUrl: string;
+  providerProfiles: Record<string, ProviderProfile>;
   // Memory
   autoRecall: boolean;
   autoCapture: boolean;
@@ -47,6 +71,7 @@ const DEFAULT_CONFIG: AppConfig = {
   modelId: '',
   apiKey: '',
   baseUrl: '',
+  providerProfiles: {},
   autoRecall: true,
   autoCapture: true,
   recallLimit: 8,
@@ -61,10 +86,193 @@ const DEFAULT_CONFIG: AppConfig = {
   selectedAgentId: 'main',
 };
 
+function normalizeStoredModels(models: unknown): ProviderStoredModel[] {
+  if (!Array.isArray(models)) return [];
+  return models
+    .filter((item): item is Record<string, any> => !!item && typeof item === 'object' && typeof item.id === 'string')
+    .map((item) => ({
+      id: item.id,
+      ...(typeof item.label === 'string' ? { label: item.label } : {}),
+      ...(typeof item.name === 'string' ? { name: item.name } : {}),
+      ...(typeof item.reasoning === 'boolean' ? { reasoning: item.reasoning } : {}),
+      ...(typeof item.contextWindow === 'number' ? { contextWindow: item.contextWindow } : {}),
+      ...(typeof item.maxTokens === 'number' ? { maxTokens: item.maxTokens } : {}),
+      ...(Array.isArray(item.input) ? { input: item.input.filter((value: unknown): value is string => typeof value === 'string') } : {}),
+    }));
+}
+
+function normalizeProviderProfiles(profiles: unknown): Record<string, ProviderProfile> {
+  if (!profiles || typeof profiles !== 'object') return {};
+
+  const normalized: Record<string, ProviderProfile> = {};
+  for (const [key, value] of Object.entries(profiles as Record<string, any>)) {
+    if (!value || typeof value !== 'object') continue;
+    normalized[key] = {
+      apiKey: typeof value.apiKey === 'string' ? value.apiKey : '',
+      baseUrl: typeof value.baseUrl === 'string' ? value.baseUrl : '',
+      ...(typeof value.apiType === 'string' ? { apiType: value.apiType } : {}),
+      models: normalizeStoredModels(value.models),
+      ...(typeof value.name === 'string' ? { name: value.name } : {}),
+      ...(typeof value.emoji === 'string' ? { emoji: value.emoji } : {}),
+      ...(typeof value.tag === 'string' ? { tag: value.tag } : {}),
+      ...(typeof value.desc === 'string' ? { desc: value.desc } : {}),
+      ...(typeof value.needsKey === 'boolean' ? { needsKey: value.needsKey } : {}),
+      ...(typeof value.lastSyncedAt === 'string' ? { lastSyncedAt: value.lastSyncedAt } : {}),
+    };
+  }
+  return normalized;
+}
+
+function normalizeConfig(raw: Partial<AppConfig>): AppConfig {
+  const next: AppConfig = {
+    ...DEFAULT_CONFIG,
+    ...raw,
+    providerProfiles: normalizeProviderProfiles(raw.providerProfiles),
+  };
+
+  if (next.providerKey) {
+    const existing = next.providerProfiles[next.providerKey] || {
+      apiKey: '',
+      baseUrl: '',
+      models: [],
+    };
+
+    next.providerProfiles[next.providerKey] = {
+      ...existing,
+      apiKey: next.apiKey || existing.apiKey || '',
+      baseUrl: next.baseUrl || existing.baseUrl || '',
+      models: existing.models || [],
+      ...(existing.apiType ? { apiType: existing.apiType } : {}),
+      ...(existing.name ? { name: existing.name } : {}),
+      ...(existing.emoji ? { emoji: existing.emoji } : {}),
+      ...(existing.tag ? { tag: existing.tag } : {}),
+      ...(existing.desc ? { desc: existing.desc } : {}),
+      ...(typeof existing.needsKey === 'boolean' ? { needsKey: existing.needsKey } : {}),
+      ...(existing.lastSyncedAt ? { lastSyncedAt: existing.lastSyncedAt } : {}),
+    };
+  }
+
+  return next;
+}
+
+export function getProviderProfile(config: AppConfig, providerKey: string): ProviderProfile {
+  const existing = config.providerProfiles?.[providerKey] || {
+    apiKey: '',
+    baseUrl: '',
+    models: [],
+  };
+
+  if (providerKey && providerKey === config.providerKey) {
+    return {
+      ...existing,
+      apiKey: config.apiKey || existing.apiKey || '',
+      baseUrl: config.baseUrl || existing.baseUrl || '',
+      models: existing.models || [],
+    };
+  }
+
+  return {
+    apiKey: existing.apiKey || '',
+    baseUrl: existing.baseUrl || '',
+    models: existing.models || [],
+    ...(existing.apiType ? { apiType: existing.apiType } : {}),
+    ...(existing.name ? { name: existing.name } : {}),
+    ...(existing.emoji ? { emoji: existing.emoji } : {}),
+    ...(existing.tag ? { tag: existing.tag } : {}),
+    ...(existing.desc ? { desc: existing.desc } : {}),
+    ...(typeof existing.needsKey === 'boolean' ? { needsKey: existing.needsKey } : {}),
+    ...(existing.lastSyncedAt ? { lastSyncedAt: existing.lastSyncedAt } : {}),
+  };
+}
+
+export function hasProviderCredentials(config: AppConfig, providerKey: string, needsKey: boolean): boolean {
+  if (!needsKey) return true;
+  return !!getProviderProfile(config, providerKey).apiKey;
+}
+
+function mergeProviderProfile(
+  config: AppConfig,
+  providerKey: string,
+  profile: Partial<ProviderProfile>,
+): AppConfig {
+  const existing = getProviderProfile(config, providerKey);
+  return {
+    ...config,
+    providerProfiles: {
+      ...config.providerProfiles,
+      [providerKey]: {
+        ...existing,
+        ...profile,
+        models: profile.models ? normalizeStoredModels(profile.models) : existing.models,
+      },
+    },
+  };
+}
+
+function getFallbackModels(providerKey: string, providers: ModelProviderDef[]): ProviderStoredModel[] {
+  const provider = providers.find((item) => item.key === providerKey);
+  return (provider?.models || []).map((model) => ({
+    id: model.id,
+    label: model.label,
+    name: model.label,
+  }));
+}
+
+function selectProviderModel(
+  config: AppConfig,
+  providerKey: string,
+  modelId: string,
+  providers: ModelProviderDef[],
+): AppConfig {
+  const provider = providers.find((item) => item.key === providerKey);
+  const profile = getProviderProfile(config, providerKey);
+  const effectiveModelId = modelId
+    || profile.models[0]?.id
+    || provider?.models[0]?.id
+    || '';
+
+  return {
+    ...config,
+    providerKey,
+    modelId: effectiveModelId,
+    apiKey: profile.apiKey || '',
+    baseUrl: profile.baseUrl || provider?.baseUrl || '',
+  };
+}
+
+function saveProviderSelection(
+  config: AppConfig,
+  input: {
+    providerKey: string;
+    modelId: string;
+    apiKey?: string;
+    baseUrl?: string;
+    models?: ProviderStoredModel[];
+    apiType?: string;
+    name?: string;
+    needsKey?: boolean;
+  },
+  providers: ModelProviderDef[],
+): AppConfig {
+  const provider = providers.find((item) => item.key === input.providerKey);
+  const nextProfile: Partial<ProviderProfile> = {
+    ...(input.apiKey !== undefined ? { apiKey: input.apiKey } : {}),
+    ...(input.baseUrl !== undefined ? { baseUrl: input.baseUrl } : {}),
+    ...(input.models ? { models: input.models } : {}),
+    ...(input.apiType !== undefined ? { apiType: input.apiType } : provider?.apiType ? { apiType: provider.apiType } : {}),
+    ...(input.name ? { name: input.name } : provider ? { name: provider.name } : {}),
+    ...(typeof input.needsKey === 'boolean' ? { needsKey: input.needsKey } : provider ? { needsKey: provider.needsKey } : {}),
+    lastSyncedAt: new Date().toISOString(),
+  };
+
+  const merged = mergeProviderProfile(config, input.providerKey, nextProfile);
+  return selectProviderModel(merged, input.providerKey, input.modelId, providers);
+}
+
 function loadConfig(): AppConfig {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return { ...DEFAULT_CONFIG, ...JSON.parse(raw) };
+    if (raw) return normalizeConfig(JSON.parse(raw));
   } catch { /* ignore */ }
   return { ...DEFAULT_CONFIG };
 }
@@ -78,9 +286,6 @@ function saveConfig(config: AppConfig) {
 /** Sync relevant settings to ~/.openclaw/openclaw.json */
 async function syncToOpenClaw(config: AppConfig, providers: ModelProviderDef[]) {
   if (!window.electronAPI) return;
-
-  const provider = providers.find((p) => p.key === config.providerKey);
-  if (!provider) return;
 
   const openclawConfig: Record<string, any> = {
     gateway: {
@@ -118,23 +323,41 @@ async function syncToOpenClaw(config: AppConfig, providers: ModelProviderDef[]) 
     },
   };
 
+  const providerKeys = new Set<string>([
+    ...providers.map((provider) => provider.key),
+    ...Object.keys(config.providerProfiles || {}),
+  ]);
+
+  const syncedProviders: Record<string, any> = {};
+
+  for (const providerKey of providerKeys) {
+    const provider = providers.find((item) => item.key === providerKey);
+    const profile = getProviderProfile(config, providerKey);
+    const effectiveBaseUrl = profile.baseUrl || provider?.baseUrl || '';
+    const effectiveApiKey = profile.apiKey || '';
+    const effectiveModels = (profile.models?.length ? profile.models : getFallbackModels(providerKey, providers))
+      .map((model) => ({
+        id: model.id,
+        name: (model.name || model.label || model.id).split('（')[0].split('(')[0].trim(),
+        ...(typeof model.reasoning === 'boolean' ? { reasoning: model.reasoning } : { reasoning: false }),
+        ...(typeof model.contextWindow === 'number' ? { contextWindow: model.contextWindow } : {}),
+        ...(typeof model.maxTokens === 'number' ? { maxTokens: model.maxTokens } : {}),
+        input: Array.isArray(model.input) && model.input.length > 0 ? model.input : ['text'],
+      }));
+
+    if (!effectiveBaseUrl && effectiveModels.length === 0 && !effectiveApiKey) continue;
+
+    syncedProviders[providerKey] = {
+      ...(effectiveBaseUrl ? { baseUrl: effectiveBaseUrl } : {}),
+      ...(effectiveApiKey ? { apiKey: effectiveApiKey } : {}),
+      ...(profile.apiType || provider?.apiType ? { api: profile.apiType || provider?.apiType } : {}),
+      ...(effectiveModels.length > 0 ? { models: effectiveModels } : {}),
+    };
+  }
+
   if (config.modelId) {
-    // User's custom baseUrl takes priority over provider default
-    const finalBaseUrl = config.baseUrl || provider.baseUrl;
     openclawConfig.models = {
-      providers: {
-        [config.providerKey]: {
-          baseUrl: finalBaseUrl,
-          ...(config.apiKey ? { apiKey: config.apiKey } : {}),
-          ...(provider.apiType ? { api: provider.apiType } : {}),
-          models: provider.models.map((m) => ({
-            id: m.id,
-            name: m.label.split('（')[0].split('(')[0].trim(),
-            reasoning: false,
-            input: ['text'],
-          })),
-        },
-      },
+      providers: syncedProviders,
     };
     openclawConfig.agents = {
       defaults: {
@@ -159,17 +382,42 @@ export function useAppConfig() {
 
   const updateConfig = useCallback((partial: Partial<AppConfig>) => {
     setConfigState((prev) => {
-      const next = { ...prev, ...partial };
+      const next = normalizeConfig({ ...prev, ...partial });
       saveConfig(next);
       return next;
     });
   }, []);
 
-  const syncConfig = useCallback((providers: ModelProviderDef[]) => {
-    syncToOpenClaw(loadConfig(), providers);
+  const syncConfig = useCallback(async (providers: ModelProviderDef[]) => {
+    await syncToOpenClaw(loadConfig(), providers);
   }, []);
 
-  return { config, updateConfig, syncConfig };
+  const selectModel = useCallback((providerKey: string, modelId: string, providers: ModelProviderDef[]) => {
+    setConfigState((prev) => {
+      const next = selectProviderModel(normalizeConfig(prev), providerKey, modelId, providers);
+      saveConfig(next);
+      return next;
+    });
+  }, []);
+
+  const saveProviderConfig = useCallback((input: {
+    providerKey: string;
+    modelId: string;
+    apiKey?: string;
+    baseUrl?: string;
+    models?: ProviderStoredModel[];
+    apiType?: string;
+    name?: string;
+    needsKey?: boolean;
+  }, providers: ModelProviderDef[]) => {
+    setConfigState((prev) => {
+      const next = saveProviderSelection(normalizeConfig(prev), input, providers);
+      saveConfig(next);
+      return next;
+    });
+  }, []);
+
+  return { config, updateConfig, syncConfig, selectModel, saveProviderConfig };
 }
 
 // Model provider definition (shared between Setup and Settings)
@@ -329,79 +577,120 @@ export const MODEL_PROVIDERS: ModelProviderDef[] = [
 export function useDynamicProviders(): { providers: ModelProviderDef[]; loading: boolean } {
   const [merged, setMerged] = useState<ModelProviderDef[]>(MODEL_PROVIDERS);
   const [loading, setLoading] = useState(true);
-  const fetched = useRef(false);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
-    if (fetched.current || !window.electronAPI) {
-      setLoading(false);
-      return;
-    }
-    fetched.current = true;
+    const handler = () => setRefreshKey((value) => value + 1);
+    window.addEventListener('awareness-config-changed', handler);
+    return () => window.removeEventListener('awareness-config-changed', handler);
+  }, []);
 
-    (window.electronAPI as any).modelsReadProviders?.().then((res: any) => {
-      if (!res?.success || !res.providers?.length) {
-        setLoading(false);
-        return;
-      }
+  useEffect(() => {
+    let cancelled = false;
 
-      const hardcodedKeys = new Set(MODEL_PROVIDERS.map(p => p.key));
+    const hydrate = async () => {
+      const localConfig = loadConfig();
+      const hardcodedKeys = new Set(MODEL_PROVIDERS.map((provider) => provider.key));
       const dynamicMap = new Map<string, any>();
-      for (const dp of res.providers) {
-        dynamicMap.set(dp.key, dp);
+
+      for (const [key, profile] of Object.entries(localConfig.providerProfiles || {})) {
+        dynamicMap.set(key, {
+          key,
+          baseUrl: profile.baseUrl,
+          apiType: profile.apiType,
+          hasApiKey: !!profile.apiKey,
+          name: profile.name,
+          needsKey: profile.needsKey,
+          models: (profile.models || []).map((model) => ({
+            id: model.id,
+            name: model.name || model.label || model.id,
+            reasoning: model.reasoning,
+            contextWindow: model.contextWindow,
+            maxTokens: model.maxTokens,
+          })),
+        });
       }
 
-      // Merge: for existing providers, update model list if dynamic has more info
-      const result = MODEL_PROVIDERS.map(hp => {
-        const dp = dynamicMap.get(hp.key);
-        if (!dp || !dp.models?.length) return hp;
+      if (window.electronAPI?.modelsReadProviders) {
+        try {
+          const res = await (window.electronAPI as any).modelsReadProviders();
+          if (res?.success && Array.isArray(res.providers)) {
+            for (const provider of res.providers) {
+              const existing = dynamicMap.get(provider.key) || {};
+              dynamicMap.set(provider.key, {
+                ...provider,
+                ...existing,
+                models: existing.models?.length ? existing.models : (provider.models || []),
+                hasApiKey: existing.hasApiKey || provider.hasApiKey,
+                baseUrl: existing.baseUrl || provider.baseUrl || '',
+                apiType: existing.apiType || provider.apiType,
+              });
+            }
+          }
+        } catch {
+          // ignore openclaw read errors and fall back to local profiles
+        }
+      }
 
-        // Dynamic provider has models — merge with labels from hardcoded
-        const hardcodedModelMap = new Map(hp.models.map(m => [m.id, m.label]));
-        const mergedModels = dp.models.map((dm: any) => ({
-          id: dm.id,
-          label: hardcodedModelMap.get(dm.id) || dm.name || dm.id,
+      const result = MODEL_PROVIDERS.map((hardcodedProvider) => {
+        const dynamicProvider = dynamicMap.get(hardcodedProvider.key);
+        if (!dynamicProvider) return hardcodedProvider;
+
+        const hardcodedModelMap = new Map(hardcodedProvider.models.map((model) => [model.id, model.label]));
+        const mergedModels = (dynamicProvider.models || []).map((model: any) => ({
+          id: model.id,
+          label: hardcodedModelMap.get(model.id) || model.label || model.name || model.id,
         }));
-        // Add any hardcoded models not in dynamic (user may not have added all)
-        for (const hm of hp.models) {
-          if (!mergedModels.some((m: any) => m.id === hm.id)) {
-            mergedModels.push(hm);
+
+        for (const hardcodedModel of hardcodedProvider.models) {
+          if (!mergedModels.some((model: any) => model.id === hardcodedModel.id)) {
+            mergedModels.push(hardcodedModel);
           }
         }
 
         return {
-          ...hp,
+          ...hardcodedProvider,
+          name: dynamicProvider.name || hardcodedProvider.name,
+          desc: dynamicProvider.baseUrl || hardcodedProvider.desc,
+          baseUrl: dynamicProvider.baseUrl || hardcodedProvider.baseUrl,
+          apiType: dynamicProvider.apiType || hardcodedProvider.apiType,
           models: mergedModels,
-          // If dynamic has API key, the provider is configured
-          needsKey: dp.hasApiKey ? true : hp.needsKey,
+          needsKey: typeof dynamicProvider.needsKey === 'boolean' ? dynamicProvider.needsKey : hardcodedProvider.needsKey,
         };
       });
 
-      // Add custom providers not in hardcoded list
-      for (const dp of res.providers) {
-        if (!hardcodedKeys.has(dp.key)) {
+      for (const [key, dynamicProvider] of dynamicMap.entries()) {
+        if (!hardcodedKeys.has(key)) {
           result.push({
-            key: dp.key,
-            name: dp.key,
-            emoji: '🔌',
-            tag: 'Custom',
-            desc: dp.baseUrl || 'Custom provider',
-            baseUrl: dp.baseUrl || '',
-            apiType: dp.apiType,
-            models: (dp.models || []).map((m: any) => ({
-              id: m.id,
-              label: m.name || m.id,
+            key,
+            name: dynamicProvider.name || key,
+            emoji: dynamicProvider.emoji || '🔌',
+            tag: dynamicProvider.tag || 'Custom',
+            desc: dynamicProvider.baseUrl || dynamicProvider.desc || 'Custom provider',
+            baseUrl: dynamicProvider.baseUrl || '',
+            apiType: dynamicProvider.apiType,
+            models: (dynamicProvider.models || []).map((model: any) => ({
+              id: model.id,
+              label: model.label || model.name || model.id,
             })),
-            needsKey: true,
+            needsKey: typeof dynamicProvider.needsKey === 'boolean' ? dynamicProvider.needsKey : true,
           });
         }
       }
 
-      setMerged(result);
-      setLoading(false);
-    }).catch(() => {
-      setLoading(false);
-    });
-  }, []);
+      if (!cancelled) {
+        setMerged(result);
+        setLoading(false);
+      }
+    };
+
+    setLoading(true);
+    hydrate();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshKey]);
 
   return { providers: merged, loading };
 }

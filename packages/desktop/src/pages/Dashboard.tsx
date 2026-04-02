@@ -1,9 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Send, Paperclip, ChevronDown, ChevronRight, ExternalLink, Loader2, Copy, Check, X, File, Image, Plus, Brain, Key, Wrench, Search, BookOpen, Save, Zap, CheckCircle2, Terminal, AlertTriangle, FolderOpen, Bot } from 'lucide-react';
-import PasswordInput from '../components/PasswordInput';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { useAppConfig, MODEL_PROVIDERS, useDynamicProviders } from '../lib/store';
+import { useAppConfig, useDynamicProviders, getProviderProfile, hasProviderCredentials } from '../lib/store';
 import { trackUsage } from '../lib/usage';
 import { useI18n } from '../lib/i18n';
 import BootstrapWizard from '../components/BootstrapWizard';
@@ -385,7 +384,7 @@ function TypewriterMessage({ content, isNew }: { content: string; isNew: boolean
 // --- Main Component ---
 
 export default function Dashboard({ isActive = true, onNavigate }: { isActive?: boolean; onNavigate?: (page: 'chat' | 'memory' | 'channels' | 'skills' | 'automation' | 'agents' | 'settings') => void }) {
-  const { config, updateConfig, syncConfig } = useAppConfig();
+  const { config, syncConfig, selectModel } = useAppConfig();
   const { t } = useI18n();
   const [sessions, setSessions] = useState<ChatSession[]>(loadSessions);
   const [activeSessionId, setActiveSessionId] = useState<string>(
@@ -394,8 +393,6 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
   const [input, setInput] = useState('');
   const [agentStatus, setAgentStatus] = useState<AgentStatus>('idle');
   const [showModelSelector, setShowModelSelector] = useState(false);
-  const [showApiKeyInput, setShowApiKeyInput] = useState<string | null>(null); // provider key needing API key
-  const [tempApiKey, setTempApiKey] = useState('');
   const [showSidebar, setShowSidebar] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
   const [projectRoot, setProjectRoot] = useState(() => localStorage.getItem(PROJECT_ROOT_KEY) || '');
@@ -1078,7 +1075,8 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
                 <div className="fixed inset-0 z-40" onClick={() => setShowModelSelector(false)} />
                 <div className="absolute top-full left-0 mt-1 w-72 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-50 max-h-[400px] overflow-y-auto">
                   {allProviders.map(provider => {
-                    const isConfigured = config.providerKey === provider.key && config.apiKey;
+                    const providerProfile = getProviderProfile(config, provider.key);
+                    const isConfigured = hasProviderCredentials(config, provider.key, provider.needsKey);
                     return (
                       <div key={provider.key}>
                         <div className="px-3 py-1.5 text-[10px] font-medium border-b border-slate-800 sticky top-0 bg-slate-900 flex items-center justify-between">
@@ -1089,27 +1087,42 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
                           <button key={model.id}
                             onClick={() => {
                               if (provider.needsKey && !isConfigured) {
-                                // Need API key first
-                                setShowApiKeyInput(provider.key);
-                                setTempApiKey('');
                                 setShowModelSelector(false);
-                              } else {
-                                // Switch model
-                                updateConfig({ providerKey: provider.key, modelId: model.id });
-                                syncConfig(allProviders);
-                                setShowModelSelector(false);
+                                onNavigate?.('settings');
+                                return;
                               }
+
+                              selectModel(provider.key, model.id, allProviders);
+                              void syncConfig(allProviders);
+                              setShowModelSelector(false);
                             }}
-                            className={`w-full text-left px-4 py-1.5 text-xs hover:bg-slate-800 transition-colors ${
+                            className={`w-full text-left px-4 py-1.5 text-xs transition-colors ${
+                              provider.needsKey && !isConfigured ? 'text-slate-500 hover:bg-slate-850' : 'hover:bg-slate-800'
+                            } ${
                               config.providerKey === provider.key && config.modelId === model.id ? 'text-brand-400' : 'text-slate-300'
                             }`}
+                            title={provider.needsKey && !isConfigured ? t('chat.configureInSettings', 'Configure this provider in Settings first') : undefined}
                           >
                             {model.label}
                             {config.providerKey === provider.key && config.modelId === model.id && (
                               <span className="ml-1 text-brand-400 font-medium">✓ {t('chat.active', 'Active')}</span>
                             )}
+                            {provider.needsKey && !isConfigured && (
+                              <span className="ml-1 text-[10px] text-amber-500">{t('chat.setupInSettings', 'Set up in Settings')}</span>
+                            )}
                           </button>
                         ))}
+                        {provider.needsKey && !isConfigured && (
+                          <button
+                            onClick={() => {
+                              setShowModelSelector(false);
+                              onNavigate?.('settings');
+                            }}
+                            className="w-full text-left px-4 py-2 text-[11px] text-sky-400 hover:bg-slate-800 transition-colors border-t border-slate-800"
+                          >
+                            {t('chat.openSettingsToConfigure', 'Open Settings to configure API Key / Base URL')}
+                          </button>
+                        )}
                       </div>
                     );
                   })}
@@ -1127,51 +1140,6 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
             <ExternalLink size={12} />
           </button>
         </div>
-
-        {/* API Key Input Modal */}
-        {showApiKeyInput && (() => {
-          const provider = allProviders.find(p => p.key === showApiKeyInput);
-          return (
-            <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-8">
-              <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-sm p-6 space-y-4">
-                <div className="text-center">
-                  <span className="text-2xl">{provider?.emoji}</span>
-                  <h3 className="text-sm font-bold mt-2">{t('chat.configModel', 'Configure')} {provider?.name}</h3>
-                  <p className="text-xs text-slate-500 mt-1">{t('chat.configModelHint', 'Enter your API Key to start')}</p>
-                </div>
-                <PasswordInput
-                  value={tempApiKey}
-                  onChange={e => setTempApiKey(e.target.value)}
-                  placeholder={t('common.pasteApiKey', 'Paste your API Key...')}
-                  className="w-full px-3 py-2.5 bg-slate-800 border border-slate-600 rounded-lg text-sm focus:outline-none focus:border-brand-500"
-                  autoFocus
-                />
-                <div className="flex gap-2">
-                  <button onClick={() => setShowApiKeyInput(null)} className="flex-1 py-2 text-sm text-slate-400 hover:text-slate-200">{t('common.cancel', 'Cancel')}</button>
-                  <button
-                    onClick={() => {
-                      if (tempApiKey && provider) {
-                        updateConfig({
-                          providerKey: provider.key,
-                          modelId: provider.models[0]?.id || '',
-                          apiKey: tempApiKey,
-                          baseUrl: provider.baseUrl,
-                        });
-                        syncConfig(allProviders);
-                        setShowApiKeyInput(null);
-                      }
-                    }}
-                    disabled={!tempApiKey}
-                    className="flex-1 py-2 bg-brand-600 hover:bg-brand-500 disabled:bg-slate-700 text-white rounded-lg text-sm transition-colors"
-                  >
-                    {t('setup.saveAndSwitch', 'Save & Switch')}
-                  </button>
-                </div>
-              </div>
-            </div>
-          );
-        })()}
-
         {/* Channel conversation view (when a channel session is selected) */}
         {activeChannelKey ? (
           <div className="flex-1 flex flex-col min-h-0">

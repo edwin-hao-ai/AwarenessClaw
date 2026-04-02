@@ -112,6 +112,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   pluginsList: () => ipcRenderer.invoke('plugins:list'),
   pluginsToggle: (name: string, enabled: boolean) => ipcRenderer.invoke('plugins:toggle', name, enabled),
 
+  // Generic OpenClaw config access
+  openclawConfigRead: (dotPath?: string) => ipcRenderer.invoke('openclaw-config:read', dotPath),
+  openclawConfigWrite: (dotPath: string, value: unknown) => ipcRenderer.invoke('openclaw-config:write', dotPath, value),
+  openclawConfigSchema: () => ipcRenderer.invoke('openclaw-config:schema'),
+
   // Hooks management
   hooksList: () => ipcRenderer.invoke('hooks:list'),
   hooksToggle: (hookName: string, enabled: boolean) => ipcRenderer.invoke('hooks:toggle', hookName, enabled),
@@ -132,6 +137,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Models (dynamic)
   modelsReadProviders: () => ipcRenderer.invoke('models:read-providers'),
+  modelsDiscover: (input: { providerKey: string; baseUrl: string; apiKey?: string }) => ipcRenderer.invoke('models:discover', input),
 
   // Security audit
   securityCheck: () => ipcRenderer.invoke('security:check'),

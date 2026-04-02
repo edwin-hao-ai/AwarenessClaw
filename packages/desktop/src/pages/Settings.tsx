@@ -1,14 +1,58 @@
 import { useState, useEffect, useRef } from 'react';
 import { Moon, Sun, Monitor, ChevronRight, X, Check, ChevronDown, Play, Square, RotateCw, RefreshCw, Loader2, Plus, Trash2, Download, Upload, Shield, AlertTriangle, Puzzle, Webhook, CheckCircle, Lock, Code2, Zap, ExternalLink, Cloud, CloudOff } from 'lucide-react';
-import { useAppConfig, MODEL_PROVIDERS, useDynamicProviders } from '../lib/store';
+import { useAppConfig, useDynamicProviders, getProviderProfile } from '../lib/store';
 import { getUsageStats, clearUsage, type UsageStats } from '../lib/usage';
 import { useI18n } from '../lib/i18n';
 import PasswordInput from '../components/PasswordInput';
+import OpenClawConfigSectionForm from '../components/OpenClawConfigSectionForm';
+import { buildDynamicSectionsFromSchema, getValueAtPath, setValueAtPath, type DynamicConfigSection } from '../lib/openclaw-capabilities';
 import pkg from '../../package.json';
+
+const KNOWN_ALLOWED_TOOLS = [
+  { id: 'awareness_init', label: 'Awareness Init', desc: 'Bootstrap memory instructions automatically', risk: 'Core' },
+  { id: 'awareness_get_agent_prompt', label: 'Prompt Pack', desc: 'Load installed Awareness prompt pack', risk: 'Core' },
+  { id: 'exec', label: 'Shell Commands', desc: 'Run coding and terminal commands on your machine', risk: 'High' },
+  { id: 'awareness_recall', label: 'Memory Recall', desc: 'Search past decisions and knowledge cards', risk: 'Normal' },
+  { id: 'awareness_record', label: 'Memory Save', desc: 'Write new knowledge back to Awareness memory', risk: 'Normal' },
+  { id: 'awareness_lookup', label: 'Knowledge Lookup', desc: 'Read structured memory cards', risk: 'Normal' },
+  { id: 'awareness_perception', label: 'Project Signals', desc: 'Read file patterns and activity signals', risk: 'Elevated' },
+];
+
+const KNOWN_DENIED_COMMANDS = [
+  { id: 'camera.snap', label: 'Camera', desc: 'Block taking photos or screen clips', impact: 'Privacy' },
+  { id: 'screen.record', label: 'Screen Recording', desc: 'Block recording the screen', impact: 'Privacy' },
+  { id: 'contacts.add', label: 'Contacts', desc: 'Block reading or adding contacts', impact: 'Privacy' },
+  { id: 'calendar.add', label: 'Calendar', desc: 'Block creating calendar events', impact: 'Privacy' },
+  { id: 'sms.send', label: 'SMS / Messages', desc: 'Block sending text messages', impact: 'Privacy' },
+  { id: 'exec', label: 'Shell Commands', desc: 'Hard-block running arbitrary shell commands', impact: 'Critical' },
+];
+
+const WEB_PROVIDER_GUIDANCE: Record<string, { title: string; detail: string; requiresKey: boolean }> = {
+  brave: {
+    title: 'Brave search needs an API key',
+    detail: 'Paste the Brave key into the API key field below. Once saved, OpenClaw can use web search immediately.',
+    requiresKey: true,
+  },
+  perplexity: {
+    title: 'Perplexity search needs an API key',
+    detail: 'Perplexity is supported through the same dynamic config flow. Save the provider first, then add the API key.',
+    requiresKey: true,
+  },
+  grok: {
+    title: 'Grok may require extra x_search setup',
+    detail: 'OpenClaw supports Grok web search, but some setups also require x_search to be enabled in OpenClaw.',
+    requiresKey: true,
+  },
+  browser: {
+    title: 'Browser mode does not require a Brave key',
+    detail: 'Use this when you want OpenClaw to rely on browser-backed search/fetch instead of a remote search API.',
+    requiresKey: false,
+  },
+};
 
 export default function Settings() {
   const { t } = useI18n();
-  const { config, updateConfig, syncConfig } = useAppConfig();
+  const { config, updateConfig, syncConfig, saveProviderConfig } = useAppConfig();
   const DEFAULT_EXEC_ASK = 'on-miss' as const;
   const BASE_REQUIRED_TOOLS = ['awareness_init', 'awareness_get_agent_prompt'] as const;
   const STANDARD_ALLOWED_TOOLS = ['exec', 'awareness_recall', 'awareness_record', 'awareness_lookup'] as const;
@@ -24,6 +68,14 @@ export default function Settings() {
   const [tempModel, setTempModel] = useState('');
   const [tempApiKey, setTempApiKey] = useState('');
   const [tempBaseUrl, setTempBaseUrl] = useState('');
+  const [detectedProviderKey, setDetectedProviderKey] = useState('');
+  const [detectedModels, setDetectedModels] = useState<Array<{ id: string; label: string; reasoning?: boolean; contextWindow?: number; maxTokens?: number }>>([]);
+  const [webSections, setWebSections] = useState<DynamicConfigSection[]>([]);
+  const [webValues, setWebValues] = useState<Record<string, any>>({});
+  const [webLoading, setWebLoading] = useState(true);
+  const [webSaving, setWebSaving] = useState(false);
+  const [webError, setWebError] = useState<string | null>(null);
+  const [webSaved, setWebSaved] = useState(false);
 
   // Permissions state
   const [permissions, setPermissions] = useState<{ profile: string; alsoAllow: string[]; denied: string[]; execAsk: 'off' | 'on-miss' } | null>(null);
@@ -162,6 +214,28 @@ export default function Settings() {
     setUsageStats(getUsageStats());
     // Run doctor on mount
     runDoctor();
+
+    if (!api.openclawConfigSchema || !api.openclawConfigRead) {
+      setWebLoading(false);
+      return;
+    }
+
+    api.openclawConfigSchema().then(async (schemaResult: any) => {
+      if (!schemaResult?.success || !schemaResult.schema) {
+        setWebError(schemaResult?.error || 'Failed to load OpenClaw config schema.');
+        setWebLoading(false);
+        return;
+      }
+
+      const valueResult = await api.openclawConfigRead?.('tools.web');
+      const nextValues = (valueResult?.success ? valueResult.value : {}) || {};
+      setWebValues(nextValues);
+      setWebSections(buildDynamicSectionsFromSchema(schemaResult.schema, 'tools.web', nextValues));
+      setWebLoading(false);
+    }).catch(() => {
+      setWebError('Failed to load OpenClaw config schema.');
+      setWebLoading(false);
+    });
   }, []);
 
   const runDoctor = async () => {
@@ -267,26 +341,93 @@ export default function Settings() {
   const currentModel = currentProvider?.models.find((m) => m.id === config.modelId);
 
   const openModelPicker = () => {
+    const currentProfile = getProviderProfile(config, config.providerKey);
     setTempProvider(config.providerKey);
     setTempModel(config.modelId);
-    setTempApiKey(config.apiKey);
-    setTempBaseUrl(config.baseUrl);
+    setTempApiKey(currentProfile.apiKey);
+    setTempBaseUrl(currentProfile.baseUrl);
+    setDetectedProviderKey('');
+    setDetectedModels([]);
+    setTestResult('idle');
     setShowModelPicker(true);
   };
 
   const [showRestartHint, setShowRestartHint] = useState(false);
 
-  const saveModelChange = () => {
-    updateConfig({
+  const saveModelChange = async () => {
+    const selectedProvider = allProviders.find((provider) => provider.key === tempProvider);
+    if (!selectedProvider) return;
+
+    const modelSource = detectedProviderKey === tempProvider && detectedModels.length > 0
+      ? detectedModels
+      : selectedProvider.models;
+
+    const effectiveModelId = tempModel || modelSource[0]?.id || '';
+
+    saveProviderConfig({
       providerKey: tempProvider,
-      modelId: tempModel,
+      modelId: effectiveModelId,
       apiKey: tempApiKey,
       baseUrl: tempBaseUrl,
-    });
-    syncConfig(allProviders);
+      apiType: selectedProvider.apiType,
+      name: selectedProvider.name,
+      needsKey: selectedProvider.needsKey,
+      models: modelSource.map((model) => ({
+        id: model.id,
+        label: model.label,
+        name: model.label,
+        ...(typeof (model as any).reasoning === 'boolean' ? { reasoning: (model as any).reasoning } : {}),
+        ...(typeof (model as any).contextWindow === 'number' ? { contextWindow: (model as any).contextWindow } : {}),
+        ...(typeof (model as any).maxTokens === 'number' ? { maxTokens: (model as any).maxTokens } : {}),
+      })),
+    }, allProviders);
+    await syncConfig(allProviders);
     setShowModelPicker(false);
     setShowRestartHint(true);
     setTimeout(() => setShowRestartHint(false), 8000);
+  };
+
+  const discoverModels = async () => {
+    const selectedProvider = allProviders.find((provider) => provider.key === tempProvider);
+    const api = window.electronAPI as any;
+    if (!selectedProvider || !api?.modelsDiscover) return;
+
+    setTestingConnection(true);
+    setTestResult('idle');
+
+    try {
+      const result = await api.modelsDiscover({
+        providerKey: selectedProvider.key,
+        baseUrl: tempBaseUrl || selectedProvider.baseUrl,
+        apiKey: tempApiKey,
+      });
+
+      if (result?.success && Array.isArray(result.models) && result.models.length > 0) {
+        const nextModels = result.models.map((model: any) => ({
+          id: model.id,
+          label: model.name || model.id,
+          ...(typeof model.reasoning === 'boolean' ? { reasoning: model.reasoning } : {}),
+          ...(typeof model.contextWindow === 'number' ? { contextWindow: model.contextWindow } : {}),
+          ...(typeof model.maxTokens === 'number' ? { maxTokens: model.maxTokens } : {}),
+        }));
+        setDetectedProviderKey(selectedProvider.key);
+        setDetectedModels(nextModels);
+        if (!nextModels.some((model: { id: string }) => model.id === tempModel)) {
+          setTempModel(nextModels[0].id);
+        }
+        setTestResult('success');
+      } else {
+        setDetectedProviderKey('');
+        setDetectedModels([]);
+        setTestResult('error');
+      }
+    } catch {
+      setDetectedProviderKey('');
+      setDetectedModels([]);
+      setTestResult('error');
+    }
+
+    setTestingConnection(false);
   };
 
   const handleToggle = (key: keyof typeof config, value: boolean) => {
@@ -297,6 +438,68 @@ export default function Settings() {
   const handleRecallLimit = (value: number) => {
     updateConfig({ recallLimit: value });
     syncConfig(allProviders);
+  };
+
+  const handleWebFieldChange = (path: string, nextValue: any) => {
+    setWebValues((prev) => setValueAtPath(prev, path.replace(/^tools\.web\./, ''), nextValue));
+    setWebSaved(false);
+  };
+
+  const selectedWebProvider = String(webValues?.search?.provider || '').trim();
+  const webProviderGuide = WEB_PROVIDER_GUIDANCE[selectedWebProvider];
+  const webProviderApiKey = webValues?.search?.apiKey;
+  const webProviderMissingKey = !!(webProviderGuide?.requiresKey && (!webProviderApiKey || (typeof webProviderApiKey === 'string' && !webProviderApiKey.trim())));
+
+  const knownAllowed = permissions
+    ? KNOWN_ALLOWED_TOOLS.map((tool) => ({ ...tool, enabled: permissions.alsoAllow.includes(tool.id) }))
+    : [];
+  const allowedNow = knownAllowed.filter((tool) => tool.enabled);
+  const availableToAllow = knownAllowed.filter((tool) => !tool.enabled);
+  const customAllowed = permissions
+    ? permissions.alsoAllow.filter((tool) => !KNOWN_ALLOWED_TOOLS.some((known) => known.id === tool))
+    : [];
+
+  const knownDenied = permissions
+    ? KNOWN_DENIED_COMMANDS.map((cmd) => ({ ...cmd, blocked: permissions.denied.includes(cmd.id) }))
+    : [];
+  const blockedNow = knownDenied.filter((cmd) => cmd.blocked);
+  const customDenied = permissions
+    ? permissions.denied.filter((cmd) => !KNOWN_DENIED_COMMANDS.some((known) => known.id === cmd))
+    : [];
+
+  const toggleAllowedTool = (toolId: string) => {
+    if (!permissions) return;
+    const isOn = permissions.alsoAllow.includes(toolId);
+    savePermissions({
+      alsoAllow: isOn
+        ? permissions.alsoAllow.filter((tool) => tool !== toolId)
+        : [...permissions.alsoAllow, toolId],
+    });
+  };
+
+  const toggleDeniedCommand = (commandId: string) => {
+    if (!permissions) return;
+    const isOn = permissions.denied.includes(commandId);
+    savePermissions({
+      denied: isOn
+        ? permissions.denied.filter((command) => command !== commandId)
+        : [...permissions.denied, commandId],
+    });
+  };
+
+  const saveWebConfig = async () => {
+    const api = window.electronAPI as any;
+    if (!api?.openclawConfigWrite) return;
+    setWebSaving(true);
+    setWebError(null);
+    const result = await api.openclawConfigWrite('tools.web', webValues);
+    setWebSaving(false);
+    if (!result?.success) {
+      setWebError(result?.error || 'Failed to save Web settings.');
+      return;
+    }
+    setWebSaved(true);
+    setTimeout(() => setWebSaved(false), 2500);
   };
 
   // Check cloud status on mount
@@ -425,6 +628,9 @@ export default function Settings() {
   );
 
   const selectedTempProvider = allProviders.find((p) => p.key === tempProvider);
+  const tempModelOptions = detectedProviderKey === tempProvider && detectedModels.length > 0
+    ? detectedModels
+    : (selectedTempProvider?.models || []);
 
   return (
     <div className="h-full overflow-y-auto">
@@ -468,6 +674,66 @@ export default function Settings() {
             <span>{t('settings.model.restartHint')}</span>
           </div>
         )}
+
+        <Section title="🌐 Web & Browser">
+          <div className="p-4 space-y-4">
+            <div className="text-xs text-slate-500">
+              Configure OpenClaw web search and browser-adjacent capabilities directly from Desktop. This form is generated from the OpenClaw config schema, so supported fields track the installed OpenClaw version.
+            </div>
+
+            {webProviderGuide && (
+              <div className={`rounded-xl border px-3 py-3 text-xs ${webProviderMissingKey ? 'border-amber-500/30 bg-amber-500/10 text-amber-200' : 'border-sky-500/20 bg-sky-500/10 text-sky-100'}`}>
+                <div className="font-medium mb-1">{webProviderGuide.title}</div>
+                <div className="opacity-80">{webProviderGuide.detail}</div>
+                {webProviderMissingKey && <div className="mt-2 text-amber-300">Current status: provider selected, but credential is still missing.</div>}
+              </div>
+            )}
+
+            {webLoading ? (
+              <div className="flex items-center gap-2 text-xs text-slate-500">
+                <Loader2 size={12} className="animate-spin" />
+                Loading OpenClaw capability schema...
+              </div>
+            ) : webSections.length > 0 ? (
+              <>
+                <OpenClawConfigSectionForm
+                  sections={webSections}
+                  values={Object.fromEntries(
+                    webSections
+                      .flatMap((section) => section.fields)
+                      .map((field) => [field.path, getValueAtPath({ tools: { web: webValues } }, field.path)]),
+                  )}
+                  onChange={handleWebFieldChange}
+                />
+
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-xs text-slate-500">
+                    OpenClaw hot-reloads most `tools.web` changes. Browser or web search fixes should not require a manual restart.
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {webSaved && <span className="text-xs text-emerald-400">Saved to OpenClaw</span>}
+                    <button
+                      onClick={saveWebConfig}
+                      disabled={webSaving}
+                      className="flex items-center gap-1 px-3 py-1.5 text-xs bg-brand-600 hover:bg-brand-500 disabled:bg-slate-700 disabled:text-slate-500 rounded-lg text-white transition-colors"
+                    >
+                      {webSaving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                      Save Web Settings
+                    </button>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="text-xs text-slate-500">This OpenClaw version does not expose a dynamic web capability schema yet.</div>
+            )}
+
+            {webError && (
+              <div className="text-xs text-red-400 bg-red-950/30 border border-red-900/50 rounded-lg px-3 py-2">
+                {webError}
+              </div>
+            )}
+          </div>
+        </Section>
 
         {/* Memory */}
         <Section title={`🧠 ${t('settings.memory')}`}>
@@ -724,6 +990,118 @@ export default function Settings() {
                 );
               })()}
 
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2">
+                <div className="rounded-xl border border-emerald-600/20 bg-emerald-600/5 p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-emerald-300">Already Allowed</span>
+                    <span className="text-[10px] text-emerald-400/80">{allowedNow.length + customAllowed.length}</span>
+                  </div>
+                  <div className="space-y-1.5">
+                    {allowedNow.length === 0 && customAllowed.length === 0 && (
+                      <div className="text-[11px] text-slate-500">Only the preset baseline is active right now.</div>
+                    )}
+                    {allowedNow.map((tool) => (
+                      <button
+                        key={tool.id}
+                        onClick={() => toggleAllowedTool(tool.id)}
+                        className="w-full text-left rounded-lg border border-emerald-600/20 bg-slate-900/40 px-3 py-2 hover:border-emerald-500/40 transition-colors"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-medium text-slate-100">{tool.label}</span>
+                          <span className="text-[10px] text-emerald-300">{tool.risk}</span>
+                        </div>
+                        <div className="text-[10px] text-slate-500 mt-1">{tool.desc}</div>
+                      </button>
+                    ))}
+                    {customAllowed.map((tool) => (
+                      <div key={tool} className="flex items-center justify-between rounded-lg border border-slate-700/60 bg-slate-900/40 px-3 py-2">
+                        <span className="text-[11px] font-mono text-slate-300">{tool}</span>
+                        <button onClick={() => toggleAllowedTool(tool)} className="text-[10px] text-red-400 hover:text-red-300">Remove</button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-sky-600/20 bg-sky-600/5 p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-sky-300">Can Be Enabled</span>
+                    <span className="text-[10px] text-sky-400/80">{availableToAllow.length}</span>
+                  </div>
+                  <div className="space-y-1.5">
+                    {availableToAllow.map((tool) => (
+                      <button
+                        key={tool.id}
+                        onClick={() => toggleAllowedTool(tool.id)}
+                        className="w-full text-left rounded-lg border border-slate-700/60 bg-slate-900/40 px-3 py-2 hover:border-sky-500/40 transition-colors"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-medium text-slate-100">{tool.label}</span>
+                          <span className="text-[10px] text-sky-300">Allow</span>
+                        </div>
+                        <div className="text-[10px] text-slate-500 mt-1">{tool.desc}</div>
+                      </button>
+                    ))}
+                    {availableToAllow.length === 0 && (
+                      <div className="text-[11px] text-slate-500">All built-in capabilities in this catalog are already enabled.</div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-rose-600/20 bg-rose-600/5 p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-rose-300">Blocked Right Now</span>
+                    <span className="text-[10px] text-rose-400/80">{blockedNow.length + customDenied.length}</span>
+                  </div>
+                  <div className="space-y-1.5">
+                    {blockedNow.length === 0 && customDenied.length === 0 && (
+                      <div className="text-[11px] text-slate-500">No extra protections are being enforced beyond the selected preset.</div>
+                    )}
+                    {blockedNow.map((command) => (
+                      <button
+                        key={command.id}
+                        onClick={() => toggleDeniedCommand(command.id)}
+                        className="w-full text-left rounded-lg border border-rose-600/20 bg-slate-900/40 px-3 py-2 hover:border-rose-500/40 transition-colors"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-medium text-slate-100">{command.label}</span>
+                          <span className="text-[10px] text-rose-300">{command.impact}</span>
+                        </div>
+                        <div className="text-[10px] text-slate-500 mt-1">{command.desc}</div>
+                      </button>
+                    ))}
+                    {customDenied.map((command) => (
+                      <div key={command} className="flex items-center justify-between rounded-lg border border-slate-700/60 bg-slate-900/40 px-3 py-2">
+                        <span className="text-[11px] font-mono text-slate-300">{command}</span>
+                        <button onClick={() => toggleDeniedCommand(command)} className="text-[10px] text-red-400 hover:text-red-300">Remove</button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-700/50 bg-slate-900/30 p-3 space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-xs font-medium text-slate-200">Shell command approval</div>
+                    <div className="text-[11px] text-slate-500 mt-1">Choose whether unknown shell commands still need host confirmation before the AI can run them.</div>
+                  </div>
+                  <div className="flex bg-slate-800 rounded-lg overflow-hidden border border-slate-700/50">
+                    {([
+                      { key: 'on-miss' as const, label: 'Ask on new commands' },
+                      { key: 'off' as const, label: 'Do not ask' },
+                    ]).map((mode) => (
+                      <button
+                        key={mode.key}
+                        onClick={() => savePermissions({ execAsk: mode.key })}
+                        className={`px-3 py-1.5 text-[11px] transition-colors ${permissions.execAsk === mode.key ? 'bg-brand-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+                      >
+                        {mode.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
               {/* Advanced toggle */}
               <button
                 onClick={() => setShowAdvancedPerms(v => !v)}
@@ -747,24 +1125,12 @@ export default function Settings() {
                     </div>
                     {/* Known tool picker */}
                     <div className="space-y-1.5 mb-2">
-                      {[
-                        { id: 'awareness_init', label: t('perm.tool.init', 'Initialize Awareness memory'), desc: t('perm.tool.init.desc', 'Let the agent bootstrap memory instructions automatically') },
-                        { id: 'awareness_get_agent_prompt', label: t('perm.tool.prompt', 'Load agent prompt'), desc: t('perm.tool.prompt.desc', 'Let the agent load the installed Awareness prompt pack') },
-                        { id: 'exec', label: t('perm.tool.exec', 'Run shell commands'), desc: t('perm.tool.exec.desc', 'Let the agent execute coding and terminal commands') },
-                        { id: 'awareness_recall', label: t('perm.tool.recall', 'Search memory'), desc: t('perm.tool.recall.desc', 'Let AI search past decisions and knowledge') },
-                        { id: 'awareness_record', label: t('perm.tool.record', 'Save memory'), desc: t('perm.tool.record.desc', 'Let AI save new knowledge to memory') },
-                        { id: 'awareness_lookup', label: t('perm.tool.lookup', 'Lookup knowledge cards'), desc: t('perm.tool.lookup.desc', 'Let AI read structured knowledge cards') },
-                        { id: 'awareness_perception', label: t('perm.tool.perception', 'Read project signals'), desc: t('perm.tool.perception.desc', 'Let AI read file patterns and activity signals') },
-                      ].map(tool => {
+                      {KNOWN_ALLOWED_TOOLS.map(tool => {
                         const on = permissions.alsoAllow.includes(tool.id);
                         return (
                           <button
                             key={tool.id}
-                            onClick={() => savePermissions({
-                              alsoAllow: on
-                                ? permissions.alsoAllow.filter(t => t !== tool.id)
-                                : [...permissions.alsoAllow, tool.id],
-                            })}
+                            onClick={() => toggleAllowedTool(tool.id)}
                             className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg border text-left transition-all ${
                               on
                                 ? 'bg-emerald-600/10 border-emerald-600/30 text-slate-200'
@@ -784,8 +1150,7 @@ export default function Settings() {
                     </div>
                     {/* Custom tool name — for power users */}
                     {(() => {
-                      const knownIds = ['awareness_init', 'awareness_get_agent_prompt', 'exec', 'awareness_recall', 'awareness_record', 'awareness_lookup', 'awareness_perception'];
-                      const custom = permissions.alsoAllow.filter(t => !knownIds.includes(t));
+                      const custom = customAllowed;
                       return (
                         <div>
                           {custom.length > 0 && (
@@ -832,23 +1197,12 @@ export default function Settings() {
                     </div>
                     {/* Known privacy commands */}
                     <div className="space-y-1.5 mb-2">
-                      {[
-                        { id: 'camera.snap', label: t('perm.deny.camera', 'Camera / Photo'), desc: t('perm.deny.camera.desc', 'Block taking photos or screen clips') },
-                        { id: 'screen.record', label: t('perm.deny.screen', 'Screen recording'), desc: t('perm.deny.screen.desc', 'Block recording the screen') },
-                        { id: 'contacts.add', label: t('perm.deny.contacts', 'Contacts'), desc: t('perm.deny.contacts.desc', 'Block adding or reading contacts') },
-                        { id: 'calendar.add', label: t('perm.deny.calendar', 'Calendar'), desc: t('perm.deny.calendar.desc', 'Block creating calendar events') },
-                        { id: 'sms.send', label: t('perm.deny.sms', 'SMS / Messages'), desc: t('perm.deny.sms.desc', 'Block sending text messages') },
-                        { id: 'exec', label: t('perm.deny.exec', 'Shell commands (exec)'), desc: t('perm.deny.exec.desc', 'Block running arbitrary shell commands') },
-                      ].map(cmd => {
+                      {KNOWN_DENIED_COMMANDS.map(cmd => {
                         const on = permissions.denied.includes(cmd.id);
                         return (
                           <button
                             key={cmd.id}
-                            onClick={() => savePermissions({
-                              denied: on
-                                ? permissions.denied.filter(c => c !== cmd.id)
-                                : [...permissions.denied, cmd.id],
-                            })}
+                            onClick={() => toggleDeniedCommand(cmd.id)}
                             className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg border text-left transition-all ${
                               on
                                 ? 'bg-red-600/10 border-red-600/30 text-slate-200'
@@ -868,8 +1222,7 @@ export default function Settings() {
                     </div>
                     {/* Custom deny — for power users */}
                     {(() => {
-                      const knownDeny = ['camera.snap', 'screen.record', 'contacts.add', 'calendar.add', 'sms.send', 'exec'];
-                      const custom = permissions.denied.filter(c => !knownDeny.includes(c));
+                      const custom = customDenied;
                       return (
                         <div>
                           {custom.length > 0 && (
@@ -1357,17 +1710,17 @@ export default function Settings() {
                   <button
                     key={p.key}
                     onClick={() => {
+                      const profile = getProviderProfile(config, p.key);
+                      const restoredModels = profile.models?.length
+                        ? profile.models.map((model) => ({ id: model.id, label: model.label || model.name || model.id }))
+                        : [];
                       setTempProvider(p.key);
-                      setTempModel(p.models[0]?.id || '');
-                      // Restore saved key when switching back to the current provider;
-                      // clear when switching to a new one (don't leak keys between providers)
-                      if (p.key === config.providerKey) {
-                        setTempApiKey(config.apiKey);
-                        setTempBaseUrl(config.baseUrl);
-                      } else {
-                        setTempApiKey('');
-                        setTempBaseUrl('');
-                      }
+                      setTempModel(p.key === config.providerKey ? config.modelId : (profile.models[0]?.id || p.models[0]?.id || ''));
+                      setTempApiKey(profile.apiKey);
+                      setTempBaseUrl(profile.baseUrl);
+                      setDetectedProviderKey(restoredModels.length > 0 ? p.key : '');
+                      setDetectedModels(restoredModels);
+                      setTestResult('idle');
                     }}
                     className={`p-3 rounded-xl text-left transition-all border text-xs ${
                       tempProvider === p.key
@@ -1404,7 +1757,7 @@ export default function Settings() {
                   <div>
                     <label className="block text-xs font-medium text-slate-400 mb-1">{t('settings.model.selectModel')}</label>
                     <div className="flex gap-2 flex-wrap">
-                      {selectedTempProvider.models.map((m) => (
+                      {tempModelOptions.map((m) => (
                         <button
                           key={m.id}
                           onClick={() => setTempModel(m.id)}
@@ -1434,28 +1787,14 @@ export default function Settings() {
                   {selectedTempProvider.needsKey && tempApiKey && (
                     <div className="flex items-center gap-3 pt-2 border-t border-slate-700/50">
                       <button
-                        onClick={async () => {
-                          setTestingConnection(true);
-                          setTestResult('idle');
-                          try {
-                            const url = (tempBaseUrl || selectedTempProvider.baseUrl) + '/models';
-                            const res = await fetch(url, {
-                              headers: { 'Authorization': `Bearer ${tempApiKey}` },
-                              signal: AbortSignal.timeout(8000),
-                            });
-                            setTestResult(res.ok ? 'success' : 'error');
-                          } catch {
-                            setTestResult('error');
-                          }
-                          setTestingConnection(false);
-                        }}
+                        onClick={discoverModels}
                         disabled={testingConnection}
                         className="flex items-center gap-1 px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg transition-colors"
                       >
-                        {testingConnection ? <Loader2 size={12} className="animate-spin" /> : '🔗'} {t('settings.model.testConnection')}
+                        {testingConnection ? <Loader2 size={12} className="animate-spin" /> : '🔗'} {t('settings.model.discoverModels', 'Test & Refresh Models')}
                       </button>
-                      {testResult === 'success' && <span className="text-xs text-emerald-400">{t('settings.model.testSuccess')}</span>}
-                      {testResult === 'error' && <span className="text-xs text-red-400">{t('settings.model.testFailed')}</span>}
+                      {testResult === 'success' && <span className="text-xs text-emerald-400">{t('settings.model.detectSuccess', 'Model list updated')}</span>}
+                      {testResult === 'error' && <span className="text-xs text-red-400">{t('settings.model.detectFailed', 'Could not fetch models, please check API Key / Base URL')}</span>}
                     </div>
                   )}
                 </div>
@@ -1471,7 +1810,7 @@ export default function Settings() {
                 {t('common.cancel')}
               </button>
               <button
-                onClick={saveModelChange}
+                onClick={() => { void saveModelChange(); }}
                 disabled={!tempProvider || (selectedTempProvider?.needsKey && !tempApiKey)}
                 className="px-5 py-2 bg-brand-600 hover:bg-brand-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded-xl text-sm font-medium transition-colors flex items-center gap-1"
               >

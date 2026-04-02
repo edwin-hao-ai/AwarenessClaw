@@ -127,6 +127,29 @@ Object.defineProperty(window, 'electronAPI', {
     pluginsToggle: () => Promise.resolve({ success: true }),
     hooksList: () => Promise.resolve({ success: true, hooks: {} }),
     hooksToggle: () => Promise.resolve({ success: true }),
+    openclawConfigRead: () => Promise.resolve({ success: true, value: { search: { provider: 'brave' } } }),
+    openclawConfigWrite: () => Promise.resolve({ success: true }),
+    openclawConfigSchema: () => Promise.resolve({ success: true, schema: {
+      properties: {
+        tools: {
+          properties: {
+            web: {
+              properties: {
+                search: {
+                  type: 'object',
+                  properties: {
+                    enabled: { type: 'boolean' },
+                    provider: { type: 'string' },
+                    apiKey: { anyOf: [{ type: 'string' }, { type: 'object' }] },
+                    maxResults: { type: 'integer' },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    } }),
     bootstrap: () => Promise.resolve({ success: true }),
     agentsList: () => Promise.resolve({ success: true, agents: [{ id: 'main', name: 'Claw', emoji: '🦞', isDefault: true, bindings: ['telegram'] }] }),
     agentsAdd: () => Promise.resolve({ success: true }),
@@ -137,6 +160,7 @@ Object.defineProperty(window, 'electronAPI', {
     agentsReadFile: () => Promise.resolve({ success: true, content: '', path: '' }),
     agentsWriteFile: () => Promise.resolve({ success: true }),
     modelsReadProviders: () => Promise.resolve({ success: true, providers: [], primaryModel: '' }),
+    modelsDiscover: () => Promise.resolve({ success: true, models: [] }),
     securityCheck: () => Promise.resolve({ issues: [] }),
     doctorRun: () => Promise.resolve({ timestamp: Date.now(), checks: [], summary: { pass: 0, warn: 0, fail: 0, skipped: 0 } }),
     doctorFix: () => Promise.resolve({ id: 'test', success: true, message: 'Fixed' }),
