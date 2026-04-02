@@ -235,6 +235,26 @@ export function registerSetupHandlers(deps: {
     }
 
     // Not found — install with native npm install -g
+    // First: auto-fix npm prefix if it requires sudo (macOS/Linux only)
+    if (process.platform !== 'win32') {
+      const npmPrefix = await deps.safeShellExecAsync('npm config get prefix', 5000);
+      const needsSudo = npmPrefix && (
+        npmPrefix.trim().startsWith('/usr/local') ||
+        npmPrefix.trim().startsWith('/usr/lib') ||
+        npmPrefix.trim() === '/usr'
+      );
+      if (needsSudo) {
+        const userPrefix = path.join(deps.home, '.npm-global');
+        try {
+          fs.mkdirSync(userPrefix, { recursive: true });
+          await deps.runAsync(`npm config set prefix "${userPrefix}"`, 10000);
+        } catch {
+          // Best-effort — if this fails, npm install -g will fail with EACCES
+          // and the error message will guide the user
+        }
+      }
+    }
+
     const registries = ['', '--registry=https://registry.npmmirror.com'];
     let lastError = '';
 

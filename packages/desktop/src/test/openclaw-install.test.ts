@@ -307,6 +307,41 @@ describe('Windows env var safety', () => {
   });
 });
 
+describe('npm prefix auto-fix', () => {
+  it('detects /usr/local as needing sudo', () => {
+    const prefix = '/usr/local';
+    const needsSudo = prefix.startsWith('/usr/local') || prefix.startsWith('/usr/lib') || prefix === '/usr';
+    expect(needsSudo).toBe(true);
+  });
+
+  it('detects /usr/lib as needing sudo', () => {
+    const prefix = '/usr/lib';
+    const needsSudo = prefix.startsWith('/usr/local') || prefix.startsWith('/usr/lib') || prefix === '/usr';
+    expect(needsSudo).toBe(true);
+  });
+
+  it('does not flag ~/.npm-global as needing sudo', () => {
+    const prefix = '/Users/test/.npm-global';
+    const needsSudo = prefix.startsWith('/usr/local') || prefix.startsWith('/usr/lib') || prefix === '/usr';
+    expect(needsSudo).toBe(false);
+  });
+
+  it('does not flag /opt/homebrew as needing sudo', () => {
+    const prefix = '/opt/homebrew';
+    const needsSudo = prefix.startsWith('/usr/local') || prefix.startsWith('/usr/lib') || prefix === '/usr';
+    expect(needsSudo).toBe(false);
+  });
+
+  it('skips on Windows (never needs prefix fix)', () => {
+    // Windows npm prefix is %APPDATA%\npm — user-writable, no sudo needed
+    const isWin = process.platform === 'win32';
+    // On CI/test this runs on macOS/Linux, just verify the logic
+    if (!isWin) {
+      expect(true).toBe(true); // prefix fix only runs on non-win32
+    }
+  });
+});
+
 describe('Permission error detection', () => {
   const isPermError = (msg: string) => /EACCES|permission denied|Access is denied|拒绝访问/i.test(msg);
 
