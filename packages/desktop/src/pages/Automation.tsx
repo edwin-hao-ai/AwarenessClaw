@@ -14,13 +14,13 @@ interface CronJob {
 type FrequencyType = 'daily' | 'hourly' | 'weekly' | 'custom';
 
 const WEEKDAYS = [
-  { value: 1, label: 'Mon', labelCn: '一' },
-  { value: 2, label: 'Tue', labelCn: '二' },
-  { value: 3, label: 'Wed', labelCn: '三' },
-  { value: 4, label: 'Thu', labelCn: '四' },
-  { value: 5, label: 'Fri', labelCn: '五' },
-  { value: 6, label: 'Sat', labelCn: '六' },
-  { value: 0, label: 'Sun', labelCn: '日' },
+  { value: 1, key: 'auto.day.mon', fallback: 'Mon' },
+  { value: 2, key: 'auto.day.tue', fallback: 'Tue' },
+  { value: 3, key: 'auto.day.wed', fallback: 'Wed' },
+  { value: 4, key: 'auto.day.thu', fallback: 'Thu' },
+  { value: 5, key: 'auto.day.fri', fallback: 'Fri' },
+  { value: 6, key: 'auto.day.sat', fallback: 'Sat' },
+  { value: 0, key: 'auto.day.sun', fallback: 'Sun' },
 ];
 
 // Convert visual schedule to cron expression
@@ -39,8 +39,7 @@ function buildCronExpression(freq: FrequencyType, hour: number, minute: number, 
   }
 }
 
-// Translate cron expression to human-readable Chinese
-function cronToHuman(expr: string): string {
+function cronToHuman(expr: string, t: (key: string, fallback?: string) => string): string {
   if (!expr) return '';
   const parts = expr.trim().split(/\s+/);
   if (parts.length !== 5) return expr;
@@ -48,26 +47,34 @@ function cronToHuman(expr: string): string {
   const [min, hour, , , dow] = parts;
 
   // Every minute
-  if (min === '*' && hour === '*' && dow === '*') return 'Every minute';
+  if (min === '*' && hour === '*' && dow === '*') return t('auto.cron.everyMinute', 'Every minute');
 
   // Hourly
   if (hour === '*' && dow === '*') {
-    return min === '0' ? 'Every hour' : `Every hour at :${min.padStart(2, '0')}`;
+    return min === '0'
+      ? t('auto.cron.everyHour', 'Every hour')
+      : t('auto.cron.everyHourAt', 'Every hour at :{min}').replace('{min}', min.padStart(2, '0'));
   }
 
   // Format time
   const timeStr = `${hour.padStart(2, '0')}:${min.padStart(2, '0')}`;
 
   // Daily
-  if (dow === '*') return `Daily ${timeStr}`;
+  if (dow === '*') return t('auto.cron.daily', 'Daily {time}').replace('{time}', timeStr);
 
   // Weekly
   const dayNames: Record<string, string> = {
-    '0': 'Sun', '1': 'Mon', '2': 'Tue', '3': 'Wed', '4': 'Thu', '5': 'Fri', '6': 'Sat',
-    '7': 'Sun',
+    '0': t('auto.day.sun', 'Sun'),
+    '1': t('auto.day.mon', 'Mon'),
+    '2': t('auto.day.tue', 'Tue'),
+    '3': t('auto.day.wed', 'Wed'),
+    '4': t('auto.day.thu', 'Thu'),
+    '5': t('auto.day.fri', 'Fri'),
+    '6': t('auto.day.sat', 'Sat'),
+    '7': t('auto.day.sun', 'Sun'),
   };
   const days = dow.split(',').map(d => dayNames[d] || d).join(', ');
-  return `${days} ${timeStr}`;
+  return t('auto.cron.weekly', '{days} {time}').replace('{days}', days).replace('{time}', timeStr);
 }
 
 // Validate a custom cron expression: must have exactly 5 non-empty space-separated fields
@@ -77,10 +84,10 @@ function isValidCron(expr: string): boolean {
 }
 
 const PRESETS = [
-  { label: 'Daily 9 AM', freq: 'daily' as FrequencyType, hour: 9, minute: 0, weekdays: [] as number[], cmd: 'Check my to-do list and give me a summary' },
-  { label: 'Every hour', freq: 'hourly' as FrequencyType, hour: 0, minute: 0, weekdays: [] as number[], cmd: 'Check if there are new messages to reply' },
-  { label: 'Mon 9 AM', freq: 'weekly' as FrequencyType, hour: 9, minute: 0, weekdays: [1], cmd: 'Review last week and generate a weekly report' },
-  { label: 'Daily 10 PM', freq: 'daily' as FrequencyType, hour: 22, minute: 0, weekdays: [] as number[], cmd: 'Summarize today\'s conversations and learnings' },
+  { labelKey: 'auto.preset.daily9', labelFallback: 'Daily 9 AM', freq: 'daily' as FrequencyType, hour: 9, minute: 0, weekdays: [] as number[], cmdKey: 'auto.presetCmd.dailySummary', cmdFallback: 'Check my to-do list and give me a summary' },
+  { labelKey: 'auto.preset.hourly', labelFallback: 'Every hour', freq: 'hourly' as FrequencyType, hour: 0, minute: 0, weekdays: [] as number[], cmdKey: 'auto.presetCmd.checkMessages', cmdFallback: 'Check if there are new messages to reply' },
+  { labelKey: 'auto.preset.monAm', labelFallback: 'Mon 9 AM', freq: 'weekly' as FrequencyType, hour: 9, minute: 0, weekdays: [1], cmdKey: 'auto.presetCmd.weeklyReport', cmdFallback: 'Review last week and generate a weekly report' },
+  { labelKey: 'auto.preset.daily10pm', labelFallback: 'Daily 10 PM', freq: 'daily' as FrequencyType, hour: 22, minute: 0, weekdays: [] as number[], cmdKey: 'auto.presetCmd.conversationSummary', cmdFallback: 'Summarize today\'s conversations and learnings' },
 ];
 
 export default function Automation() {
@@ -197,7 +204,7 @@ export default function Automation() {
     setHour(preset.hour);
     setMinute(preset.minute);
     setSelectedDays(preset.weekdays);
-    setNewCommand(preset.cmd);
+    setNewCommand(t(preset.cmdKey, preset.cmdFallback));
     setShowAdvanced(false);
   };
 
@@ -288,7 +295,7 @@ export default function Automation() {
                   onChange={e => setHeartbeatInterval(parseInt(e.target.value))}
                   className="flex-1 accent-brand-500"
                 />
-                <span className="text-sm text-slate-300 w-16 text-right">{heartbeatInterval} min</span>
+                <span className="text-sm text-slate-300 w-16 text-right">{heartbeatInterval} {t('auto.minutesShort', 'min')}</span>
               </div>
             )}
           </div>
@@ -319,7 +326,7 @@ export default function Automation() {
                     onClick={() => applyPreset(p)}
                     className="px-2.5 py-1 text-xs bg-slate-700 hover:bg-slate-600 rounded-lg text-slate-300 transition-colors"
                   >
-                    {p.label}
+                    {t(p.labelKey, p.labelFallback)}
                   </button>
                 ))}
               </div>
@@ -408,7 +415,7 @@ export default function Automation() {
                             : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
                         }`}
                       >
-                        {day.label}
+                        {t(day.key, day.fallback)}
                       </button>
                     ))}
                   </div>
@@ -441,10 +448,10 @@ export default function Automation() {
                     className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-slate-300 transition-colors"
                   >
                     {showAdvanced ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
-                    Cron expression
+                    {t('auto.cronExpression', 'Cron expression')}
                   </button>
                   <code className="text-[10px] px-1.5 py-0.5 bg-slate-700/50 rounded text-slate-500 font-mono">{cronExpression}</code>
-                  <span className="text-[10px] text-brand-400">{cronToHuman(cronExpression)}</span>
+                  <span className="text-[10px] text-brand-400">{cronToHuman(cronExpression, t)}</span>
                 </div>
               )}
 
@@ -515,7 +522,7 @@ export default function Automation() {
                   <>
                     <div className="flex items-center gap-2 mb-1">
                       <code className="text-xs px-1.5 py-0.5 bg-slate-700 rounded text-brand-300 font-mono">{job.expression}</code>
-                      <span className="text-xs text-slate-500">{cronToHuman(job.expression || '')}</span>
+                      <span className="text-xs text-slate-500">{cronToHuman(job.expression || '', t)}</span>
                     </div>
                     <p className="text-sm text-slate-300">{job.command}</p>
                   </>

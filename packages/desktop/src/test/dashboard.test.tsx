@@ -52,7 +52,7 @@ describe('Dashboard (Chat)', () => {
       bootstrapCompleted: false,
     }));
     const api = window.electronAPI as any;
-    api.workspaceReadFile = vi.fn().mockResolvedValue({ success: true, content: '', exists: false });
+    api.agentsReadFile = vi.fn().mockResolvedValue({ success: true, content: '', path: '/Users/test/.openclaw/workspace/USER.md' });
 
     await act(async () => { render(<Dashboard />); });
 
@@ -67,12 +67,12 @@ describe('Dashboard (Chat)', () => {
       bootstrapCompleted: false,
     }));
     const api = window.electronAPI as any;
-    api.workspaceReadFile = vi.fn().mockResolvedValue({ success: true, content: '# User\n\n- Name: Edwin', exists: true });
+    api.agentsReadFile = vi.fn().mockResolvedValue({ success: true, content: '# User\n\n- Name: Edwin', path: '/Users/test/.openclaw/workspace/USER.md' });
 
     await act(async () => { render(<Dashboard />); });
 
     await waitFor(() => {
-      expect(api.workspaceReadFile).toHaveBeenCalledWith('USER.md');
+      expect(api.agentsReadFile).toHaveBeenCalledWith('main', 'USER.md');
     });
   });
 

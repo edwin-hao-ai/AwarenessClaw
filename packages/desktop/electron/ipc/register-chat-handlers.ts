@@ -362,6 +362,7 @@ export function registerChatHandlers(deps: {
 
       await ws.chatSend(sid, fullMessage, {
         thinking: options?.thinkingLevel && options.thinkingLevel !== 'off' ? options.thinkingLevel : undefined,
+        verbose: 'full',
         agentId: options?.agentId && options.agentId !== 'main' ? options.agentId : undefined,
       });
 
@@ -497,7 +498,7 @@ async function chatSendViaCli(
       ? ` --thinking ${options.thinkingLevel}` : '';
     const agentFlag = options?.agentId && options.agentId !== 'main' ? ` --agent "${options.agentId}"` : '';
     const escapedMsg = message.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\$/g, '\\\$').replace(/`/g, '\\`');
-    const command = `openclaw agent --session-id "${sid}" -m "${escapedMsg}" --verbose on${thinkingFlag}${agentFlag}`;
+    const command = `openclaw agent --session-id "${sid}" -m "${escapedMsg}" --verbose full${thinkingFlag}${agentFlag}`;
     const enhancedPath = deps.getEnhancedPath();
     const child = process.platform === 'win32'
       ? spawn(deps.wrapWindowsCommand(command), [], { cwd: options?.workspacePath || os.homedir(), shell: 'cmd.exe', env: { ...process.env, PATH: enhancedPath, NO_COLOR: '1', FORCE_COLOR: '0' } })

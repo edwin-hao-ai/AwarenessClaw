@@ -75,8 +75,8 @@ export function SessionSidebar({
         {channelSessions.length > 0 && (
           <>
             <div className="px-3 pt-2.5 pb-1 flex items-center justify-between">
-              <span className="text-[10px] uppercase tracking-wider text-slate-600 font-medium">Channels</span>
-              <button onClick={onRefreshChannels} className="text-slate-600 hover:text-slate-400 p-0.5" title="Refresh">
+              <span className="text-[10px] uppercase tracking-wider text-slate-600 font-medium">{t('nav.channels', 'Channels')}</span>
+              <button onClick={onRefreshChannels} className="text-slate-600 hover:text-slate-400 p-0.5" title={t('common.refresh', 'Refresh')}>
                 <svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M13.65 2.35A8 8 0 1 0 16 8h-2a6 6 0 1 1-1.76-4.24L10 6h6V0l-2.35 2.35z" fill="currentColor"/></svg>
               </button>
             </div>
@@ -94,7 +94,7 @@ export function SessionSidebar({
               </div>
             ))}
             <div className="px-3 pt-2.5 pb-1">
-              <span className="text-[10px] uppercase tracking-wider text-slate-600 font-medium">Local</span>
+              <span className="text-[10px] uppercase tracking-wider text-slate-600 font-medium">{t('chat.sidebar.local', 'Local')}</span>
             </div>
           </>
         )}

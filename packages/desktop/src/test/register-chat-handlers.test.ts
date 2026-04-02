@@ -150,7 +150,45 @@ describe('registerChatHandlers', () => {
     expect(ws.chatSend).toHaveBeenCalledWith(
       'test-session',
       expect.stringContaining('hello'),
-      expect.objectContaining({ agentId: 'researcher' }),
+      expect.objectContaining({ agentId: 'researcher', verbose: 'full' }),
+    );
+  });
+
+  it('requests verbose full so gateway tool events include real output details', async () => {
+    const ws = new FakeGatewayClient();
+    ws.chatSend = vi.fn(async () => {
+      setTimeout(() => {
+        ws.emit('event:chat', {
+          sessionKey: 'test-session',
+          state: 'final',
+          message: {
+            role: 'assistant',
+            content: 'done',
+          },
+        });
+      }, 0);
+      return { status: 'started' };
+    });
+
+    registerChatHandlers({
+      sendToRenderer: vi.fn(),
+      ensureGatewayRunning: vi.fn(async () => ({ ok: true })),
+      getGatewayWs: vi.fn(async () => ws as any),
+      getConnectedGatewayWs: vi.fn(() => ws as any),
+      callMcpStrict: vi.fn(async () => ({})),
+      getEnhancedPath: vi.fn(() => process.env.PATH || ''),
+      wrapWindowsCommand: vi.fn((command: string) => command),
+      stripAnsi: vi.fn((output: string) => output),
+    });
+
+    const handlers = getRegisteredHandlers();
+    const result = await handlers['chat:send']({}, 'hello', 'test-session', {});
+
+    expect(result).toMatchObject({ success: true, text: 'done', sessionId: 'test-session' });
+    expect(ws.chatSend).toHaveBeenCalledWith(
+      'test-session',
+      expect.stringContaining('hello'),
+      expect.objectContaining({ verbose: 'full' }),
     );
   });
 

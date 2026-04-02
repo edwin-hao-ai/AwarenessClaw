@@ -14,13 +14,13 @@ interface AgentInfo {
 }
 
 const WORKSPACE_FILE_META: Record<string, string> = {
-  'SOUL.md': 'System prompt — personality, role, behavior',
-  'TOOLS.md': 'Tool permissions and usage rules',
-  'IDENTITY.md': 'Name, emoji, avatar configuration',
-  'USER.md': 'User preferences and context',
-  'MEMORY.md': 'Persistent agent memory',
-  'AGENTS.md': 'Workspace-level agent defaults and routing notes',
-  'HEARTBEAT.md': 'Runtime heartbeat, cadence, and operating rhythm notes',
+  'SOUL.md': 'agents.file.soul.desc',
+  'TOOLS.md': 'agents.file.tools.desc',
+  'IDENTITY.md': 'agents.file.identity.desc',
+  'USER.md': 'agents.file.user.desc',
+  'MEMORY.md': 'agents.file.memory.desc',
+  'AGENTS.md': 'agents.file.agents.desc',
+  'HEARTBEAT.md': 'agents.file.heartbeat.desc',
 };
 
 export default function Agents() {
@@ -72,9 +72,9 @@ export default function Agents() {
       if (result.success) {
         setAgents(result.agents || []);
       } else {
-        setError(result.error || 'Failed to load agents');
+        setError(result.error || t('agents.loadFailed', 'Failed to load agents'));
       }
-    } catch { setError('Failed to connect'); }
+    } catch { setError(t('agents.connectFailed', 'Failed to connect')); }
     setLoading(false);
   };
 
@@ -123,15 +123,15 @@ export default function Agents() {
       } else {
         const errMsg = result.error || '';
         if (/permission|access|denied/i.test(errMsg)) {
-          setError('Permission denied. Check your system permissions and try again.');
+          setError(t('agents.createPermissionDenied', 'Permission denied. Check your system permissions and try again.'));
         } else if (/already exists|duplicate/i.test(errMsg)) {
-          setError(`Agent "${newAgentName.trim()}" already exists. Choose a different name.`);
+          setError(t('agents.createDuplicate', 'Agent "{name}" already exists. Choose a different name.').replace('{name}', newAgentName.trim()));
         } else {
-          setError(errMsg || 'Failed to create agent. Please try again.');
+          setError(errMsg || t('agents.createFailed', 'Failed to create agent. Please try again.'));
         }
       }
     } catch {
-      setError('Unexpected error. Please try again.');
+      setError(t('agents.unexpectedError', 'Unexpected error. Please try again.'));
     }
     setCreating(false);
   };
@@ -217,7 +217,7 @@ export default function Agents() {
       setActiveFile('');
       setFileContent('');
       setFileOriginal('');
-      setError(err?.message || 'Failed to load workspace files');
+      setError(err?.message || t('agents.filesLoadFailed', 'Failed to load workspace files'));
     } finally {
       setFileListLoading(false);
     }
@@ -244,10 +244,10 @@ export default function Agents() {
         setFileSaved(true);
         setTimeout(() => setFileSaved(false), 2000);
       } else {
-        setError(result.error || 'Save failed');
+        setError(result.error || t('agents.saveFailed', 'Save failed'));
       }
     } catch {
-      setError('Failed to save file');
+      setError(t('agents.fileSaveFailed', 'Failed to save file'));
     }
     setFileSaving(false);
   };
@@ -343,7 +343,7 @@ export default function Agents() {
                           {agent.isDefault && <span className="px-1.5 py-0.5 text-[10px] bg-brand-600/20 text-brand-400 rounded">{t('agents.default', 'Default')}</span>}
                         </div>
                         <div className="text-[11px] text-slate-500 mt-0.5">
-                          ID: {agent.id}{agent.model && <span className="ml-2">Model: {agent.model}</span>}
+                          {t('agents.idLabel', 'ID')}: {agent.id}{agent.model && <span className="ml-2">{t('agents.modelLabel', 'Model')}: {agent.model}</span>}
                         </div>
                       </div>
                     </div>
@@ -447,7 +447,9 @@ export default function Agents() {
                     {/* File description */}
                     <div className="px-4 pt-2">
                       <p className="text-[10px] text-slate-500">
-                        {activeFile ? (WORKSPACE_FILE_META[activeFile] || `OpenClaw workspace file: ${activeFile}`) : 'No markdown workspace files found for this agent.'}
+                        {activeFile
+                          ? t(WORKSPACE_FILE_META[activeFile] || 'agents.file.defaultDesc', WORKSPACE_FILE_META[activeFile] ? undefined : 'OpenClaw workspace file: {file}').replace('{file}', activeFile)
+                          : t('agents.noWorkspaceFiles', 'No markdown workspace files found for this agent.')}
                       </p>
                     </div>
 
@@ -459,7 +461,7 @@ export default function Agents() {
                         </div>
                       ) : !activeFile ? (
                         <div className="rounded-lg border border-dashed border-slate-700 px-4 py-8 text-sm text-slate-500">
-                          This agent does not expose any top-level markdown workspace files yet.
+                          {t('agents.noTopLevelFiles', 'This agent does not expose any top-level markdown workspace files yet.')}
                         </div>
                       ) : (
                         <textarea
@@ -468,10 +470,10 @@ export default function Agents() {
                           rows={20}
                           className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-sm text-slate-300 font-mono leading-relaxed focus:outline-none focus:border-brand-500 resize-y min-h-[300px]"
                           placeholder={activeFile === 'SOUL.md'
-                            ? 'You are a helpful assistant specialized in...\n\n# Personality\n- Friendly and professional\n- Always explain your reasoning\n\n# Rules\n- Never share private information\n- Always cite sources'
+                            ? t('agents.placeholder.soul', 'You are a helpful assistant specialized in...\n\n# Personality\n- Friendly and professional\n- Always explain your reasoning\n\n# Rules\n- Never share private information\n- Always cite sources')
                             : activeFile === 'TOOLS.md'
-                            ? '# Available Tools\n- exec: Run shell commands\n- read: Read files\n- write: Write files\n\n# Restrictions\n- Do not delete files without confirmation'
-                            : `Content for ${activeFile}...`
+                            ? t('agents.placeholder.tools', '# Available Tools\n- exec: Run shell commands\n- read: Read files\n- write: Write files\n\n# Restrictions\n- Do not delete files without confirmation')
+                            : t('agents.placeholder.file', 'Content for {file}...').replace('{file}', activeFile)
                           }
                         />
                       )}

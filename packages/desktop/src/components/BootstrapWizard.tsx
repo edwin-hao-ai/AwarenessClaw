@@ -57,23 +57,33 @@ export default function BootstrapWizard({ onComplete, onSkip }: BootstrapWizardP
       const api = window.electronAPI as any;
       if (!api) { onComplete(); return; }
 
+      const writeBootstrapFile = async (fileName: string, content: string) => {
+        if (api.agentsWriteFile) {
+          return api.agentsWriteFile('main', fileName, content);
+        }
+        if (api.workspaceWriteFile) {
+          return api.workspaceWriteFile(fileName, content);
+        }
+        throw new Error('No workspace writer available');
+      };
+
       const finalAgentName = agentName.trim() || t('bootstrap.step3.default', 'Claw');
       const finalUserName = userName.trim() || 'User';
 
       // Write USER.md
-      await api.workspaceWriteFile('USER.md',
+      await writeBootstrapFile('USER.md',
         `# User Profile\n\n- **Name**: ${finalUserName}\n- **Preferred style**: ${style}\n`
       );
 
       // Write SOUL.md
       const soulContent = SOUL_TEMPLATES[style];
-      await api.workspaceWriteFile('SOUL.md',
+      await writeBootstrapFile('SOUL.md',
         `# ${finalAgentName}\n\n${soulContent}\n\nThe user's name is **${finalUserName}**. Address them by name when natural.\n`
       );
 
       // Write IDENTITY.md
       const emoji = style === 'friendly' ? '🐾' : style === 'professional' ? '💼' : style === 'minimal' ? '⚡' : '🎨';
-      await api.workspaceWriteFile('IDENTITY.md',
+      await writeBootstrapFile('IDENTITY.md',
         `# Identity\n\n- **name**: ${finalAgentName}\n- **emoji**: ${emoji}\n- **role**: AI Assistant\n`
       );
 

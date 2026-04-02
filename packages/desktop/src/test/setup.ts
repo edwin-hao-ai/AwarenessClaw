@@ -159,6 +159,7 @@ Object.defineProperty(window, 'electronAPI', {
     agentsSetIdentity: () => Promise.resolve({ success: true }),
     agentsBind: () => Promise.resolve({ success: true }),
     agentsUnbind: () => Promise.resolve({ success: true }),
+    agentsListFiles: () => Promise.resolve({ success: true, files: ['SOUL.md', 'USER.md', 'IDENTITY.md', 'TOOLS.md', 'AGENTS.md'] }),
     agentsReadFile: () => Promise.resolve({ success: true, content: '', path: '' }),
     agentsWriteFile: () => Promise.resolve({ success: true }),
     modelsReadProviders: () => Promise.resolve({ success: true, providers: [], primaryModel: '' }),

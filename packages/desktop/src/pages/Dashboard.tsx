@@ -248,8 +248,10 @@ const DEVELOPER_EXTRA_TOOLS = ['awareness_perception'] as const;
 
 const CHAT_PERMISSION_PRESETS = {
   safe: {
-    label: 'Safe',
-    desc: 'Minimal tool allowlist. File-changing host exec stays blocked by default.',
+    labelKey: 'chat.permission.safe',
+    labelFallback: 'Safe',
+    descKey: 'chat.permission.safe.desc',
+    descFallback: 'Minimal tool allowlist. File-changing host exec stays blocked by default.',
     alsoAllow: [...BASE_REQUIRED_TOOLS] as string[],
     denied: ['exec', 'bash', 'shell', 'camera.snap', 'screen.record', 'contacts.add', 'calendar.add', 'sms.send'],
     execSecurity: 'deny' as const,
@@ -258,8 +260,10 @@ const CHAT_PERMISSION_PRESETS = {
     execAutoAllowSkills: false,
   },
   standard: {
-    label: 'Standard',
-    desc: 'Coding + Awareness tools, with host exec still going through OpenClaw approvals.',
+    labelKey: 'chat.permission.standard',
+    labelFallback: 'Standard',
+    descKey: 'chat.permission.standard.desc',
+    descFallback: 'Coding + Awareness tools, with host exec still going through OpenClaw approvals.',
     alsoAllow: [...BASE_REQUIRED_TOOLS, ...STANDARD_ALLOWED_TOOLS] as string[],
     denied: ['camera.snap', 'screen.record', 'contacts.add', 'calendar.add', 'sms.send'],
     execSecurity: 'allowlist' as const,
@@ -268,8 +272,10 @@ const CHAT_PERMISSION_PRESETS = {
     execAutoAllowSkills: false,
   },
   developer: {
-    label: 'Developer',
-    desc: 'Broad tool access. Host exec is fully opened for trusted local automation.',
+    labelKey: 'chat.permission.developer',
+    labelFallback: 'Developer',
+    descKey: 'chat.permission.developer.desc',
+    descFallback: 'Broad tool access. Host exec is fully opened for trusted local automation.',
     alsoAllow: [...BASE_REQUIRED_TOOLS, ...STANDARD_ALLOWED_TOOLS, ...DEVELOPER_EXTRA_TOOLS] as string[],
     denied: [] as string[],
     execSecurity: 'full' as const,
@@ -289,10 +295,10 @@ function saveSessions(sessions: ChatSession[]) {
   localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessions));
 }
 
-function createSession(): ChatSession {
+function createSession(title = 'New Chat'): ChatSession {
   return {
     id: `session-${Date.now()}`,
-    title: '新对话',
+    title,
     messages: [],
     createdAt: Date.now(),
     updatedAt: Date.now(),
@@ -489,12 +495,12 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
       if (sessions.length > 0) {
         setActiveSessionId(sessions[0].id);
       } else {
-        const s = createSession();
+        const s = createSession(t('chat.newSession', 'New Chat'));
         setSessions([s]);
         setActiveSessionId(s.id);
       }
     }
-  }, []);
+  }, [sessions, activeSessionId, t]);
 
   // Listen for streaming chunks + status events
   useEffect(() => {
@@ -724,9 +730,12 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
     }).catch(() => {});
     // Check if bootstrap has been completed
     if (!config.bootstrapCompleted) {
-      // Check if USER.md exists — if so, bootstrap was already done externally
-      api.workspaceReadFile?.('USER.md').then((res: any) => {
-        if (res?.exists && res.content?.trim()) {
+      const readBootstrapUserFile = api.agentsReadFile
+        ? api.agentsReadFile('main', 'USER.md')
+        : api.workspaceReadFile?.('USER.md');
+
+      Promise.resolve(readBootstrapUserFile).then((res: any) => {
+        if (res?.success && res.content?.trim()) {
           updateConfig({ bootstrapCompleted: true });
         } else {
           setShowBootstrap(true);
@@ -796,11 +805,11 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
   };
 
   const handleNewSession = useCallback(() => {
-    const s = createSession();
+    const s = createSession(t('chat.newSession', 'New Chat'));
     setSessions(prev => [s, ...prev]);
     setActiveSessionId(s.id);
     setShowSidebar(false);
-  }, []);
+  }, [t]);
 
   const handleSelectProjectRoot = async () => {
     const api = window.electronAPI as any;
@@ -813,12 +822,12 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
   const activePermissionPreset = detectChatPermissionPreset(permissions);
   const permissionOptions = (Object.entries(CHAT_PERMISSION_PRESETS) as Array<[Exclude<ChatPermissionPresetKey, 'custom'>, typeof CHAT_PERMISSION_PRESETS.safe]>).map(([key, preset]) => ({
     key,
-    label: preset.label,
-    desc: preset.desc,
+    label: t(preset.labelKey, preset.labelFallback),
+    desc: t(preset.descKey, preset.descFallback),
   }));
   const selectedPermissionLabel = activePermissionPreset === 'custom'
-    ? 'Custom'
-    : CHAT_PERMISSION_PRESETS[activePermissionPreset].label;
+    ? t('settings.permissions.custom', 'Custom')
+    : t(CHAT_PERMISSION_PRESETS[activePermissionPreset].labelKey, CHAT_PERMISSION_PRESETS[activePermissionPreset].labelFallback);
 
   const applyChatPermissionPreset = useCallback(async (presetKey: string) => {
     if (!window.electronAPI) return;

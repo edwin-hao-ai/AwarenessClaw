@@ -15,22 +15,22 @@ import { buildDynamicSectionsFromSchema, getValueAtPath, setValueAtPath, type Dy
 import pkg from '../../package.json';
 
 const KNOWN_ALLOWED_TOOLS = [
-  { id: 'awareness_init', label: 'Awareness Init', desc: 'Bootstrap memory instructions automatically', risk: 'Core' },
-  { id: 'awareness_get_agent_prompt', label: 'Prompt Pack', desc: 'Load installed Awareness prompt pack', risk: 'Core' },
-  { id: 'exec', label: 'Shell Commands', desc: 'Run coding and terminal commands on your machine', risk: 'High' },
-  { id: 'awareness_recall', label: 'Memory Recall', desc: 'Search past decisions and knowledge cards', risk: 'Normal' },
-  { id: 'awareness_record', label: 'Memory Save', desc: 'Write new knowledge back to Awareness memory', risk: 'Normal' },
-  { id: 'awareness_lookup', label: 'Knowledge Lookup', desc: 'Read structured memory cards', risk: 'Normal' },
-  { id: 'awareness_perception', label: 'Project Signals', desc: 'Read file patterns and activity signals', risk: 'Elevated' },
+  { id: 'awareness_init', labelKey: 'settings.tool.awarenessInit.label', labelFallback: 'Awareness Init', descKey: 'settings.tool.awarenessInit.desc', descFallback: 'Bootstrap memory instructions automatically', riskKey: 'settings.risk.core', riskFallback: 'Core' },
+  { id: 'awareness_get_agent_prompt', labelKey: 'settings.tool.promptPack.label', labelFallback: 'Prompt Pack', descKey: 'settings.tool.promptPack.desc', descFallback: 'Load installed Awareness prompt pack', riskKey: 'settings.risk.core', riskFallback: 'Core' },
+  { id: 'exec', labelKey: 'settings.tool.exec.label', labelFallback: 'Shell Commands', descKey: 'settings.tool.exec.desc', descFallback: 'Run coding and terminal commands on your machine', riskKey: 'settings.risk.high', riskFallback: 'High' },
+  { id: 'awareness_recall', labelKey: 'settings.tool.recall.label', labelFallback: 'Memory Recall', descKey: 'settings.tool.recall.desc', descFallback: 'Search past decisions and knowledge cards', riskKey: 'settings.risk.normal', riskFallback: 'Normal' },
+  { id: 'awareness_record', labelKey: 'settings.tool.record.label', labelFallback: 'Memory Save', descKey: 'settings.tool.record.desc', descFallback: 'Write new knowledge back to Awareness memory', riskKey: 'settings.risk.normal', riskFallback: 'Normal' },
+  { id: 'awareness_lookup', labelKey: 'settings.tool.lookup.label', labelFallback: 'Knowledge Lookup', descKey: 'settings.tool.lookup.desc', descFallback: 'Read structured memory cards', riskKey: 'settings.risk.normal', riskFallback: 'Normal' },
+  { id: 'awareness_perception', labelKey: 'settings.tool.perception.label', labelFallback: 'Project Signals', descKey: 'settings.tool.perception.desc', descFallback: 'Read file patterns and activity signals', riskKey: 'settings.risk.elevated', riskFallback: 'Elevated' },
 ];
 
 const KNOWN_DENIED_COMMANDS = [
-  { id: 'camera.snap', label: 'Camera', desc: 'Block taking photos or screen clips', impact: 'Privacy' },
-  { id: 'screen.record', label: 'Screen Recording', desc: 'Block recording the screen', impact: 'Privacy' },
-  { id: 'contacts.add', label: 'Contacts', desc: 'Block reading or adding contacts', impact: 'Privacy' },
-  { id: 'calendar.add', label: 'Calendar', desc: 'Block creating calendar events', impact: 'Privacy' },
-  { id: 'sms.send', label: 'SMS / Messages', desc: 'Block sending text messages', impact: 'Privacy' },
-  { id: 'exec', label: 'Shell Commands', desc: 'Hard-block running arbitrary shell commands', impact: 'Critical' },
+  { id: 'camera.snap', labelKey: 'settings.command.camera.label', labelFallback: 'Camera', descKey: 'settings.command.camera.desc', descFallback: 'Block taking photos or screen clips', impactKey: 'settings.impact.privacy', impactFallback: 'Privacy' },
+  { id: 'screen.record', labelKey: 'settings.command.screenRecord.label', labelFallback: 'Screen Recording', descKey: 'settings.command.screenRecord.desc', descFallback: 'Block recording the screen', impactKey: 'settings.impact.privacy', impactFallback: 'Privacy' },
+  { id: 'contacts.add', labelKey: 'settings.command.contacts.label', labelFallback: 'Contacts', descKey: 'settings.command.contacts.desc', descFallback: 'Block reading or adding contacts', impactKey: 'settings.impact.privacy', impactFallback: 'Privacy' },
+  { id: 'calendar.add', labelKey: 'settings.command.calendar.label', labelFallback: 'Calendar', descKey: 'settings.command.calendar.desc', descFallback: 'Block creating calendar events', impactKey: 'settings.impact.privacy', impactFallback: 'Privacy' },
+  { id: 'sms.send', labelKey: 'settings.command.sms.label', labelFallback: 'SMS / Messages', descKey: 'settings.command.sms.desc', descFallback: 'Block sending text messages', impactKey: 'settings.impact.privacy', impactFallback: 'Privacy' },
+  { id: 'exec', labelKey: 'settings.command.exec.label', labelFallback: 'Shell Commands', descKey: 'settings.command.exec.desc', descFallback: 'Hard-block running arbitrary shell commands', impactKey: 'settings.impact.critical', impactFallback: 'Critical' },
 ];
 
 const WEB_PROVIDER_GUIDANCE: Record<string, { title: string; detail: string; requiresKey: boolean }> = {
@@ -278,10 +278,10 @@ export default function Settings() {
       setWebSections(buildDynamicSectionsFromSchema(schemaResult.schema, 'tools.web', nextValues));
       setWebLoading(false);
     }).catch(() => {
-      setWebError('Failed to load OpenClaw config schema.');
+      setWebError(t('settings.web.loadSchemaFailed', 'Failed to load OpenClaw config schema.'));
       setWebLoading(false);
     });
-  }, []);
+  }, [t]);
 
   const runDoctor = async () => {
     setDoctorLoading(true);
@@ -387,7 +387,13 @@ export default function Settings() {
   const webProviderMissingKey = !!(webProviderGuide?.requiresKey && (!webProviderApiKey || (typeof webProviderApiKey === 'string' && !webProviderApiKey.trim())));
 
   const knownAllowed = permissions
-    ? KNOWN_ALLOWED_TOOLS.map((tool) => ({ ...tool, enabled: permissions.alsoAllow.includes(tool.id) }))
+    ? KNOWN_ALLOWED_TOOLS.map((tool) => ({
+      id: tool.id,
+      label: t(tool.labelKey, tool.labelFallback),
+      desc: t(tool.descKey, tool.descFallback),
+      risk: t(tool.riskKey, tool.riskFallback),
+      enabled: permissions.alsoAllow.includes(tool.id),
+    }))
     : [];
   const allowedNow = knownAllowed.filter((tool) => tool.enabled);
   const availableToAllow = knownAllowed.filter((tool) => !tool.enabled);
@@ -396,7 +402,13 @@ export default function Settings() {
     : [];
 
   const knownDenied = permissions
-    ? KNOWN_DENIED_COMMANDS.map((cmd) => ({ ...cmd, blocked: permissions.denied.includes(cmd.id) }))
+    ? KNOWN_DENIED_COMMANDS.map((cmd) => ({
+      id: cmd.id,
+      label: t(cmd.labelKey, cmd.labelFallback),
+      desc: t(cmd.descKey, cmd.descFallback),
+      impact: t(cmd.impactKey, cmd.impactFallback),
+      blocked: permissions.denied.includes(cmd.id),
+    }))
     : [];
   const blockedNow = knownDenied.filter((cmd) => cmd.blocked);
   const customDenied = permissions
@@ -431,7 +443,7 @@ export default function Settings() {
     const result = await api.openclawConfigWrite('tools.web', webValues);
     setWebSaving(false);
     if (!result?.success) {
-      setWebError(result?.error || 'Failed to save Web settings.');
+      setWebError(result?.error || t('settings.web.saveFailed', 'Failed to save Web settings.'));
       return;
     }
     setWebSaved(true);
@@ -707,8 +719,8 @@ export default function Settings() {
             customAllowed={customAllowed}
             blockedNow={blockedNow}
             customDenied={customDenied}
-            knownAllowedTools={KNOWN_ALLOWED_TOOLS}
-            knownDeniedCommands={KNOWN_DENIED_COMMANDS}
+            knownAllowedTools={knownAllowed}
+            knownDeniedCommands={knownDenied}
             showAdvancedPerms={showAdvancedPerms}
             newAllowTool={newAllowTool}
             newDenyCmd={newDenyCmd}
