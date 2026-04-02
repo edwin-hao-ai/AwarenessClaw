@@ -7,9 +7,7 @@ export function registerAppRuntimeHandlers(deps: {
   safeShellExecAsync: (cmd: string, timeoutMs?: number) => Promise<string | null>;
   getLocalDaemonHealth: (timeoutMs?: number) => Promise<any | null>;
   runAsync: (cmd: string, timeoutMs?: number) => Promise<string>;
-  getManagedOpenClawInstallCommand: (packageName?: string) => string;
-  getManagedOpenClawEntrypoint: () => string | null;
-  ensureManagedOpenClawWindowsShim: () => void;
+  getBundledNpmBin: (binName: 'npx' | 'npm') => string | null;
   shutdownLocalDaemon: (timeoutMs?: number) => Promise<boolean>;
   clearAwarenessLocalNpxCache: (homedir: string) => void;
 }) {
@@ -119,51 +117,33 @@ export function registerAppRuntimeHandlers(deps: {
         const preSemver = preMatch ? preMatch[1] : null;
 
         let upgraded = false;
-        const isAlreadyManaged = !!deps.getManagedOpenClawEntrypoint();
 
-        if (isAlreadyManaged) {
-          // Managed OpenClaw: `openclaw update` updates the GLOBAL npm, not
-          // the managed prefix — so skip it and go straight to managed install.
-          const managedCmd = deps.getManagedOpenClawInstallCommand('openclaw@latest');
-          const registries = ['', '--registry=https://registry.npmmirror.com'];
-          for (const reg of registries) {
-            try {
-              await deps.runAsync(`${managedCmd} ${reg}`.trim(), 120000);
-              upgraded = true;
-              break;
-            } catch {}
-          }
-        } else if (preVer) {
-          // Global OpenClaw: use its native update command
+        // Tier 1: openclaw update (native self-update)
+        if (preVer) {
           try {
             await deps.runAsync('openclaw update --yes --no-restart 2>&1', 180000);
             upgraded = true;
           } catch {}
         }
 
-        if (!upgraded && !isAlreadyManaged && !preVer) {
-          // No OpenClaw at all — fresh install to managed prefix
-          const managedCmd = deps.getManagedOpenClawInstallCommand('openclaw@latest');
+        // Tier 2: npm install -g openclaw@latest (use bundled npm if available)
+        if (!upgraded) {
+          const npmCli = deps.getBundledNpmBin('npm');
           const registries = ['', '--registry=https://registry.npmmirror.com'];
           for (const reg of registries) {
             try {
-              await deps.runAsync(`${managedCmd} ${reg}`.trim(), 120000);
+              const cmd = npmCli
+                ? `"${process.execPath}" "${npmCli}" install -g openclaw@latest ${reg}`.trim()
+                : `npm install -g openclaw@latest ${reg}`.trim();
+              await deps.runAsync(cmd, 120000);
               upgraded = true;
               break;
             } catch {}
           }
         }
 
+        // Tier 3: official install script
         if (!upgraded) {
-          // Only try official install scripts if no global OpenClaw exists,
-          // to avoid installing a second copy that conflicts with the existing one.
-          const hasGlobal = !!preVer && !deps.getManagedOpenClawEntrypoint();
-          if (hasGlobal) {
-            return {
-              success: false,
-              error: 'OpenClaw upgrade failed. Your OpenClaw is globally installed — please update it in terminal:\n  openclaw update\nor:\n  npm install -g openclaw@latest',
-            };
-          }
           try {
             if (process.platform === 'win32') {
               await deps.runAsync('powershell -Command "irm https://openclaw.ai/install.ps1 | iex"', 120000);
@@ -177,11 +157,9 @@ export function registerAppRuntimeHandlers(deps: {
         if (!upgraded) {
           return {
             success: false,
-            error: 'OpenClaw upgrade failed. Check your network connection and try again.',
+            error: 'OpenClaw upgrade failed. Check your network connection and try again.\nYou can also try in terminal: npm install -g openclaw@latest',
           };
         }
-
-        deps.ensureManagedOpenClawWindowsShim();
 
         const newVer = await deps.safeShellExecAsync('openclaw --version');
         const vMatch = newVer?.match(/(\d+\.\d+\.\d+)/);

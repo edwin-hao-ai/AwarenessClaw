@@ -69,17 +69,12 @@ const HOME = os.homedir();
 
 const shellUtils = createShellUtils({ home: HOME, app });
 const {
-  ensureManagedOpenClawWindowsShim,
   getBundledNpmBin,
   getEnhancedPath,
   getGatewayPort,
-  getManagedOpenClawEntrypoint,
-  getManagedOpenClawInstallCommand,
   getNodeVersion,
   readShellOutputAsync,
-  repairWindowsGatewayServiceScript,
   resolveBundledCache,
-  rewriteOpenClawCommand,
   run,
   runAsync,
   runSpawn,
@@ -105,7 +100,6 @@ function sendSetupDaemonStatus(key: string, detail?: string) {
 }
 
 function createWindow() {
-  ensureManagedOpenClawWindowsShim();
   const builtIndexPath = path.join(__dirname, '../dist/index.html');
 
   mainWindow = new BrowserWindow({
@@ -278,8 +272,6 @@ async function startGatewayInUserSession(send?: (ch: string, data: any) => void)
 
 async function startGatewayWithRepair(send?: (ch: string, data: any) => void): Promise<{ ok: boolean; error?: string }> {
   repairOpenClawConfigFile();
-  ensureManagedOpenClawWindowsShim();
-  repairWindowsGatewayServiceScript();
   const statusOutput = await readShellOutputAsync('openclaw gateway status 2>&1', 15000);
   if (isGatewayRunningOutput(statusOutput)) return { ok: true };
 
@@ -632,9 +624,7 @@ registerAppRuntimeHandlers({
   safeShellExecAsync,
   getLocalDaemonHealth,
   runAsync,
-  getManagedOpenClawInstallCommand,
-  getManagedOpenClawEntrypoint,
-  ensureManagedOpenClawWindowsShim,
+  getBundledNpmBin,
   shutdownLocalDaemon,
   clearAwarenessLocalNpxCache,
 });
@@ -648,7 +638,6 @@ registerChatHandlers({
   getGatewayWs,
   getConnectedGatewayWs: () => (gatewayWsClient?.isConnected ? gatewayWsClient : null),
   callMcpStrict,
-  rewriteOpenClawCommand,
   getEnhancedPath,
   wrapWindowsCommand,
   stripAnsi,
@@ -729,8 +718,6 @@ registerSetupHandlers({
   getNodeVersion,
   runAsync,
   safeShellExecAsync,
-  ensureManagedOpenClawWindowsShim,
-  getManagedOpenClawInstallCommand,
   getBundledNpmBin,
   resolveBundledCache,
   downloadFile,
@@ -777,7 +764,6 @@ app.whenReady().then(() => {
 
   // Ensure config has required gateway defaults before anything tries to start
   repairOpenClawConfigFile();
-  repairWindowsGatewayServiceScript();
 
   createWindow();
   if (process.platform === 'darwin') {

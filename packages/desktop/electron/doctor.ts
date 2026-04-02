@@ -11,10 +11,7 @@ import http from 'http';
 import {
   normalizePluginAllow,
   isGatewayRunningOutput,
-  getManagedOpenClawPrefix,
-  getManagedOpenClawEntrypoint,
   getGatewayPort,
-  repairWindowsGatewayServiceScript as repairWindowsGatewayServiceScriptShared,
   GATEWAY_DEFAULTS,
   writeExecApprovalAsk,
 } from './openclaw-config';
@@ -60,8 +57,6 @@ interface Ctx {
   nodePath: string | null;
   openclawVersion: string | null;
   openclawPath: string | null;
-  managedOpenclawPath: string | null;
-  usingManagedOpenclaw: boolean;
   openclawCandidates: string[];
   npmPrefix: string | null;
   configPath: string;
@@ -69,8 +64,9 @@ interface Ctx {
   deps: DoctorDeps;
 }
 
-function getManagedOpenClawInstallCommand(homedir: string, packageName = 'openclaw') {
-  return `npm install -g --prefix "${getManagedOpenClawPrefix(homedir)}" ${packageName}`;
+// Native npm install — no managed prefix
+function getNpmInstallCommand(packageName = 'openclaw') {
+  return `npm install -g ${packageName}`;
 }
 
 function persistAwarenessPluginConfig(homedir: string) {
@@ -118,29 +114,7 @@ function persistAwarenessPluginConfig(homedir: string) {
   writeExecApprovalAsk(homedir, 'off');
 }
 
-function repairWindowsGatewayServiceScript(homedir: string) {
-  // Detect Node.exe path dynamically on Windows; fallback to common location
-  // Find node executable dynamically — never hardcode a specific path
-  let nodeCommand = 'node';
-  if (process.platform === 'win32') {
-    if (process.execPath.endsWith('node.exe')) {
-      nodeCommand = `"${process.execPath}"`;
-    } else {
-      // Search common locations
-      const candidates = [
-        path.join(process.env.ProgramFiles || 'C:\\Program Files', 'nodejs', 'node.exe'),
-        path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'nodejs', 'node.exe'),
-        path.join(process.env.LOCALAPPDATA || '', 'fnm_multishells', 'node.exe'),
-      ];
-      const found = candidates.find(p => fs.existsSync(p));
-      nodeCommand = found ? `"${found}"` : 'node';
-    }
-  }
-  repairWindowsGatewayServiceScriptShared(homedir, {
-    nodeCommand,
-    tmpdir: path.join(homedir, 'AppData', 'Local', 'Temp'),
-  });
-}
+
 
 function pickFirstCommandPath(output: string | null): string | null {
   if (!output) return null;
@@ -221,8 +195,7 @@ async function buildContext(deps: DoctorDeps): Promise<Ctx> {
   const openclawCandidates = deps.platform === 'win32'
     ? normalizeWindowsCommandCandidates(openclawCandidatesRaw)
     : openclawCandidatesRaw;
-  const managedOpenclawPath = getManagedOpenClawEntrypoint(deps.homedir);
-  const openclawPath = managedOpenclawPath || openclawCandidates[0] || null;
+  const openclawPath = openclawCandidates[0] || null;
   const openclawVersion = openclawPath ? await deps.shellExec('openclaw --version', 8000) : null;
   const npmPrefix = await deps.shellExec('npm config get prefix', 5000);
 
@@ -231,8 +204,6 @@ async function buildContext(deps: DoctorDeps): Promise<Ctx> {
     nodePath: nodePath?.trim() || null,
     openclawVersion: openclawVersion?.trim() || null,
     openclawPath: openclawPath?.trim() || null,
-    managedOpenclawPath: managedOpenclawPath?.trim() || null,
-    usingManagedOpenclaw: !!managedOpenclawPath,
     openclawCandidates,
     npmPrefix: npmPrefix?.trim() || null,
     configPath, config, deps,
@@ -259,16 +230,6 @@ async function checkOpenclawInstalled(ctx: Ctx): Promise<CheckResult> {
 async function checkOpenclawCommandHealth(ctx: Ctx): Promise<CheckResult> {
   if (!ctx.openclawPath) {
     return { id: 'openclaw-command-health', label: 'OpenClaw command path', status: 'skipped', message: 'Skipped (OpenClaw not installed)', fixable: 'none' };
-  }
-
-  if (ctx.usingManagedOpenclaw) {
-    return {
-      id: 'openclaw-command-health',
-      label: 'OpenClaw command path',
-      status: 'pass',
-      message: 'AwarenessClaw is pinned to its managed OpenClaw runtime',
-      fixable: 'none',
-    };
   }
 
   const duplicates = ctx.openclawCandidates.filter(candidate => candidate !== ctx.openclawPath);
@@ -300,30 +261,26 @@ async function fixOpenclawCommandHealth(ctx: Ctx): Promise<FixResult> {
       } catch {
         // May need sudo — that's OK, managed install will still pin the correct version
       }
-      await ctx.deps.shellRun(`${getManagedOpenClawInstallCommand(ctx.deps.homedir, 'openclaw@latest')} 2>&1`, 120000);
+      await ctx.deps.shellRun(`${getNpmInstallCommand('openclaw@latest')} 2>&1`, 120000);
       return {
         id: 'openclaw-command-health',
         success: true,
-        message: 'AwarenessClaw is now pinned to its managed OpenClaw runtime',
+        message: 'OpenClaw reinstalled to resolve command path conflicts',
       };
     }
 
+    // Windows: clean stale shims, then reinstall
     const shimDir = path.join(process.env.APPDATA || path.join(ctx.deps.homedir, 'AppData', 'Roaming'), 'npm');
-    const managedPrefix = getManagedOpenClawPrefix(ctx.deps.homedir);
     try {
       await ctx.deps.shellRun('npm uninstall -g openclaw 2>&1', 60000);
-    } catch {
-      // Best-effort uninstall; stale shims can still be cleaned locally.
-    }
+    } catch {}
 
     for (const fileName of ['openclaw', 'openclaw.cmd', 'openclaw.ps1']) {
       const filePath = path.join(shimDir, fileName);
       if (fs.existsSync(filePath)) fs.rmSync(filePath, { force: true });
-      const managedFilePath = path.join(managedPrefix, fileName);
-      if (fs.existsSync(managedFilePath)) fs.rmSync(managedFilePath, { force: true });
     }
 
-    await ctx.deps.shellRun(`${getManagedOpenClawInstallCommand(ctx.deps.homedir)} 2>&1`, 90000);
+    await ctx.deps.shellRun(`${getNpmInstallCommand()} 2>&1`, 90000);
     return { id: 'openclaw-command-health', success: true, message: 'OpenClaw command shims refreshed' };
   } catch (err: any) {
     return { id: 'openclaw-command-health', success: false, message: err.message?.slice(0, 200) || 'Cleanup failed' };
@@ -332,7 +289,7 @@ async function fixOpenclawCommandHealth(ctx: Ctx): Promise<FixResult> {
 
 async function fixOpenclawInstall(ctx: Ctx): Promise<FixResult> {
   try {
-    await ctx.deps.shellRun(`${getManagedOpenClawInstallCommand(ctx.deps.homedir)} 2>&1`, 60000);
+    await ctx.deps.shellRun(`${getNpmInstallCommand()} 2>&1`, 60000);
     return { id: 'openclaw-installed', success: true, message: 'OpenClaw installed successfully' };
   } catch (err: any) {
     return { id: 'openclaw-installed', success: false, message: err.message?.slice(0, 200) || 'Installation failed' };
@@ -356,7 +313,7 @@ async function checkOpenclawVersion(ctx: Ctx): Promise<CheckResult> {
 
 async function fixOpenclawUpdate(ctx: Ctx): Promise<FixResult> {
   try {
-    await ctx.deps.shellRun(`${getManagedOpenClawInstallCommand(ctx.deps.homedir, 'openclaw@latest')} 2>&1`, 60000);
+    await ctx.deps.shellRun(`${getNpmInstallCommand('openclaw@latest')} 2>&1`, 60000);
     return { id: 'openclaw-version', success: true, message: 'Updated successfully' };
   } catch (err: any) {
     return { id: 'openclaw-version', success: false, message: err.message?.slice(0, 200) || 'Update failed' };
@@ -451,7 +408,6 @@ async function checkGatewayRunning(ctx: Ctx): Promise<CheckResult> {
 
 async function fixGatewayStart(ctx: Ctx): Promise<FixResult> {
   try {
-    if (ctx.deps.platform === 'win32') repairWindowsGatewayServiceScript(ctx.deps.homedir);
     await ctx.deps.shellRun('openclaw gateway start 2>&1', 20000);
     return { id: 'gateway-running', success: true, message: 'Gateway started' };
   } catch (err: any) {

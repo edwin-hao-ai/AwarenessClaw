@@ -48,21 +48,7 @@ describe('doctor', () => {
     }
   });
 
-  it('treats command path health as fixed when managed runtime exists', async () => {
-    const home = createTempHome();
-    const managedEntry = path.join(home, '.awareness-claw', 'openclaw-runtime', 'lib', 'node_modules', 'openclaw', 'openclaw.mjs');
-    fs.mkdirSync(path.dirname(managedEntry), { recursive: true });
-    fs.writeFileSync(managedEntry, '');
-
-    const { doctor } = createDoctorWithMocks(home);
-    const report = await doctor.runChecks(['openclaw-command-health']);
-    expect(report.checks[0]).toMatchObject({
-      status: 'pass',
-      message: 'AwarenessClaw is pinned to its managed OpenClaw runtime',
-    });
-  });
-
-  it('offers auto-fix for duplicate command paths on macOS', async () => {
+  it('warns about duplicate command paths on macOS', async () => {
     const home = createTempHome();
     const { doctor } = createDoctorWithMocks(home);
     const report = await doctor.runChecks(['openclaw-command-health']);
@@ -70,23 +56,21 @@ describe('doctor', () => {
     expect(report.checks[0]).toMatchObject({
       status: 'warn',
       fixable: 'auto',
-      fixDescription: 'Install and pin the AwarenessClaw managed OpenClaw runtime',
     });
   });
 
-  it('installs managed OpenClaw runtime when repairing duplicate command paths on macOS', async () => {
+  it('reinstalls OpenClaw when repairing duplicate command paths on macOS', async () => {
     const home = createTempHome();
     const shellRun = vi.fn(async () => 'installed');
     const { doctor } = createDoctorWithMocks(home, { shellRun });
 
     const result = await doctor.runFix('openclaw-command-health');
 
-    expect(result).toMatchObject({
-      success: true,
-      message: 'AwarenessClaw is now pinned to its managed OpenClaw runtime',
-    });
-    expect(shellRun).toHaveBeenCalledWith(expect.stringContaining('npm install -g --prefix'), 120000);
-    expect(shellRun).toHaveBeenCalledWith(expect.stringContaining('openclaw@latest'), 120000);
+    expect(result).toMatchObject({ success: true });
+    // Should use native npm install -g (no --prefix)
+    const calls = shellRun.mock.calls.map((c: any) => c[0]);
+    expect(calls.some((c: string) => c.includes('npm install -g') && c.includes('openclaw@latest'))).toBe(true);
+    expect(calls.some((c: string) => c.includes('--prefix'))).toBe(false);
   });
 
   it('binds only channels that are still unbound', async () => {

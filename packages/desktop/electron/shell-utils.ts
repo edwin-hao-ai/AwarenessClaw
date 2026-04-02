@@ -3,26 +3,10 @@ import fs from 'fs';
 import path from 'path';
 import {
   getGatewayPort as getGatewayPortShared,
-  getManagedOpenClawEntrypoint as getManagedOpenClawEntrypointShared,
-  getManagedOpenClawPrefix as getManagedOpenClawPrefixShared,
-  repairWindowsGatewayServiceScript as repairWindowsGatewayServiceScriptShared,
 } from './openclaw-config';
 
 export function createShellUtils(options: { home: string; app: any }) {
   const { home, app } = options;
-
-  function getManagedOpenClawPrefix() {
-    return getManagedOpenClawPrefixShared(home);
-  }
-
-  function getManagedOpenClawBinDir() {
-    const prefix = getManagedOpenClawPrefix();
-    return process.platform === 'win32' ? prefix : path.join(prefix, 'bin');
-  }
-
-  function getManagedOpenClawEntrypoint() {
-    return getManagedOpenClawEntrypointShared(home);
-  }
 
   function wrapWindowsCommand(cmd: string) {
     return process.platform === 'win32' ? `chcp 65001>nul & ${cmd}` : cmd;
@@ -38,7 +22,6 @@ export function createShellUtils(options: { home: string; app: any }) {
 
     if (process.platform === 'darwin' || process.platform === 'linux') {
       extras.push(
-        getManagedOpenClawBinDir(),
         `${home}/.npm-global/bin`,
         `${home}/.local/bin`,
         '/opt/homebrew/bin',
@@ -64,15 +47,12 @@ export function createShellUtils(options: { home: string; app: any }) {
       const localappdata = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
       const programfiles = process.env.ProgramFiles || 'C:\\Program Files';
       extras.push(
-        getManagedOpenClawBinDir(),
         `${appdata}\\npm`,
         `${localappdata}\\pnpm`,
         `${programfiles}\\nodejs`,
         `${process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)'}\\nodejs`,
         `${localappdata}\\fnm_multishells`,
       );
-    } else {
-      extras.push(getManagedOpenClawBinDir());
     }
 
     return [...extras, base].join(path.delimiter);
@@ -101,69 +81,17 @@ export function createShellUtils(options: { home: string; app: any }) {
     return nodeExecutable.includes(' ') ? `"${nodeExecutable}"` : nodeExecutable;
   }
 
-  function getManagedOpenClawCommand() {
-    const entry = getManagedOpenClawEntrypoint();
-    if (!entry) return null;
-    return `${getNodeInvocationCommand()} "${entry}"`;
-  }
-
   function getGatewayPort() {
     return getGatewayPortShared(home);
-  }
-
-  function rewriteOpenClawCommand(cmd: string) {
-    const managedCommand = getManagedOpenClawCommand();
-    if (!managedCommand) return cmd;
-    return cmd.replace(/(^|&&\s+|;\s+|&\s+|start\s+""\s+\/B\s+)openclaw(?=\s|$)/g, (_match, prefix) => `${prefix}${managedCommand}`);
-  }
-
-  function ensureManagedOpenClawWindowsShim() {
-    if (process.platform !== 'win32') return;
-
-    const entry = getManagedOpenClawEntrypoint();
-    if (!entry) return;
-
-    const prefix = getManagedOpenClawPrefix();
-    fs.mkdirSync(prefix, { recursive: true });
-
-    const cmdShim = path.join(prefix, 'openclaw.cmd');
-    const ps1Shim = path.join(prefix, 'openclaw.ps1');
-    const shellShim = path.join(prefix, 'openclaw');
-    const nodeCommand = getNodeInvocationCommand();
-
-    const cmdContent = `@ECHO OFF\r\n${nodeCommand} "${entry}" %*\r\n`;
-    const ps1Content = `& ${nodeCommand} "${entry}" $args\r\n`;
-    const shellContent = `#!/bin/sh\n${nodeCommand} "${entry}" "$@"\n`;
-
-    fs.writeFileSync(cmdShim, cmdContent, 'utf8');
-    fs.writeFileSync(ps1Shim, ps1Content, 'utf8');
-    fs.writeFileSync(shellShim, shellContent, 'utf8');
-  }
-
-  function repairWindowsGatewayServiceScript() {
-    repairWindowsGatewayServiceScriptShared(home, {
-      nodeCommand: getNodeInvocationCommand(),
-      tmpdir: process.env.TEMP || process.env.TMP || path.join(home, 'AppData', 'Local', 'Temp'),
-    });
-  }
-
-  function getManagedOpenClawInstallCommand(packageName = 'openclaw') {
-    const npmCli = getBundledNpmBin('npm');
-    const prefix = getManagedOpenClawPrefix();
-    if (npmCli) {
-      return `"${process.execPath}" "${npmCli}" install -g --prefix "${prefix}" ${packageName}`;
-    }
-    return `npm install -g --prefix "${prefix}" ${packageName}`;
   }
 
   function safeShellExec(cmd: string, timeoutMs = 5000): string | null {
     try {
       const enhancedPath = getEnhancedPath();
-      const rewrittenCmd = rewriteOpenClawCommand(cmd);
       if (process.platform === 'win32') {
-        return execSync(wrapWindowsCommand(rewrittenCmd), { encoding: 'utf8', timeout: timeoutMs, stdio: 'pipe', shell: 'cmd.exe', env: { ...process.env, PATH: enhancedPath, NO_COLOR: '1', FORCE_COLOR: '0' } }).trim();
+        return execSync(wrapWindowsCommand(cmd), { encoding: 'utf8', timeout: timeoutMs, stdio: 'pipe', shell: 'cmd.exe', env: { ...process.env, PATH: enhancedPath, NO_COLOR: '1', FORCE_COLOR: '0' } }).trim();
       }
-      return execSync(`/bin/bash --norc --noprofile -c 'export PATH="${enhancedPath}"; ${rewrittenCmd.replace(/'/g, "'\\''")}'`, {
+      return execSync(`/bin/bash --norc --noprofile -c 'export PATH="${enhancedPath}"; ${cmd.replace(/'/g, "'\\''")}'`, {
         encoding: 'utf8', timeout: timeoutMs, stdio: 'pipe', env: { ...process.env, PATH: enhancedPath },
       }).trim();
     } catch {
@@ -174,8 +102,7 @@ export function createShellUtils(options: { home: string; app: any }) {
   function safeShellExecAsync(cmd: string, timeoutMs = 5000): Promise<string | null> {
     return new Promise(resolve => {
       const enhancedPath = getEnhancedPath();
-      const rewrittenCmd = rewriteOpenClawCommand(cmd);
-      const shellCmd = process.platform === 'win32' ? wrapWindowsCommand(rewrittenCmd) : `export PATH="${enhancedPath}"; ${rewrittenCmd}`;
+      const shellCmd = process.platform === 'win32' ? wrapWindowsCommand(cmd) : `export PATH="${enhancedPath}"; ${cmd}`;
       const child = process.platform === 'win32'
         ? spawn(shellCmd, [], { shell: 'cmd.exe', env: { ...process.env, PATH: enhancedPath, NO_COLOR: '1', FORCE_COLOR: '0' }, stdio: 'pipe' })
         : spawn('/bin/bash', ['--norc', '--noprofile', '-c', shellCmd], { env: { ...process.env, PATH: enhancedPath }, stdio: 'pipe' });
@@ -193,8 +120,7 @@ export function createShellUtils(options: { home: string; app: any }) {
   function readShellOutputAsync(cmd: string, timeoutMs = 5000): Promise<string | null> {
     return new Promise(resolve => {
       const enhancedPath = getEnhancedPath();
-      const rewrittenCmd = rewriteOpenClawCommand(cmd);
-      const shellCmd = process.platform === 'win32' ? wrapWindowsCommand(rewrittenCmd) : `export PATH="${enhancedPath}"; ${rewrittenCmd}`;
+      const shellCmd = process.platform === 'win32' ? wrapWindowsCommand(cmd) : `export PATH="${enhancedPath}"; ${cmd}`;
       const child = process.platform === 'win32'
         ? spawn(shellCmd, [], { shell: 'cmd.exe', env: { ...process.env, PATH: enhancedPath, NO_COLOR: '1', FORCE_COLOR: '0' }, stdio: 'pipe' })
         : spawn('/bin/bash', ['--norc', '--noprofile', '-c', shellCmd], { env: { ...process.env, PATH: enhancedPath }, stdio: 'pipe' });
@@ -251,11 +177,10 @@ export function createShellUtils(options: { home: string; app: any }) {
 
   function run(cmd: string, opts: Record<string, unknown> = {}): string {
     const enhancedPath = getEnhancedPath();
-    const rewrittenCmd = rewriteOpenClawCommand(cmd);
     if (process.platform === 'win32') {
-      return execSync(rewrittenCmd, { encoding: 'utf8', timeout: 180000, stdio: 'pipe', shell: 'cmd.exe', env: { ...process.env, PATH: enhancedPath }, ...opts } as any);
+      return execSync(cmd, { encoding: 'utf8', timeout: 180000, stdio: 'pipe', shell: 'cmd.exe', env: { ...process.env, PATH: enhancedPath }, ...opts } as any);
     }
-    return execSync(`/bin/bash --norc --noprofile -c 'export PATH="${enhancedPath}"; ${rewrittenCmd.replace(/'/g, "'\\''")}'`, {
+    return execSync(`/bin/bash --norc --noprofile -c 'export PATH="${enhancedPath}"; ${cmd.replace(/'/g, "'\\''")}'`, {
       encoding: 'utf8', timeout: 180000, stdio: 'pipe', env: { ...process.env, PATH: enhancedPath }, ...opts,
     } as any);
   }
@@ -302,8 +227,7 @@ export function createShellUtils(options: { home: string; app: any }) {
         return `${process.execPath} "${npxCli}" ${rest}`;
       };
 
-      const rewrittenCmd = rewriteOpenClawCommand(cmd);
-      const shellCmdRaw = process.platform === 'win32' ? wrapWindowsCommand(rewrittenCmd) : `export PATH="${enhancedPath}"; ${rewrittenCmd}`;
+      const shellCmdRaw = process.platform === 'win32' ? wrapWindowsCommand(cmd) : `export PATH="${enhancedPath}"; ${cmd}`;
       const shellCmd = rewriteNpx(shellCmdRaw);
       const child = process.platform === 'win32'
         ? spawn(shellCmd, [], { shell: 'cmd.exe', env: { ...process.env, PATH: enhancedPath, NO_COLOR: '1', FORCE_COLOR: '0' }, stdio: 'pipe' })
@@ -331,21 +255,14 @@ export function createShellUtils(options: { home: string; app: any }) {
   }
 
   return {
-    ensureManagedOpenClawWindowsShim,
     findNodeExecutable,
     getBundledNpmBin,
     getEnhancedPath,
     getGatewayPort,
-    getManagedOpenClawBinDir,
-    getManagedOpenClawEntrypoint,
-    getManagedOpenClawInstallCommand,
-    getManagedOpenClawPrefix,
     getNodeInvocationCommand,
     getNodeVersion,
     readShellOutputAsync,
-    repairWindowsGatewayServiceScript,
     resolveBundledCache,
-    rewriteOpenClawCommand,
     run,
     runAsync,
     runSpawn,

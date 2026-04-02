@@ -15,13 +15,25 @@ type ChatSendOptions = {
 
 let activeChatChild: ReturnType<typeof spawn> | null = null;
 
+function extractAssistantText(message: any): string {
+  if (!message) return '';
+  if (Array.isArray(message.content)) {
+    return message.content
+      .map((contentBlock: any) => contentBlock?.type === 'text' ? (contentBlock.text || '') : '')
+      .join('');
+  }
+  if (typeof message.content === 'string') {
+    return message.content;
+  }
+  return '';
+}
+
 export function registerChatHandlers(deps: {
   sendToRenderer: (channel: string, payload: any) => void;
   ensureGatewayRunning: () => Promise<{ ok: boolean; error?: string }>;
   getGatewayWs: () => Promise<GatewayClient>;
   getConnectedGatewayWs: () => GatewayClient | null;
   callMcpStrict: (toolName: string, args: Record<string, any>) => Promise<any>;
-  rewriteOpenClawCommand: (command: string) => string;
   getEnhancedPath: () => string;
   wrapWindowsCommand: (command: string) => string;
   stripAnsi: (output: string) => string;
@@ -113,7 +125,11 @@ export function registerChatHandlers(deps: {
         const promise = new Promise<void>((res) => { resolver = res; });
         return { promise, resolve: resolver! };
       })();
-      const chatTimeout = setTimeout(() => chatResolve(), 120000);
+      let didTimeout = false;
+      const chatTimeout = setTimeout(() => {
+        didTimeout = true;
+        chatResolve();
+      }, 120000);
 
       const seenToolIds = new Set<string>();
       const completedToolIds = new Set<string>();
@@ -121,6 +137,14 @@ export function registerChatHandlers(deps: {
       let pendingApprovalRequestId = '';
       let pendingApprovalCommand = '';
       let pendingApprovalDetail = '';
+      let sawAssistantDelta = false;
+      let sawAssistantTextDelta = false;
+      let sawAssistantNonTextDelta = false;
+      let sawToolBlocks = false;
+      let sawThinkingBlocks = false;
+      let sawFinalState = false;
+      let finalAssistantText = '';
+      let finalAssistantContentTypes: string[] = [];
 
       allEventsHandler = (evt: any) => {
         const eventName = evt?.event || 'unknown';
@@ -160,16 +184,17 @@ export function registerChatHandlers(deps: {
         const msg = payload.message;
 
         if (state === 'delta' && msg && msg.role === 'assistant') {
-          let textContent = '';
+          sawAssistantDelta = true;
+          let textContent = extractAssistantText(msg);
           if (Array.isArray(msg.content)) {
-            textContent = msg.content.map((contentBlock: any) => contentBlock.type === 'text' ? (contentBlock.text || '') : '').join('');
-          } else if (typeof msg.content === 'string') {
-            textContent = msg.content;
+            finalAssistantContentTypes = msg.content.map((contentBlock: any) => String(contentBlock?.type || typeof contentBlock));
+            sawAssistantNonTextDelta = msg.content.some((contentBlock: any) => contentBlock?.type && contentBlock.type !== 'text');
           }
 
           if (textContent && textContent.length > fullResponseText.length) {
             const newChunk = textContent.slice(fullResponseText.length);
             fullResponseText = textContent;
+            sawAssistantTextDelta = true;
             send('chat:stream', newChunk);
             send('chat:status', { type: 'generating' });
           }
@@ -177,18 +202,21 @@ export function registerChatHandlers(deps: {
           if (Array.isArray(msg.content)) {
             for (const block of msg.content) {
               if (block.type === 'tool_use') {
+                sawToolBlocks = true;
                 const toolId = block.id || `tc-${Date.now()}`;
                 if (!seenToolIds.has(toolId)) {
                   seenToolIds.add(toolId);
                   send('chat:status', { type: 'tool_call', tool: block.name || 'tool', toolStatus: 'running', toolId });
                 }
               } else if (block.type === 'tool_result') {
+                sawToolBlocks = true;
                 const toolId = block.tool_use_id || '';
                 if (toolId && !completedToolIds.has(toolId)) {
                   completedToolIds.add(toolId);
                   send('chat:status', { type: 'tool_update', toolId, toolStatus: 'completed' });
                 }
               } else if (block.type === 'thinking' || block.type === 'reasoning') {
+                sawThinkingBlocks = true;
                 const text = block.thinking || block.reasoning || block.text || '';
                 if (text && text !== lastThinkingText) {
                   lastThinkingText = text;
@@ -209,6 +237,15 @@ export function registerChatHandlers(deps: {
             }
           }
         } else if (state === 'final') {
+          sawFinalState = true;
+          if (msg && msg.role === 'assistant') {
+            finalAssistantText = extractAssistantText(msg).trim();
+            if (Array.isArray(msg.content)) {
+              finalAssistantContentTypes = msg.content.map((contentBlock: any) => String(contentBlock?.type || typeof contentBlock));
+            } else if (typeof msg.content === 'string') {
+              finalAssistantContentTypes = ['string'];
+            }
+          }
           clearTimeout(chatTimeout);
           chatResolve();
         } else if (state === 'aborted' || state === 'error') {
@@ -232,6 +269,33 @@ export function registerChatHandlers(deps: {
 
       const text = fullResponseText.trim() || '';
       send('chat:stream-end', {});
+
+      if (!text && !pendingApprovalRequestId) {
+        const diagnostic = {
+          sessionId: sid,
+          didTimeout,
+          sawFinalState,
+          sawAssistantDelta,
+          sawAssistantTextDelta,
+          sawAssistantNonTextDelta,
+          sawToolBlocks,
+          sawThinkingBlocks,
+          finalAssistantTextPreview: finalAssistantText ? finalAssistantText.slice(0, 160) : '',
+          finalAssistantContentTypes,
+        };
+
+        if (didTimeout) {
+          console.warn('[chat] No response before desktop timeout; likely OpenClaw/Gateway stalled upstream', diagnostic);
+        } else if (!sawAssistantTextDelta && finalAssistantText) {
+          console.warn('[chat] Desktop received assistant text only in the final event and would misclassify it as No response', diagnostic);
+        } else if (sawFinalState && !sawAssistantDelta && !finalAssistantText) {
+          console.warn('[chat] OpenClaw/Gateway completed the run with an empty assistant response', diagnostic);
+        } else if (sawAssistantDelta && !sawAssistantTextDelta && (sawAssistantNonTextDelta || sawToolBlocks || sawThinkingBlocks)) {
+          console.warn('[chat] OpenClaw/Gateway returned assistant activity without text output', diagnostic);
+        } else {
+          console.warn('[chat] Empty response could not be classified cleanly', diagnostic);
+        }
+      }
 
       const parseMcpTextPayload = (mcpResponse: any) => {
         const textPayload = mcpResponse?.result?.content?.[0]?.text;
@@ -319,7 +383,6 @@ async function chatSendViaCli(
   options: ChatSendOptions | undefined,
   send: (channel: string, payload: any) => void,
   deps: {
-    rewriteOpenClawCommand: (command: string) => string;
     getEnhancedPath: () => string;
     wrapWindowsCommand: (command: string) => string;
     stripAnsi: (output: string) => string;
@@ -331,7 +394,7 @@ async function chatSendViaCli(
       ? ` --thinking ${options.thinkingLevel}` : '';
     const agentFlag = options?.agentId && options.agentId !== 'main' ? ` --agent "${options.agentId}"` : '';
     const escapedMsg = message.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\$/g, '\\\$').replace(/`/g, '\\`');
-    const command = deps.rewriteOpenClawCommand(`openclaw agent --session-id "${sid}" -m "${escapedMsg}" --verbose on${thinkingFlag}${agentFlag}`);
+    const command = `openclaw agent --session-id "${sid}" -m "${escapedMsg}" --verbose on${thinkingFlag}${agentFlag}`;
     const enhancedPath = deps.getEnhancedPath();
     const child = process.platform === 'win32'
       ? spawn(deps.wrapWindowsCommand(command), [], { cwd: os.homedir(), shell: 'cmd.exe', env: { ...process.env, PATH: enhancedPath, NO_COLOR: '1', FORCE_COLOR: '0' } })

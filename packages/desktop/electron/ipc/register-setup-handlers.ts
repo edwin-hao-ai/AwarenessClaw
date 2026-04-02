@@ -11,8 +11,6 @@ export function registerSetupHandlers(deps: {
   getNodeVersion: () => string | null;
   runAsync: (cmd: string, timeoutMs?: number) => Promise<string>;
   safeShellExecAsync: (cmd: string, timeoutMs?: number) => Promise<string | null>;
-  ensureManagedOpenClawWindowsShim: () => void;
-  getManagedOpenClawInstallCommand: (packageName?: string) => string;
   getBundledNpmBin: (binName: 'npx' | 'npm') => string | null;
   resolveBundledCache: (fileName: string) => string | null;
   downloadFile: (url: string, dest: string) => Promise<void>;
@@ -216,20 +214,16 @@ export function registerSetupHandlers(deps: {
   });
 
   ipcMain.handle('setup:install-openclaw', async () => {
-    // Check 1: PATH-based detection (uses enhanced PATH with managed prefix, ~/.npm-global/bin, etc.)
+    // Check if already installed (PATH-based + npm root)
     const existing = await deps.safeShellExecAsync('openclaw --version');
     if (existing) {
-      deps.ensureManagedOpenClawWindowsShim();
       return { success: true, alreadyInstalled: true, version: existing };
     }
 
-    // Check 2: detect global npm root for OpenClaw (covers cases where openclaw binary exists
-    // but isn't in enhanced PATH, e.g. user installed with sudo to a non-standard prefix)
     const npmRoot = await deps.safeShellExecAsync('npm root -g', 5000);
     if (npmRoot) {
       const globalOpenClawPkg = path.join(npmRoot.trim(), 'openclaw', 'package.json');
       if (fs.existsSync(globalOpenClawPkg)) {
-        // OpenClaw IS installed globally but not in our PATH — don't install a second copy
         const ver = await deps.safeShellExecAsync('npm exec -g openclaw -- --version', 5000);
         return {
           success: true,
@@ -240,41 +234,27 @@ export function registerSetupHandlers(deps: {
       }
     }
 
-    // Not found anywhere — proceed with managed prefix install
-    // getManagedOpenClawInstallCommand prefers Electron's bundled npm, so this
-    // works even when the user has no system npm or a broken one.
+    // Not found — install with native npm install -g
     const registries = ['', '--registry=https://registry.npmmirror.com'];
-    const managedInstallBase = deps.getManagedOpenClawInstallCommand('openclaw');
     let lastError = '';
 
+    // Tier 1: npm install -g (try bundled npm first for reliability)
+    const npmCli = deps.getBundledNpmBin('npm');
     for (const reg of registries) {
       try {
-        await deps.runAsync(`${managedInstallBase} ${reg}`.trim(), 90000);
-        deps.ensureManagedOpenClawWindowsShim();
+        const cmd = npmCli
+          ? `"${process.execPath}" "${npmCli}" install -g openclaw ${reg}`.trim()
+          : `npm install -g openclaw ${reg}`.trim();
+        await deps.runAsync(cmd, 90000);
         return { success: true };
       } catch (err) {
         lastError = String(err);
       }
     }
 
-    // If managed install failed AND bundled npm wasn't available, try explicit bundled npm path
-    const npmCli = deps.getBundledNpmBin('npm');
-    if (npmCli && !managedInstallBase.includes(npmCli)) {
-      const prefix = path.join(deps.home, '.awareness-claw', 'openclaw-runtime');
-      for (const reg of registries) {
-        try {
-          await deps.runAsync(`"${process.execPath}" "${npmCli}" install -g --prefix "${prefix}" openclaw ${reg}`.trim(), 90000);
-          deps.ensureManagedOpenClawWindowsShim();
-          return { success: true, method: 'bundled-npm' };
-        } catch (err) {
-          lastError = String(err);
-        }
-      }
-    }
-
+    // Tier 2: official install script
     try {
       if (process.platform === 'win32') {
-        // Check PowerShell execution policy before attempting script install
         const execPolicy = await deps.safeShellExecAsync('powershell -NoProfile -Command "Get-ExecutionPolicy"', 5000);
         if (execPolicy?.trim().toLowerCase() === 'restricted') {
           return {
@@ -286,12 +266,10 @@ export function registerSetupHandlers(deps: {
       } else {
         await deps.runAsync('curl -fsSL https://openclaw.ai/install.sh | bash', 120000);
       }
-      deps.ensureManagedOpenClawWindowsShim();
       return { success: true, method: 'official-script' };
     } catch (err) {
       const msg = String(err);
-      const isPermissionError = /EACCES|permission denied|Access is denied/i.test(msg) || /EACCES|permission denied/i.test(lastError);
-      if (isPermissionError) {
+      if (/EACCES|permission denied|Access is denied/i.test(msg) || /EACCES|permission denied/i.test(lastError)) {
         return {
           success: false,
           error: 'Permission denied during installation. Please run in terminal:\n  npm config set prefix ~/.npm-global\n  export PATH=~/.npm-global/bin:$PATH\n  npm install -g openclaw',

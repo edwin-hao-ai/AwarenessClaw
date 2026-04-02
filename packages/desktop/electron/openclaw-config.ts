@@ -80,25 +80,6 @@ export function isGatewayRunningOutput(output: string | null): boolean {
     normalized.includes('listening:');
 }
 
-// --- Managed runtime paths ---
-
-export function getManagedOpenClawPrefix(homedir: string): string {
-  return path.join(homedir, '.awareness-claw', 'openclaw-runtime');
-}
-
-export function getManagedOpenClawEntrypoint(homedir: string): string | null {
-  const prefix = getManagedOpenClawPrefix(homedir);
-  // npm install -g --prefix puts packages under lib/node_modules/ (not node_modules/)
-  const candidates = [
-    path.join(prefix, 'lib', 'node_modules', 'openclaw', 'openclaw.mjs'),
-    path.join(prefix, 'node_modules', 'openclaw', 'openclaw.mjs'),
-  ];
-  for (const entry of candidates) {
-    if (fs.existsSync(entry)) return entry;
-  }
-  return null;
-}
-
 export function getGatewayPort(homedir: string): number {
   try {
     const configPath = path.join(homedir, '.openclaw', 'openclaw.json');
@@ -164,57 +145,3 @@ export function migrateLegacyChannelConfig(config: Record<string, any>): void {
   }
 }
 
-// --- Windows Gateway service script repair ---
-
-export interface GatewayServiceScriptOptions {
-  /** Full node invocation command, e.g. `"C:\\Program Files\\nodejs\\node.exe"` or `node` */
-  nodeCommand: string;
-  /** TMPDIR override for the gateway.cmd script (defaults to homedir/AppData/Local/Temp) */
-  tmpdir?: string;
-}
-
-/**
- * Repair `~/.openclaw/gateway.cmd` to point at the managed runtime entrypoint.
- * Fixes stale paths from old global installs or bad Electron references.
- */
-export function repairWindowsGatewayServiceScript(homedir: string, options: GatewayServiceScriptOptions): void {
-  if (process.platform !== 'win32') return;
-
-  const entry = getManagedOpenClawEntrypoint(homedir);
-  if (!entry) return;
-
-  const gatewayScriptPath = path.join(homedir, '.openclaw', 'gateway.cmd');
-  const { nodeCommand, tmpdir } = options;
-  const gatewayPort = getGatewayPort(homedir);
-  const desiredCommand = `${nodeCommand} "${entry}" gateway --port ${gatewayPort}`;
-
-  let shouldRewrite = !fs.existsSync(gatewayScriptPath);
-  if (!shouldRewrite) {
-    try {
-      const current = fs.readFileSync(gatewayScriptPath, 'utf8');
-      shouldRewrite = !current.includes(desiredCommand) ||
-        current.includes('AwarenessClaw.exe') ||
-        current.includes('AppData\\Roaming\\npm\\node_modules\\openclaw\\dist\\index.js');
-    } catch {
-      shouldRewrite = true;
-    }
-  }
-
-  if (!shouldRewrite) return;
-
-  const resolvedTmpdir = tmpdir || path.join(homedir, 'AppData', 'Local', 'Temp');
-  const content = [
-    '@echo off',
-    'rem OpenClaw Gateway (AwarenessClaw managed runtime)',
-    `set "TMPDIR=${resolvedTmpdir}"`,
-    `set "OPENCLAW_GATEWAY_PORT=${gatewayPort}"`,
-    'set "OPENCLAW_WINDOWS_TASK_NAME=OpenClaw Gateway"',
-    'set "OPENCLAW_SERVICE_MARKER=openclaw"',
-    'set "OPENCLAW_SERVICE_KIND=gateway"',
-    desiredCommand,
-    '',
-  ].join('\r\n');
-
-  fs.mkdirSync(path.dirname(gatewayScriptPath), { recursive: true });
-  fs.writeFileSync(gatewayScriptPath, content, 'utf8');
-}
