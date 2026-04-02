@@ -41,8 +41,7 @@ describe('Models Page', () => {
     });
 
     await act(async () => {
-      fireEvent.change(screen.getByPlaceholderText('My Provider'), { target: { value: 'ProxyHub' } });
-      fireEvent.change(screen.getByPlaceholderText('custom-openai'), { target: { value: 'proxy-hub' } });
+      fireEvent.change(screen.getByPlaceholderText('My Provider'), { target: { value: 'Proxy Hub' } });
       fireEvent.change(screen.getByPlaceholderText('https://api.example.com/v1'), { target: { value: 'https://proxy.example/v1' } });
       fireEvent.change(screen.getByPlaceholderText('Paste your API Key...'), { target: { value: 'proxy-key' } });
       fireEvent.change(screen.getByPlaceholderText('Add model ID, for example gpt-4.1-mini'), { target: { value: 'proxy-model-1' } });
@@ -81,6 +80,10 @@ describe('Models Page', () => {
     await act(async () => { render(<Models />); });
 
     await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /OpenAI/i }));
+    });
+
+    await act(async () => {
       fireEvent.change(screen.getByPlaceholderText('Add model ID, for example gpt-4.1-mini'), { target: { value: 'manual-model' } });
     });
     await act(async () => {
@@ -95,5 +98,49 @@ describe('Models Page', () => {
       expect(screen.getByText('manual-model')).toBeInTheDocument();
       expect(screen.getByText('GPT-4.1')).toBeInTheDocument();
     });
+  });
+
+  it('updates the api type preset immediately for an existing provider', async () => {
+    await act(async () => { render(<Models />); });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /OpenAI/i }));
+    });
+
+    expect(screen.getByRole('combobox', { name: 'API Type' })).toHaveValue('openai-completions');
+
+    await act(async () => {
+      fireEvent.change(screen.getByRole('combobox', { name: 'API Type' }), { target: { value: 'anthropic' } });
+    });
+
+    expect(screen.getByRole('combobox', { name: 'API Type' })).toHaveValue('anthropic');
+    expect(screen.getByText(/Anthropic-style request and header conventions/i)).toBeInTheDocument();
+  });
+
+  it('keeps presets simple and allows custom api types in advanced settings', async () => {
+    await act(async () => { render(<Models />); });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Add Custom Provider/i }));
+    });
+
+    await act(async () => {
+      fireEvent.change(screen.getByPlaceholderText('My Provider'), { target: { value: 'Anthropic Proxy' } });
+      fireEvent.change(screen.getByPlaceholderText('https://api.example.com/v1'), { target: { value: 'https://anthropic-proxy.example/v1' } });
+      fireEvent.change(screen.getByPlaceholderText('Paste your API Key...'), { target: { value: 'proxy-key' } });
+      fireEvent.change(screen.getByRole('combobox', { name: 'API Type' }), { target: { value: 'anthropic' } });
+    });
+
+    expect(screen.getByText(/Anthropic-style request and header conventions/i)).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Advanced Settings/i }));
+    });
+
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText('Custom API type'), { target: { value: 'proxy-anthropic' } });
+    });
+
+    expect(screen.getByLabelText('Custom API type')).toHaveValue('proxy-anthropic');
   });
 });
