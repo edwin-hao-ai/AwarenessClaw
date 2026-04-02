@@ -69,6 +69,8 @@ Object.defineProperty(window, 'electronAPI', {
       text: `Mock response to: ${msg}`,
       sessionId: 'test-session',
     }),
+    onChatDebug: () => {},
+    onChatThinking: () => {},
     onChatStream: () => {},
     onChatStreamEnd: () => {},
     onChatStatus: () => {},

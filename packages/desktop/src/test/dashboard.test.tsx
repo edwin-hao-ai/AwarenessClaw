@@ -204,7 +204,7 @@ describe('Dashboard (Chat)', () => {
     });
   });
 
-  it('shows live thinking as a collapsible stream and auto-collapses when generation starts', async () => {
+  it('shows live thinking and keeps it visible in the run trace after generation starts', async () => {
     let thinkingCallback: ((text: string) => void) | null = null;
     let statusCallback: ((status: any) => void) | null = null;
     let resolveChat: ((value: any) => void) | null = null;
@@ -232,13 +232,14 @@ describe('Dashboard (Chat)', () => {
     });
 
     expect(screen.getAllByText(/Thinking process|思考过程/).length).toBeGreaterThan(0);
-    expect(screen.getByText(/step 1\s*step 2/)).toBeInTheDocument();
+    expect(screen.getAllByText(/step 1\s*step 2/).length).toBeGreaterThan(0);
 
     await act(async () => {
       statusCallback?.({ type: 'generating' });
     });
 
-    expect(screen.queryByText(/step 1\s*step 2/)).not.toBeInTheDocument();
+    expect(screen.getAllByText(/step 1\s*step 2/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Run trace|运行链路/).length).toBeGreaterThan(0);
 
     await act(async () => {
       resolveChat?.({ success: true, text: 'done', sessionId: 'test-session' });
@@ -325,8 +326,56 @@ describe('Dashboard (Chat)', () => {
 
     await act(async () => { render(<Dashboard />); });
 
-    // Tool calls block should show tool count (i18n: "2 个工具调用" in zh, "2 tool(s) used" in en)
-    expect(screen.getByText(/2.*工具调用|2 tool/)).toBeInTheDocument();
+    expect(screen.getByText(/Run trace|运行链路/)).toBeInTheDocument();
+  });
+
+  it('shows debug timeline and persists trace events into the completed assistant message', async () => {
+    let statusCallback: ((status: any) => void) | null = null;
+    let thinkingCallback: ((text: string) => void) | null = null;
+    let debugCallback: ((text: string) => void) | null = null;
+    let resolveChat: ((value: any) => void) | null = null;
+    const api = window.electronAPI as any;
+    api.onChatStatus = (cb: any) => { statusCallback = cb; };
+    api.onChatThinking = (cb: any) => { thinkingCallback = cb; };
+    api.onChatDebug = (cb: any) => { debugCallback = cb; };
+    api.chatSend = vi.fn(() => new Promise((resolve) => {
+      resolveChat = resolve;
+    }));
+
+    await act(async () => { render(<Dashboard />); });
+
+    const textarea = screen.getByPlaceholderText(/输入消息/) as HTMLTextAreaElement;
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'trace this request' } });
+    });
+
+    const buttons = screen.getAllByRole('button');
+    const sendBtn = buttons[buttons.length - 1];
+    await act(async () => { fireEvent.click(sendBtn); });
+
+    await act(async () => {
+      statusCallback?.({ type: 'gateway', message: 'Gateway started in app session' });
+      statusCallback?.({ type: 'tool_call', tool: 'exec', toolStatus: 'running', toolId: 'tool-1', detail: 'open https://google.com' });
+      thinkingCallback?.('先检查是否可以调用浏览器工具');
+      debugCallback?.('[gw:tool.exec.started] {"tool":"exec"}');
+    });
+
+    await waitFor(() => {
+      expect(screen.getAllByText(/Run trace|运行链路/).length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/Gateway started in app session/).length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/open https:\/\/google.com/).length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/先检查是否可以调用浏览器工具/).length).toBeGreaterThan(0);
+    });
+
+    await act(async () => {
+      resolveChat?.({ success: true, text: 'done', sessionId: 'test-session' });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('done')).toBeInTheDocument();
+      expect(screen.getAllByText(/Run trace|运行链路/).length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/Gateway started in app session/).length).toBeGreaterThan(0);
+    });
   });
 
   it('shows approval and failure detail in active tool status', async () => {
@@ -370,8 +419,8 @@ describe('Dashboard (Chat)', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/Awaiting approval|等待/)).toBeInTheDocument();
-      expect(screen.getByText(/pwd \| cwd: \/tmp\/demo/)).toBeInTheDocument();
-      expect(screen.getByText(/daemon offline/)).toBeInTheDocument();
+      expect(screen.getAllByText(/pwd \| cwd: \/tmp\/demo/).length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/daemon offline/).length).toBeGreaterThan(0);
     });
   });
 

@@ -7,6 +7,7 @@ import { trackUsage } from '../lib/usage';
 import { useI18n } from '../lib/i18n';
 import BootstrapWizard from '../components/BootstrapWizard';
 import ChannelIcon from '../components/ChannelIcon';
+import { ChatTracePanel, type ChatTraceEvent } from '../components/dashboard/ChatTracePanel';
 import { SessionSidebar } from '../components/dashboard/SessionSidebar';
 import logoUrl from '../assets/logo.png';
 
@@ -47,6 +48,7 @@ interface Message {
   model?: string;
   toolCalls?: ToolCallInfo[];
   thinking?: string;
+  traceEvents?: ChatTraceEvent[];
 }
 
 interface ChatSession {
@@ -131,84 +133,6 @@ function CodeBlock({ code, language }: { code: string; language?: string }) {
 }
 
 // --- Tool calls in message (collapsible with animation) ---
-
-function ToolCallsBlock({
-  toolCalls,
-  onApprove,
-  onCopyApproval,
-  onStopRequest,
-}: {
-  toolCalls: ToolCallInfo[];
-  onApprove?: (toolCall: ToolCallInfo) => void;
-  onCopyApproval?: (toolCall: ToolCallInfo) => void;
-  onStopRequest?: () => void;
-}) {
-  const { t } = useI18n();
-  const [expanded, setExpanded] = useState(false);
-  if (!toolCalls || toolCalls.length === 0) return null;
-
-  return (
-    <div className="mb-2">
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="flex items-center gap-1.5 text-[11px] text-slate-500 hover:text-slate-300 transition-colors"
-      >
-        <ChevronRight
-          size={12}
-          className={`transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`}
-        />
-        <Wrench size={11} />
-        <span>{t('tool.used', '{0} tool(s) used').replace('{0}', String(toolCalls.length))}</span>
-      </button>
-      <div
-        className="overflow-hidden transition-all duration-200"
-        style={{ maxHeight: expanded ? '420px' : '0px' }}
-      >
-        <div className="mt-1.5 ml-4 space-y-1 border-l border-slate-700/50 pl-3">
-          {toolCalls.map(tc => (
-            <div key={tc.id} className="text-[11px] text-slate-500">
-              <div className="flex items-center gap-1.5">
-                {tc.status === 'failed' ? (
-                  <AlertTriangle size={11} className="text-amber-400/80" />
-                ) : tc.status === 'awaiting_approval' ? (
-                  <Loader2 size={11} className="animate-spin text-brand-400/70" />
-                ) : (
-                  <CheckCircle2 size={11} className="text-emerald-500/70" />
-                )}
-                <span>{getToolLabel(tc.name, tc.status, t)}</span>
-              </div>
-              {tc.detail && (
-                <div className="ml-[17px] mt-0.5 text-[10px] text-slate-500/80 break-all">{tc.detail}</div>
-              )}
-              {tc.status === 'awaiting_approval' && (
-                <div className="ml-[17px] mt-1 flex flex-wrap gap-2">
-                  <button
-                    onClick={() => onApprove?.(tc)}
-                    className="px-2 py-0.5 rounded-md bg-brand-600/20 hover:bg-brand-600/30 border border-brand-500/30 text-brand-200 text-[10px] transition-colors"
-                  >
-                    {t('chat.approveOnce', 'Approve once')}
-                  </button>
-                  <button
-                    onClick={() => onCopyApproval?.(tc)}
-                    className="px-2 py-0.5 rounded-md bg-slate-800/80 hover:bg-slate-700 border border-slate-700/60 text-slate-300 text-[10px] transition-colors"
-                  >
-                    {t('chat.copyApprovalCommand', 'Copy approval command')}
-                  </button>
-                  <button
-                    onClick={() => onStopRequest?.()}
-                    className="px-2 py-0.5 rounded-md bg-slate-800/80 hover:bg-red-500/10 border border-slate-700/60 hover:border-red-500/30 text-slate-300 hover:text-red-300 text-[10px] transition-colors"
-                  >
-                    {t('chat.stopRequest', 'Stop request')}
-                  </button>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // --- Thinking block in message (collapsible) ---
 
@@ -405,8 +329,11 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
   const toolCallsRef = useRef<ToolCallInfo[]>([]);
   const [streamingContent, setStreamingContent] = useState('');
   const streamingRef = useRef('');
+  const streamChunkCountRef = useRef(0);
   const [thinkingContent, setThinkingContent] = useState('');
   const thinkingRef = useRef('');
+  const [traceEvents, setTraceEvents] = useState<ChatTraceEvent[]>([]);
+  const traceEventsRef = useRef<ChatTraceEvent[]>([]);
   const [liveThinkingExpanded, setLiveThinkingExpanded] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -434,6 +361,28 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
   const [memoryWarning, setMemoryWarning] = useState<string | null>(null);
   const memoryWarningTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const resetChatActivityTimeout = useCallback(() => {
+    if (streamTimeoutRef.current) clearTimeout(streamTimeoutRef.current);
+    streamTimeoutRef.current = setTimeout(() => {
+      setAgentStatus('error');
+    }, STREAM_TIMEOUT_MS);
+  }, []);
+
+  const recordTraceEvent = useCallback((event: Omit<ChatTraceEvent, 'id' | 'timestamp'> & { mergeKey?: string }) => {
+    const nextEvent: ChatTraceEvent = {
+      ...event,
+      id: event.mergeKey || `trace-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      timestamp: Date.now(),
+    };
+    const current = traceEventsRef.current;
+    const existingIndex = event.mergeKey ? current.findIndex((item) => item.mergeKey === event.mergeKey) : -1;
+    const updated = existingIndex >= 0
+      ? current.map((item, index) => (index === existingIndex ? { ...item, ...nextEvent, id: item.id } : item))
+      : [...current, nextEvent];
+    traceEventsRef.current = updated.slice(-60);
+    setTraceEvents([...traceEventsRef.current]);
+  }, []);
+
   const { providers: allProviders } = useDynamicProviders();
   const currentProvider = allProviders.find(p => p.key === config.providerKey);
   const projectRootName = projectRoot.split(/[/\\]/).filter(Boolean).pop() || '';
@@ -459,6 +408,13 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
     // Debug: forward main-process gateway events to DevTools console
     api.onChatDebug?.((msg: string) => {
       console.log(msg);
+      resetChatActivityTimeout();
+      recordTraceEvent({
+        kind: 'debug',
+        label: t('chat.trace.gatewayEvent', 'Gateway event'),
+        detail: msg,
+        raw: msg,
+      });
     });
 
     // Thinking content from agent reasoning
@@ -467,29 +423,52 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
       thinkingRef.current = text;
       setThinkingContent(text);
       if (!hadThinking && text) setLiveThinkingExpanded(true);
+      resetChatActivityTimeout();
+      recordTraceEvent({
+        kind: 'thinking',
+        label: t('chat.trace.thinkingUpdated', 'Thinking updated'),
+        detail: text,
+        raw: text,
+        mergeKey: 'live-thinking',
+      });
     });
 
     // Stream text chunks from agent response
     api.onChatStream?.((chunk: string) => {
       streamingRef.current += chunk;
+      streamChunkCountRef.current += 1;
       setStreamingContent(streamingRef.current);
       // Switch to generating status when we start receiving text
       setAgentStatus('generating');
-      // Reset stream timeout on each chunk
-      if (streamTimeoutRef.current) clearTimeout(streamTimeoutRef.current);
-      streamTimeoutRef.current = setTimeout(() => {
-        // No chunk received for STREAM_TIMEOUT_MS — treat as stalled
-        setAgentStatus('error');
-      }, STREAM_TIMEOUT_MS);
+      resetChatActivityTimeout();
+      recordTraceEvent({
+        kind: 'stream',
+        label: t('chat.trace.streaming', 'Assistant streaming'),
+        detail: t('chat.trace.streamingDetail', '{0} chunk(s), {1} chars received')
+          .replace('{0}', String(streamChunkCountRef.current))
+          .replace('{1}', String(streamingRef.current.length)),
+        mergeKey: 'live-stream',
+      });
     });
 
     // Status events (agent lifecycle + tool calls + gateway auto-start)
     api.onChatStatus?.((status: { type: string; tool?: string; toolStatus?: string; toolId?: string; message?: string; detail?: string; approvalRequestId?: string; approvalCommand?: string }) => {
+      resetChatActivityTimeout();
       if (status.type === 'gateway') {
         // Gateway auto-start status — show as thinking with a message
         setAgentStatus('thinking');
+        recordTraceEvent({
+          kind: 'status',
+          label: t('chat.trace.gatewayStatus', 'Gateway status'),
+          detail: status.message || t('chat.trace.gatewayStarting', 'Starting Gateway'),
+        });
       } else if (status.type === 'thinking' || status.type === 'generating' || status.type === 'error') {
         setAgentStatus(status.type as AgentStatus);
+        recordTraceEvent({
+          kind: 'status',
+          label: t('chat.trace.agentStatus', 'Agent status'),
+          detail: status.message || status.type,
+        });
       } else if ((status.type === 'tool_call' || status.type === 'tool_approval') && status.tool) {
         const tc: ToolCallInfo = {
           id: status.toolId || `tc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -509,6 +488,13 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
           toolCallsRef.current = [...toolCallsRef.current, tc];
         }
         setActiveToolCalls([...toolCallsRef.current]);
+        recordTraceEvent({
+          kind: 'status',
+          label: status.type === 'tool_approval'
+            ? t('chat.trace.toolApproval', 'Tool approval requested')
+            : t('chat.trace.toolStarted', 'Tool started'),
+          detail: `${status.tool}${status.detail ? ` — ${status.detail}` : ''}`,
+        });
       } else if (status.type === 'tool_update' && status.toolId) {
         toolCallsRef.current = toolCallsRef.current.map(tc =>
           tc.id === status.toolId ? {
@@ -518,9 +504,15 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
           } : tc
         );
         setActiveToolCalls([...toolCallsRef.current]);
+        const updatedTool = toolCallsRef.current.find((tc) => tc.id === status.toolId);
+        recordTraceEvent({
+          kind: 'status',
+          label: t('chat.trace.toolUpdated', 'Tool updated'),
+          detail: `${updatedTool?.name || status.toolId}${status.detail ? ` — ${status.detail}` : ''}`,
+        });
       }
     });
-  }, []);
+  }, [recordTraceEvent, resetChatActivityTimeout, t]);
 
   useEffect(() => {
     if (!thinkingContent) return;
@@ -748,12 +740,19 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
     toolCallsRef.current = [];
     setActiveToolCalls([]);
     streamingRef.current = '';
+    streamChunkCountRef.current = 0;
     setStreamingContent('');
     thinkingRef.current = '';
     setThinkingContent('');
+    traceEventsRef.current = [];
+    setTraceEvents([]);
     setLiveThinkingExpanded(true);
-    if (streamTimeoutRef.current) clearTimeout(streamTimeoutRef.current);
-    streamTimeoutRef.current = setTimeout(() => { setAgentStatus('error'); }, STREAM_TIMEOUT_MS);
+    resetChatActivityTimeout();
+    recordTraceEvent({
+      kind: 'status',
+      label: t('chat.trace.requestSent', 'Request sent'),
+      detail: trimmed,
+    });
 
     if (window.electronAPI) {
       try {
@@ -776,6 +775,7 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
         model: config.modelId,
         toolCalls: toolCallsRef.current.length > 0 ? [...toolCallsRef.current] : undefined,
         thinking: thinkingRef.current || undefined,
+        traceEvents: traceEventsRef.current.length > 0 ? [...traceEventsRef.current] : undefined,
       };
 
       setNewestMsgId(assistantMsg.id);
@@ -790,6 +790,8 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
       setStreamingContent('');
       thinkingRef.current = '';
       setThinkingContent('');
+      traceEventsRef.current = [];
+      setTraceEvents([]);
       setLiveThinkingExpanded(false);
       setAgentStatus('idle');
       } finally {
@@ -823,6 +825,8 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
   const handleStopActiveRequest = useCallback(async () => {
     await (window.electronAPI as any)?.chatAbort?.(activeSessionId);
     if (streamTimeoutRef.current) clearTimeout(streamTimeoutRef.current);
+    traceEventsRef.current = [];
+    setTraceEvents([]);
     setAgentStatus('idle');
   }, [activeSessionId]);
 
@@ -1246,20 +1250,19 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
                       <span className="text-[10px] text-slate-600">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                     </div>
 
-                    {/* Thinking process */}
-                    {msg.thinking && (
+                    {msg.thinking && !msg.traceEvents?.length && (
                       <ThinkingBlock thinking={msg.thinking} />
                     )}
 
-                    {/* Tool calls */}
-                    {msg.toolCalls && msg.toolCalls.length > 0 && (
-                      <ToolCallsBlock
-                        toolCalls={msg.toolCalls}
-                        onApprove={handleApproveTool}
-                        onCopyApproval={handleCopyApproval}
-                        onStopRequest={handleStopActiveRequest}
-                      />
-                    )}
+                    <ChatTracePanel
+                      t={t}
+                      thinking={msg.thinking}
+                      toolCalls={msg.toolCalls}
+                      traceEvents={msg.traceEvents}
+                      onApprove={handleApproveTool}
+                      onCopyApproval={handleCopyApproval}
+                      onStopRequest={handleStopActiveRequest}
+                    />
 
                     {/* Content — no bubble, direct text */}
                     <div className="text-sm text-slate-200 leading-relaxed">
@@ -1292,6 +1295,27 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
                     {config.modelId && <span className="text-[10px] text-slate-600">{config.modelId.split('/').pop()}</span>}
                   </div>
 
+                  {/* Live thinking content */}
+                  {agentStatus !== 'error' && thinkingContent && !traceEvents.length && (
+                    <LiveThinkingBlock
+                      thinking={thinkingContent}
+                      expanded={liveThinkingExpanded}
+                      onToggle={() => setLiveThinkingExpanded(v => !v)}
+                    />
+                  )}
+
+                  <ChatTracePanel
+                    t={t}
+                    thinking={thinkingContent}
+                    toolCalls={activeToolCalls}
+                    traceEvents={traceEvents}
+                    onApprove={handleApproveTool}
+                    onCopyApproval={handleCopyApproval}
+                    onStopRequest={handleStopActiveRequest}
+                    defaultExpanded={true}
+                    live={true}
+                  />
+
                   {/* Error / stalled state */}
                   {agentStatus === 'error' && (
                     <div className="flex items-center gap-2 text-sm text-red-400">
@@ -1304,60 +1328,14 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
                           setStreamingContent('');
                           thinkingRef.current = '';
                           setThinkingContent('');
+                          traceEventsRef.current = [];
+                          setTraceEvents([]);
                           setAgentStatus('idle');
                         }}
                         className="ml-2 px-2 py-0.5 text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition-colors"
                       >
                         {t('chat.dismiss', 'Dismiss')}
                       </button>
-                    </div>
-                  )}
-
-                  {/* Live thinking content */}
-                  {agentStatus !== 'error' && thinkingContent && (
-                    <LiveThinkingBlock
-                      thinking={thinkingContent}
-                      expanded={liveThinkingExpanded}
-                      onToggle={() => setLiveThinkingExpanded(v => !v)}
-                    />
-                  )}
-
-                  {/* Tool calls section */}
-                  {agentStatus !== 'error' && activeToolCalls.length > 0 && (
-                    <div className="mb-2 space-y-1 pb-2 border-b border-slate-700/30">
-                      {activeToolCalls.slice(-5).map(tc => (
-                        <div key={tc.id} className="text-[11px] text-slate-500">
-                          <div className="flex items-center gap-1.5">
-                          {tc.status === 'running' || tc.status === 'recalling' || tc.status === 'saving' || tc.status === 'awaiting_approval' ? (
-                            <Loader2 size={11} className="animate-spin text-brand-400/70" />
-                          ) : tc.status === 'failed' ? (
-                            <AlertTriangle size={11} className="text-amber-400/80" />
-                          ) : (
-                            <span className="text-emerald-500/70">{getToolIcon(tc.name)}</span>
-                          )}
-                          <span className="truncate max-w-[300px]">{getToolLabel(tc.name, tc.status, t)}</span>
-                          </div>
-                          {tc.detail && (
-                            <div className="ml-[17px] mt-0.5 truncate max-w-[320px] text-[10px] text-slate-500/80">{tc.detail}</div>
-                          )}
-                          {tc.status === 'awaiting_approval' && (
-                            <div className="ml-[17px] mt-1 flex flex-wrap gap-2">
-                              <button
-                                onClick={() => handleApproveTool(tc)}
-                                className="px-2 py-0.5 rounded-md bg-brand-600/20 hover:bg-brand-600/30 border border-brand-500/30 text-brand-200 text-[10px] transition-colors"
-                              >
-                                {t('chat.approveOnce', 'Approve once')}
-                              </button>
-                              <button
-                                onClick={() => handleCopyApproval(tc)}
-                                className="px-2 py-0.5 rounded-md bg-slate-800/80 hover:bg-slate-700 border border-slate-700/60 text-slate-300 text-[10px] transition-colors"
-                              >
-                                {t('chat.copyApprovalCommand', 'Copy approval command')}
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      ))}
                     </div>
                   )}
 
