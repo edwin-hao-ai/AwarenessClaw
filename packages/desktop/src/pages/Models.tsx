@@ -19,6 +19,7 @@ type EditableModel = {
 
 const DEFAULT_API_TYPE = 'openai-completions';
 const CUSTOM_API_TYPE = '__custom__';
+const NON_CHAT_MODEL_PATTERN = /(embed|embedding|rerank|whisper|tts|speech|transcri|moderat|omni-moderation|dall|image|vision-preview|audio)/i;
 
 function isKnownApiType(value: string, providers: ModelProviderDef[]): boolean {
   const normalized = value.trim();
@@ -46,6 +47,59 @@ function mergeModels(...groups: Array<EditableModel[] | undefined>): EditableMod
     }
   }
   return Array.from(merged.values());
+}
+
+function tokenizeModelId(value: string): string[] {
+  return value
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((token) => token.length >= 3);
+}
+
+function buildProviderAffinityTokens(provider: ModelProviderDef, models: EditableModel[]): Set<string> {
+  const tokens = new Set<string>();
+
+  for (const token of tokenizeModelId(provider.key)) {
+    tokens.add(token);
+  }
+
+  for (const model of provider.models) {
+    for (const token of tokenizeModelId(model.id)) {
+      tokens.add(token);
+    }
+  }
+
+  for (const model of models) {
+    for (const token of tokenizeModelId(model.id)) {
+      tokens.add(token);
+    }
+  }
+
+  return tokens;
+}
+
+function filterRelevantDiscoveredModels(provider: ModelProviderDef | undefined, currentModels: EditableModel[], discoveredModels: EditableModel[]): EditableModel[] {
+  const chatLikeModels = discoveredModels.filter((model) => !NON_CHAT_MODEL_PATTERN.test(`${model.id} ${model.label}`));
+  if (!provider) {
+    return chatLikeModels;
+  }
+
+  const affinityTokens = buildProviderAffinityTokens(provider, currentModels);
+  const affinityMatches = chatLikeModels.filter((model) => {
+    const haystack = `${model.id} ${model.label}`.toLowerCase();
+    for (const token of affinityTokens) {
+      if (haystack.includes(token)) {
+        return true;
+      }
+    }
+    return false;
+  });
+
+  if (affinityMatches.length > 0) {
+    return affinityMatches;
+  }
+
+  return chatLikeModels;
 }
 
 function toStoredModels(models: EditableModel[]): ProviderStoredModel[] {
@@ -240,13 +294,14 @@ export default function Models() {
           label: String(model.name || model.id || '').trim(),
           source: 'detected' as const,
         }));
+        const relevantDetectedModels = filterRelevantDiscoveredModels(editingProvider, models, detectedModels);
         const customModels = models.filter((model) => model.source === 'custom');
-        const nextModels = mergeModels(detectedModels, customModels);
+        const nextModels = mergeModels(relevantDetectedModels, customModels);
         setModels(nextModels);
         if (!nextModels.some((model) => model.id === selectedModelId)) {
           setSelectedModelId(nextModels[0]?.id || '');
         }
-        setDiscoverState('success');
+        setDiscoverState(nextModels.length > 0 ? 'success' : 'error');
       } else {
         setDiscoverState('error');
       }

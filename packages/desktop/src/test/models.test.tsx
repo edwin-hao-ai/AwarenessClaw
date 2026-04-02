@@ -100,6 +100,38 @@ describe('Models Page', () => {
     });
   });
 
+  it('filters obviously unrelated models during refresh', async () => {
+    (window as any).electronAPI = {
+      ...(window as any).electronAPI,
+      modelsReadProviders: () => Promise.resolve({ success: true, providers: [], primaryModel: '' }),
+      modelsDiscover: vi.fn().mockResolvedValue({
+        success: true,
+        models: [
+          { id: 'gpt-4.1', name: 'GPT-4.1' },
+          { id: 'text-embedding-3-large', name: 'text-embedding-3-large' },
+          { id: 'tts-1', name: 'tts-1' },
+        ],
+      }),
+    };
+
+    await act(async () => { render(<Models />); });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /OpenAI/i }));
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Refresh from OpenClaw/i }));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('GPT-4.1')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText('text-embedding-3-large')).not.toBeInTheDocument();
+    expect(screen.queryByText('tts-1')).not.toBeInTheDocument();
+  });
+
   it('updates the api type preset immediately for an existing provider', async () => {
     await act(async () => { render(<Models />); });
 
