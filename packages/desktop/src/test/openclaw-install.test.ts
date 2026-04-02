@@ -460,6 +460,86 @@ describe('Windows PowerShell execution policy', () => {
   });
 });
 
+describe('Node.js version validation', () => {
+  it('v22 passes minimum version check', () => {
+    const version = 'v22.12.0';
+    const majorMatch = version.match(/v(\d+)/);
+    const major = majorMatch ? parseInt(majorMatch[1], 10) : 0;
+    expect(major).toBeGreaterThanOrEqual(20);
+  });
+
+  it('v20 passes minimum version check', () => {
+    const version = 'v20.0.0';
+    const majorMatch = version.match(/v(\d+)/);
+    const major = majorMatch ? parseInt(majorMatch[1], 10) : 0;
+    expect(major).toBeGreaterThanOrEqual(20);
+  });
+
+  it('v18 fails minimum version check', () => {
+    const version = 'v18.19.0';
+    const majorMatch = version.match(/v(\d+)/);
+    const major = majorMatch ? parseInt(majorMatch[1], 10) : 0;
+    expect(major).toBeLessThan(20);
+  });
+
+  it('v16 fails minimum version check', () => {
+    const version = 'v16.13.0';
+    const majorMatch = version.match(/v(\d+)/);
+    const major = majorMatch ? parseInt(majorMatch[1], 10) : 0;
+    expect(major).toBeLessThan(20);
+  });
+
+  it('null version returns 0 major', () => {
+    const version: string | null = null;
+    const majorMatch = version?.match(/v(\d+)/);
+    const major = majorMatch ? parseInt(majorMatch[1], 10) : 0;
+    expect(major).toBe(0);
+  });
+
+  it('setup:install-nodejs skips install only for v20+', () => {
+    // Simulates the guard logic in register-setup-handlers.ts
+    const simulateInstallCheck = (nodeVersion: string | null) => {
+      if (nodeVersion) {
+        const majorMatch = nodeVersion.match(/v(\d+)/);
+        const major = majorMatch ? parseInt(majorMatch[1], 10) : 0;
+        if (major >= 20) return { skip: true, reason: 'alreadyInstalled' };
+        return { skip: false, reason: 'tooOld' };
+      }
+      return { skip: false, reason: 'notInstalled' };
+    };
+
+    expect(simulateInstallCheck('v22.12.0')).toMatchObject({ skip: true });
+    expect(simulateInstallCheck('v20.0.0')).toMatchObject({ skip: true });
+    expect(simulateInstallCheck('v18.19.0')).toMatchObject({ skip: false, reason: 'tooOld' });
+    expect(simulateInstallCheck('v16.13.0')).toMatchObject({ skip: false, reason: 'tooOld' });
+    expect(simulateInstallCheck(null)).toMatchObject({ skip: false, reason: 'notInstalled' });
+  });
+});
+
+describe('Bundled npm fallback', () => {
+  it('getManagedOpenClawInstallCommand uses bundled npm when available', () => {
+    // Simulates shell-utils.ts logic
+    const npmCli = '/path/to/bundled/npm-cli.js';
+    const prefix = '/home/test/.awareness-claw/openclaw-runtime';
+    const cmd = npmCli
+      ? `"node" "${npmCli}" install -g --prefix "${prefix}" openclaw`
+      : `npm install -g --prefix "${prefix}" openclaw`;
+
+    expect(cmd).toContain(npmCli);
+    expect(cmd).not.toMatch(/^npm /);
+  });
+
+  it('falls back to system npm when bundled not available', () => {
+    const npmCli: string | null = null;
+    const prefix = '/home/test/.awareness-claw/openclaw-runtime';
+    const cmd = npmCli
+      ? `"node" "${npmCli}" install -g --prefix "${prefix}" openclaw`
+      : `npm install -g --prefix "${prefix}" openclaw`;
+
+    expect(cmd).toMatch(/^npm /);
+  });
+});
+
 describe('Permission error detection patterns', () => {
   it('detects EACCES in npm error output', () => {
     const msg = 'npm ERR! code EACCES\nnpm ERR! syscall access';

@@ -77,6 +77,10 @@ export function registerSetupHandlers(deps: {
     if (nodeVersion) {
       result.systemNodeInstalled = true;
       result.systemNodeVersion = nodeVersion;
+      // Flag if version is too old for daemon (requires v20+)
+      const majorMatch = nodeVersion.match(/v(\d+)/);
+      const major = majorMatch ? parseInt(majorMatch[1], 10) : 0;
+      result.nodeVersionTooOld = major > 0 && major < 20;
     }
 
     result.npmInstalled = safeExec('npm --version') !== null;
@@ -113,8 +117,16 @@ export function registerSetupHandlers(deps: {
   });
 
   ipcMain.handle('setup:install-nodejs', async () => {
-    if (deps.getNodeVersion()) {
-      return { success: true, alreadyInstalled: true };
+    const currentVersion = deps.getNodeVersion();
+    if (currentVersion) {
+      // Check minimum version — daemon requires Node.js v20+ (ES2022+ features)
+      const majorMatch = currentVersion.match(/v(\d+)/);
+      const major = majorMatch ? parseInt(majorMatch[1], 10) : 0;
+      if (major >= 20) {
+        return { success: true, alreadyInstalled: true, version: currentVersion };
+      }
+      // Old Node.js detected — proceed to install newer version
+      // (existing version stays, new one gets higher PATH priority via nvm/managed install)
     }
 
     try {
@@ -229,6 +241,8 @@ export function registerSetupHandlers(deps: {
     }
 
     // Not found anywhere — proceed with managed prefix install
+    // getManagedOpenClawInstallCommand prefers Electron's bundled npm, so this
+    // works even when the user has no system npm or a broken one.
     const registries = ['', '--registry=https://registry.npmmirror.com'];
     const managedInstallBase = deps.getManagedOpenClawInstallCommand('openclaw');
     let lastError = '';
@@ -240,6 +254,21 @@ export function registerSetupHandlers(deps: {
         return { success: true };
       } catch (err) {
         lastError = String(err);
+      }
+    }
+
+    // If managed install failed AND bundled npm wasn't available, try explicit bundled npm path
+    const npmCli = deps.getBundledNpmBin('npm');
+    if (npmCli && !managedInstallBase.includes(npmCli)) {
+      const prefix = path.join(deps.home, '.awareness-claw', 'openclaw-runtime');
+      for (const reg of registries) {
+        try {
+          await deps.runAsync(`"${process.execPath}" "${npmCli}" install -g --prefix "${prefix}" openclaw ${reg}`.trim(), 90000);
+          deps.ensureManagedOpenClawWindowsShim();
+          return { success: true, method: 'bundled-npm' };
+        } catch (err) {
+          lastError = String(err);
+        }
       }
     }
 
