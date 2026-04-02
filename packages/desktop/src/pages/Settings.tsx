@@ -35,23 +35,23 @@ const KNOWN_DENIED_COMMANDS = [
 
 const WEB_PROVIDER_GUIDANCE: Record<string, { title: string; detail: string; requiresKey: boolean }> = {
   brave: {
-    title: 'Brave search needs an API key',
-    detail: 'Paste the Brave key into the API key field below. Once saved, OpenClaw can use web search immediately.',
+    title: 'settings.web.guide.brave.title',
+    detail: 'settings.web.guide.brave.detail',
     requiresKey: true,
   },
   perplexity: {
-    title: 'Perplexity search needs an API key',
-    detail: 'Perplexity is supported through the same dynamic config flow. Save the provider first, then add the API key.',
+    title: 'settings.web.guide.perplexity.title',
+    detail: 'settings.web.guide.perplexity.detail',
     requiresKey: true,
   },
   grok: {
-    title: 'Grok may require extra x_search setup',
-    detail: 'OpenClaw supports Grok web search, but some setups also require x_search to be enabled in OpenClaw.',
+    title: 'settings.web.guide.grok.title',
+    detail: 'settings.web.guide.grok.detail',
     requiresKey: true,
   },
   browser: {
-    title: 'Browser mode does not require a Brave key',
-    detail: 'Use this when you want OpenClaw to rely on browser-backed search/fetch instead of a remote search API.',
+    title: 'settings.web.guide.browser.title',
+    detail: 'settings.web.guide.browser.detail',
     requiresKey: false,
   },
 };
@@ -571,24 +571,24 @@ export default function Settings() {
       </div>
 
       <div className="p-6 space-y-6 max-w-2xl">
-        <SettingsSection title="🌐 Web & Browser">
+        <SettingsSection title={`🌐 ${t('settings.web.title', 'Web & Browser')}`}>
           <div className="p-4 space-y-4">
             <div className="text-xs text-slate-500">
-              Configure OpenClaw web search and browser-adjacent capabilities directly from Desktop. This form is generated from the OpenClaw config schema, so supported fields track the installed OpenClaw version.
+              {t('settings.web.desc', 'Configure OpenClaw web search and browser-adjacent capabilities directly from Desktop. This form is generated from the OpenClaw config schema, so supported fields track the installed OpenClaw version.')}
             </div>
 
             {webProviderGuide && (
               <div className={`rounded-xl border px-3 py-3 text-xs ${webProviderMissingKey ? 'border-amber-500/30 bg-amber-500/10 text-amber-200' : 'border-sky-500/20 bg-sky-500/10 text-sky-100'}`}>
-                <div className="font-medium mb-1">{webProviderGuide.title}</div>
-                <div className="opacity-80">{webProviderGuide.detail}</div>
-                {webProviderMissingKey && <div className="mt-2 text-amber-300">Current status: provider selected, but credential is still missing.</div>}
+                <div className="font-medium mb-1">{t(webProviderGuide.title, webProviderGuide.title)}</div>
+                <div className="opacity-80">{t(webProviderGuide.detail, webProviderGuide.detail)}</div>
+                {webProviderMissingKey && <div className="mt-2 text-amber-300">{t('settings.web.guide.missingCredential', 'Current status: provider selected, but credential is still missing.')}</div>}
               </div>
             )}
 
             {webLoading ? (
               <div className="flex items-center gap-2 text-xs text-slate-500">
                 <Loader2 size={12} className="animate-spin" />
-                Loading OpenClaw capability schema...
+                {t('settings.web.loading', 'Loading OpenClaw capability schema...')}
               </div>
             ) : webSections.length > 0 ? (
               <>
@@ -604,23 +604,23 @@ export default function Settings() {
 
                 <div className="flex items-center justify-between gap-3">
                   <div className="text-xs text-slate-500">
-                    OpenClaw hot-reloads most `tools.web` changes. Browser or web search fixes should not require a manual restart.
+                    {t('settings.web.hotReloadHint', 'OpenClaw hot-reloads most tools.web changes. Browser or web search fixes should not require a manual restart.')}
                   </div>
                   <div className="flex items-center gap-3">
-                    {webSaved && <span className="text-xs text-emerald-400">Saved to OpenClaw</span>}
+                    {webSaved && <span className="text-xs text-emerald-400">{t('settings.web.saved', 'Saved to OpenClaw')}</span>}
                     <button
                       onClick={saveWebConfig}
                       disabled={webSaving}
                       className="flex items-center gap-1 px-3 py-1.5 text-xs bg-brand-600 hover:bg-brand-500 disabled:bg-slate-700 disabled:text-slate-500 rounded-lg text-white transition-colors"
                     >
                       {webSaving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
-                      Save Web Settings
+                      {t('settings.web.save', 'Save Web Settings')}
                     </button>
                   </div>
                 </div>
               </>
             ) : (
-              <div className="text-xs text-slate-500">This OpenClaw version does not expose a dynamic web capability schema yet.</div>
+              <div className="text-xs text-slate-500">{t('settings.web.noSchema', 'This OpenClaw version does not expose a dynamic web capability schema yet.')}</div>
             )}
 
             {webError && (

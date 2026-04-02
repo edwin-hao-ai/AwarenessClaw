@@ -11,6 +11,7 @@ import Settings from './pages/Settings';
 import Sidebar, { type Page } from './components/Sidebar';
 import UpdateBanner from './components/UpdateBanner';
 import { useAppConfig } from './lib/store';
+import { useI18n } from './lib/i18n';
 import logoUrl from './assets/logo.png';
 
 const SETUP_COMPLETED_AT_KEY = 'awareness-claw-setup-completed-at';
@@ -23,6 +24,29 @@ function estimateStartupProgress(message: string) {
   if (text.includes('everything looks good')) return 85;
   if (text.includes('finalizing')) return 92;
   return 18;
+}
+
+function translateStartupMessage(message: string, t: (key: string, fallback?: string) => string) {
+  const exactMap: Record<string, string> = {
+    'Preparing AwarenessClaw...': 'startup.preparing',
+    'Checking your installation...': 'startup.checking',
+    'Finishing setup...': 'startup.finishing',
+    'Startup complete': 'startup.complete',
+    'Waiting for the local service to finish starting...': 'startup.waitingForLocalService',
+    'Everything looks good. Finalizing startup...': 'startup.everythingLooksGood',
+    'Finalizing startup...': 'startup.finalizing',
+    'Local service is still warming up...': 'startup.localServiceWarming',
+  };
+
+  const mappedKey = exactMap[message];
+  if (mappedKey) return t(mappedKey, message);
+
+  const repairingMatch = message.match(/^Repairing\s+(.+)\.\.\.$/);
+  if (repairingMatch) {
+    return t('startup.repairingCheck', 'Repairing {0}...').replace('{0}', repairingMatch[1]);
+  }
+
+  return message;
 }
 
 /** Apply theme to document root */
@@ -49,6 +73,7 @@ function useThemeEffect(theme: 'dark' | 'light' | 'system') {
 
 export default function App() {
   const { config } = useAppConfig();
+  const { t } = useI18n();
   const [setupComplete, setSetupComplete] = useState<boolean | null>(null);
   const [runtimeReady, setRuntimeReady] = useState<boolean | null>(null);
   const [startupMessage, setStartupMessage] = useState('Preparing AwarenessClaw...');
@@ -135,13 +160,14 @@ export default function App() {
   };
 
   if (setupComplete === null || runtimeReady === null) {
+    const startupMessageText = translateStartupMessage(startupMessage, t);
     return (
       <div className="h-screen flex items-center justify-center bg-slate-900 px-6">
         <div className="max-w-md text-center space-y-4">
           <img src={logoUrl} alt="" className="w-12 h-12 animate-pulse-soft mx-auto" />
           <div>
-            <h1 className="text-base font-semibold text-slate-100">Starting AwarenessClaw</h1>
-            <p className="text-sm text-slate-400 mt-2">{startupMessage}</p>
+            <h1 className="text-base font-semibold text-slate-100">{t('startup.title', 'Starting AwarenessClaw')}</h1>
+            <p className="text-sm text-slate-400 mt-2">{startupMessageText}</p>
           </div>
           <div className="space-y-2">
             <div className="h-2 overflow-hidden rounded-full bg-slate-800 ring-1 ring-slate-700/80">
@@ -151,11 +177,11 @@ export default function App() {
               />
             </div>
             <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.16em] text-slate-500">
-              <span>Startup progress</span>
+              <span>{t('startup.progress', 'Startup progress')}</span>
               <span>{Math.round(Math.max(8, Math.min(100, startupProgress)))}%</span>
             </div>
           </div>
-          <p className="text-xs text-slate-500">First launch or auto-repair can take a little longer while the app checks OpenClaw, Gateway, and memory services.</p>
+          <p className="text-xs text-slate-500">{t('startup.hint', 'First launch or auto-repair can take a little longer while the app checks OpenClaw, Gateway, and memory services.')}</p>
         </div>
       </div>
     );

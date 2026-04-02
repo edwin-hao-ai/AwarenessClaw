@@ -65,14 +65,10 @@ interface SkillDetail {
 }
 
 const PAGE_SIZE = 20;
-const LOCAL_STATUS_TABS = [
-  { id: 'all', label: 'All' },
-  { id: 'ready', label: 'Ready' },
-  { id: 'needs-setup', label: 'Needs Setup' },
-  { id: 'disabled', label: 'Disabled' },
-] as const;
+const LOCAL_STATUS_TABS = ['all', 'ready', 'needs-setup', 'disabled'] as const;
 
-type LocalStatusFilter = (typeof LOCAL_STATUS_TABS)[number]['id'];
+type LocalStatusFilter = (typeof LOCAL_STATUS_TABS)[number];
+type TranslateFunc = (key: string, fallback?: string) => string;
 
 function summarizeMissing(skill: LocalSkillStatus) {
   const missing = skill.missing || {};
@@ -85,11 +81,11 @@ function summarizeMissing(skill: LocalSkillStatus) {
   return parts.slice(0, 3).join(' · ');
 }
 
-function getSkillStatusLabel(skill: Pick<LocalSkillStatus, 'eligible' | 'disabled' | 'blockedByAllowlist'>) {
-  if (skill.disabled) return { label: 'Disabled', className: 'text-slate-400 bg-slate-700/60' };
-  if (skill.blockedByAllowlist) return { label: 'Blocked', className: 'text-amber-300 bg-amber-500/10' };
-  if (skill.eligible) return { label: 'Ready', className: 'text-emerald-300 bg-emerald-500/10' };
-  return { label: 'Needs Setup', className: 'text-amber-300 bg-amber-500/10' };
+function getSkillStatusLabel(skill: Pick<LocalSkillStatus, 'eligible' | 'disabled' | 'blockedByAllowlist'>, t: TranslateFunc) {
+  if (skill.disabled) return { label: t('skills.status.disabled', 'Disabled'), className: 'text-slate-400 bg-slate-700/60' };
+  if (skill.blockedByAllowlist) return { label: t('skills.status.blocked', 'Blocked'), className: 'text-amber-300 bg-amber-500/10' };
+  if (skill.eligible) return { label: t('skills.status.ready', 'Ready'), className: 'text-emerald-300 bg-emerald-500/10' };
+  return { label: t('skills.status.needsSetup', 'Needs Setup'), className: 'text-amber-300 bg-amber-500/10' };
 }
 
 function buildLocalDetail(skill: LocalSkillStatus): SkillDetail {
@@ -117,10 +113,10 @@ function matchesLocalStatus(skill: LocalSkillStatus, filter: LocalStatusFilter) 
   return !skill.eligible && !skill.disabled && !skill.blockedByAllowlist;
 }
 
-function getLocalGroupLabel(source: string) {
-  if (source === 'openclaw-bundled') return 'Built-in Skills';
-  if (source.includes('workspace')) return 'Workspace Skills';
-  if (source.includes('managed')) return 'Managed Skills';
+function getLocalGroupLabel(source: string, t: TranslateFunc) {
+  if (source === 'openclaw-bundled') return t('skills.group.builtin', 'Built-in Skills');
+  if (source.includes('workspace')) return t('skills.group.workspace', 'Workspace Skills');
+  if (source.includes('managed')) return t('skills.group.managed', 'Managed Skills');
   return source;
 }
 
@@ -190,7 +186,7 @@ export default function Skills() {
         setLocalSkills(Array.isArray(r.report?.skills) ? r.report.skills : []);
       }
     } else {
-      setActionError(res.error || 'Install failed');
+      setActionError(res.error || t('skills.installFailed', 'Install failed'));
     }
     setActionSlug(null);
   };
@@ -207,7 +203,7 @@ export default function Skills() {
         setLocalSkills(Array.isArray(r.report?.skills) ? r.report.skills : []);
       }
     } else {
-      setActionError(res.error || 'Uninstall failed');
+      setActionError(res.error || t('skills.uninstallFailed', 'Uninstall failed'));
     }
     setActionSlug(null);
   };
@@ -262,7 +258,7 @@ export default function Skills() {
   const filteredLocalSkills = localSkills.filter(skill => matchesLocalStatus(skill, localStatusFilter));
   const localSkillGroups = Object.entries(
     filteredLocalSkills.reduce<Record<string, LocalSkillStatus[]>>((acc, skill) => {
-      const key = getLocalGroupLabel(skill.source);
+      const key = getLocalGroupLabel(skill.source, t);
       if (!acc[key]) acc[key] = [];
       acc[key].push(skill);
       return acc;
@@ -302,8 +298,8 @@ export default function Skills() {
               <Package size={20} className="text-brand-400" /> {t('skills.title')}
             </h1>
             <p className="text-xs text-slate-500">
-              {localStatusCounts.all} local skills
-              {remoteSkills.length > 0 && ` · ${remoteSkills.length} popular ClawHub skills`}
+              {t('skills.localSummary', '{count} local skills').replace('{count}', String(localStatusCounts.all))}
+              {remoteSkills.length > 0 && ` · ${t('skills.remoteSummary', '{count} popular ClawHub skills').replace('{count}', String(remoteSkills.length))}`}
             </p>
           </div>
           <div className="flex gap-2">
@@ -373,49 +369,49 @@ export default function Skills() {
       <div className="flex-1 overflow-y-auto p-6 space-y-6">
         {filter === 'all' && searchResults === null && localSkills.length > 0 && (
           <div>
-            <h2 className="text-sm font-semibold text-slate-300 mb-1">OpenClaw Local Skills</h2>
-            <p className="text-xs text-slate-500 mb-4">Official local skill status from `openclaw skills list --json`, aligned with the Control UI.</p>
+            <h2 className="text-sm font-semibold text-slate-300 mb-1">{t('skills.localSectionTitle', 'OpenClaw Local Skills')}</h2>
+            <p className="text-xs text-slate-500 mb-4">{t('skills.localSectionDesc', 'Official local skill status from openclaw skills list --json, aligned with the Control UI.')}</p>
             <div className="grid grid-cols-4 gap-3 mb-4">
               <div className="p-3 bg-slate-800/50 border border-slate-700/50 rounded-xl">
-                <div className="text-[11px] uppercase tracking-wide text-slate-500">All</div>
+                <div className="text-[11px] uppercase tracking-wide text-slate-500">{t('skills.status.all', 'All')}</div>
                 <div className="mt-1 text-xl font-semibold">{localStatusCounts.all}</div>
               </div>
               <div className="p-3 bg-slate-800/50 border border-emerald-500/20 rounded-xl">
-                <div className="text-[11px] uppercase tracking-wide text-slate-500">Ready</div>
+                <div className="text-[11px] uppercase tracking-wide text-slate-500">{t('skills.status.ready', 'Ready')}</div>
                 <div className="mt-1 text-xl font-semibold text-emerald-300">{localStatusCounts.ready}</div>
               </div>
               <div className="p-3 bg-slate-800/50 border border-amber-500/20 rounded-xl">
-                <div className="text-[11px] uppercase tracking-wide text-slate-500">Needs Setup</div>
+                <div className="text-[11px] uppercase tracking-wide text-slate-500">{t('skills.status.needsSetup', 'Needs Setup')}</div>
                 <div className="mt-1 text-xl font-semibold text-amber-300">{localStatusCounts.needsSetup}</div>
               </div>
               <div className="p-3 bg-slate-800/50 border border-slate-700/50 rounded-xl">
-                <div className="text-[11px] uppercase tracking-wide text-slate-500">Disabled</div>
+                <div className="text-[11px] uppercase tracking-wide text-slate-500">{t('skills.status.disabled', 'Disabled')}</div>
                 <div className="mt-1 text-xl font-semibold text-slate-300">{localStatusCounts.disabled}</div>
               </div>
             </div>
             <div className="flex gap-2 flex-wrap mb-4">
               {LOCAL_STATUS_TABS.map(tab => {
-                const count = tab.id === 'all'
+                const count = tab === 'all'
                   ? localStatusCounts.all
-                  : tab.id === 'ready'
+                  : tab === 'ready'
                     ? localStatusCounts.ready
-                    : tab.id === 'needs-setup'
+                    : tab === 'needs-setup'
                       ? localStatusCounts.needsSetup
                       : localStatusCounts.disabled;
                 return (
                   <button
-                    key={tab.id}
-                    onClick={() => setLocalStatusFilter(tab.id)}
-                    className={`px-3 py-2 text-xs rounded-xl transition-colors ${localStatusFilter === tab.id ? 'bg-brand-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-slate-200'}`}
+                    key={tab}
+                    onClick={() => setLocalStatusFilter(tab)}
+                    className={`px-3 py-2 text-xs rounded-xl transition-colors ${localStatusFilter === tab ? 'bg-brand-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-slate-200'}`}
                   >
-                    {tab.label} <span className="opacity-70">{count}</span>
+                    {t(`skills.status.${tab === 'needs-setup' ? 'needsSetup' : tab}`, tab)} <span className="opacity-70">{count}</span>
                   </button>
                 );
               })}
             </div>
             {localSkillGroups.length === 0 ? (
               <div className="text-center py-10 text-slate-500 bg-slate-800/20 rounded-2xl border border-slate-800">
-                <p className="text-sm">No local skills in this status.</p>
+                <p className="text-sm">{t('skills.localEmpty', 'No local skills in this status.')}</p>
               </div>
             ) : (
               <div className="space-y-4">
@@ -427,7 +423,7 @@ export default function Skills() {
                     </div>
                     <div className="grid grid-cols-2 gap-3 p-4">
                       {skills.map(skill => {
-                        const status = getSkillStatusLabel(skill);
+                        const status = getSkillStatusLabel(skill, t);
                         return (
                           <div
                             key={skill.skillKey || skill.name}
@@ -439,7 +435,7 @@ export default function Skills() {
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-2">
                                   <h4 className="text-sm font-medium text-slate-200 truncate">{skill.name}</h4>
-                                  {skill.bundled && <span className="text-[10px] text-slate-500">Built-in</span>}
+                                  {skill.bundled && <span className="text-[10px] text-slate-500">{t('skills.builtInBadge', 'Built-in')}</span>}
                                 </div>
                                 <p className="text-xs text-slate-500 mt-0.5 line-clamp-2">{skill.description}</p>
                               </div>
@@ -463,10 +459,10 @@ export default function Skills() {
         {showBuiltin && (
           <div>
             <h2 className="text-sm font-semibold text-slate-300 mb-1">{t('skills.builtin')}</h2>
-            <p className="text-xs text-slate-500 mb-4">Bundled OpenClaw skills from the official local status report.</p>
+            <p className="text-xs text-slate-500 mb-4">{t('skills.builtinSectionDesc', 'Bundled OpenClaw skills from the official local status report.')}</p>
             <div className="grid grid-cols-2 gap-3">
               {localBuiltinSkills.map(skill => {
-                const status = getSkillStatusLabel(skill);
+                const status = getSkillStatusLabel(skill, t);
                 return (
                   <div
                     key={skill.skillKey || skill.name}
@@ -495,7 +491,7 @@ export default function Skills() {
         {showInstalled && (
           <div>
             <h2 className="text-sm font-semibold text-slate-300 mb-1">{t('skills.installed')}</h2>
-            <p className="text-xs text-slate-500 mb-4">Workspace and managed skills visible to the current OpenClaw workspace.</p>
+            <p className="text-xs text-slate-500 mb-4">{t('skills.installedSectionDesc', 'Workspace and managed skills visible to the current OpenClaw workspace.')}</p>
             {localInstalledSkills.length === 0 ? (
               <div className="text-center py-12 text-slate-500">
                 <Package size={32} className="mx-auto mb-3 text-slate-600" />
@@ -504,7 +500,7 @@ export default function Skills() {
             ) : (
               <div className="grid grid-cols-2 gap-3">
                 {localInstalledSkills.map(skill => {
-                  const status = getSkillStatusLabel(skill);
+                  const status = getSkillStatusLabel(skill, t);
                   return (
                     <div
                       key={skill.skillKey || skill.name}
@@ -533,8 +529,8 @@ export default function Skills() {
         {/* Popular Skills section (only on Explore tab, not during search) */}
         {showRecommended && (
           <div>
-            <h2 className="text-sm font-semibold text-slate-300 mb-1">Popular on ClawHub</h2>
-            <p className="text-xs text-slate-500 mb-4">Official ClawHub list sorted by downloads with `nonSuspiciousOnly=true`.</p>
+            <h2 className="text-sm font-semibold text-slate-300 mb-1">{t('skills.popular', 'Popular on ClawHub')}</h2>
+            <p className="text-xs text-slate-500 mb-4">{t('skills.popular.desc', 'Official ClawHub list sorted by downloads with nonSuspiciousOnly=true.')}</p>
             <div className="grid grid-cols-2 gap-3">
               {recommendedList.map(skill => {
                 const isInstalled = installedSlugs.has(skill.slug);
@@ -549,7 +545,7 @@ export default function Skills() {
                       <span className="text-2xl">{skill.emoji || '⭐'}</span>
                       <div className="flex-1 min-w-0">
                         <h4 className="font-medium text-sm truncate">{skill.displayName || skill.name || skill.slug}</h4>
-                        <p className="text-xs text-brand-300/70 mt-0.5">Ranked from official ClawHub popularity data</p>
+                        <p className="text-xs text-brand-300/70 mt-0.5">{t('skills.popular.rankHint', 'Ranked from official ClawHub popularity data')}</p>
                         <p className="text-xs text-slate-500 mt-1 line-clamp-1">{skill.summary || skill.description}</p>
                       </div>
                     </div>
@@ -660,7 +656,7 @@ export default function Skills() {
                       onClick={() => setVisibleCount(prev => prev + PAGE_SIZE)}
                       className="px-6 py-2 text-xs text-slate-400 hover:text-slate-200 bg-slate-800 hover:bg-slate-700 rounded-xl transition-colors"
                     >
-                      {t('skills.loadMore')} ({fullList.length - visibleCount} more)
+                      {t('skills.loadMore')} ({t('skills.loadMoreCount', '{count} more').replace('{count}', String(fullList.length - visibleCount))})
                     </button>
                   </div>
                 )}
@@ -706,19 +702,19 @@ export default function Skills() {
 
                 {(detailSkill.source || detailSkill.homepage || detailSkill.primaryEnv || detailSkill.missing) && (
                   <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700/50 space-y-2">
-                    <h4 className="text-xs font-medium text-slate-500 uppercase tracking-wider">OpenClaw Status</h4>
-                    {detailSkill.source && <p className="text-xs text-slate-400">Source: {detailSkill.source}</p>}
+                    <h4 className="text-xs font-medium text-slate-500 uppercase tracking-wider">{t('skills.openclawStatus', 'OpenClaw Status')}</h4>
+                    {detailSkill.source && <p className="text-xs text-slate-400">{t('skills.sourceLabel', 'Source')}: {detailSkill.source}</p>}
                     {(typeof detailSkill.eligible === 'boolean' || typeof detailSkill.disabled === 'boolean') && (
-                      <p className="text-xs text-slate-400">Status: {getSkillStatusLabel({ eligible: Boolean(detailSkill.eligible), disabled: Boolean(detailSkill.disabled), blockedByAllowlist: Boolean(detailSkill.blockedByAllowlist) }).label}</p>
+                      <p className="text-xs text-slate-400">{t('skills.statusLabel', 'Status')}: {getSkillStatusLabel({ eligible: Boolean(detailSkill.eligible), disabled: Boolean(detailSkill.disabled), blockedByAllowlist: Boolean(detailSkill.blockedByAllowlist) }, t).label}</p>
                     )}
-                    {detailSkill.primaryEnv && <p className="text-xs text-slate-400">Primary env: {detailSkill.primaryEnv}</p>}
+                    {detailSkill.primaryEnv && <p className="text-xs text-slate-400">{t('skills.primaryEnvLabel', 'Primary env')}: {detailSkill.primaryEnv}</p>}
                     {detailSkill.homepage && (
                       <button
                         onClick={() => { void openExternal(detailSkill.homepage || '', `skill-homepage-${detailSkill.slug}`); }}
                         disabled={isOpening(`skill-homepage-${detailSkill.slug}`)}
                         className="text-xs text-brand-300 hover:text-brand-200"
                       >
-                        Open homepage
+                        {t('skills.openHomepage', 'Open homepage')}
                       </button>
                     )}
                     {detailSkill.missing && summarizeMissing({
@@ -730,7 +726,7 @@ export default function Skills() {
                       blockedByAllowlist: Boolean(detailSkill.blockedByAllowlist),
                       missing: detailSkill.missing,
                     }) && (
-                      <p className="text-xs text-amber-300">Missing: {summarizeMissing({
+                      <p className="text-xs text-amber-300">{t('skills.missingLabel', 'Missing')}: {summarizeMissing({
                         name: detailSkill.name || detailSkill.slug,
                         description: detailSkill.description || '',
                         source: detailSkill.source || '',
