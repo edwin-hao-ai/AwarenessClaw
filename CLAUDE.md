@@ -334,6 +334,13 @@ AwarenessClaw/
 - 前端 `npx tsc --noEmit` 通过不代表 Electron 端也通过！打包前必须确认 `npm run build` 也能通过
 - 踩坑：编辑 `main.ts` 时多了一个 `});` 闭合括号，前端编译没报错但 electron 编译失败
 
+### OpenClaw CLI 超时规则（必读，反复踩坑）
+- **问题**：OpenClaw 每次 CLI 命令（`agents add`、`agents delete`、`agents bind` 等）都重新加载所有已安装插件（feishu、awareness-memory、device-pair 等），耗时 **15-30 秒**
+- **规则**：所有 `openclaw agents *` 命令的 `runAsync` 超时必须 ≥ **30 秒**（推荐 45 秒给 `agents add`）。绝不设 10-15 秒超时
+- **前端必须有状态提示**：长时间操作（>3 秒）必须向用户实时显示当前步骤（"正在加载插件..."、"正在创建工作区..."），不能只显示一个 spinner 什么也不说
+- **友好的超时错误提示**：如果超时了，不要显示原始的 "Command timed out"，而是告诉用户"OpenClaw 正在加载插件，可能需要 30 秒，请重试"
+- **已修复的超时设置**：`agents:add` = 45s，`agents:delete/set-identity/bind/unbind` = 30s，`agents:list` = 15s（只读操作较快）
+
 ### Gateway 命令踩坑
 - **正确命令**：`openclaw gateway start/stop/status/restart`
 - **错误命令**：`openclaw up`（不存在）、`openclaw status`（加载全部插件 = 15s+，5s 超时必失败）

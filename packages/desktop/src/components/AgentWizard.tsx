@@ -72,6 +72,7 @@ export default function AgentWizard({ onComplete, onCancel }: AgentWizardProps) 
   // Step state
   const [step, setStep] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [savingStatus, setSavingStatus] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   // Step 0: Name + Emoji
@@ -136,6 +137,7 @@ export default function AgentWizard({ onComplete, onCancel }: AgentWizardProps) 
     }
 
     setSaving(true);
+    setSavingStatus(t('agentWizard.status.starting', 'Starting Gateway...'));
     setError(null);
 
     try {
@@ -150,7 +152,8 @@ export default function AgentWizard({ onComplete, onCancel }: AgentWizardProps) 
         ? customPrompt.trim()
         : SOUL_TEMPLATES[style];
 
-      // 1. Create agent via IPC (calls openclaw agents add)
+      // 1. Create agent via IPC (calls openclaw agents add — loads all plugins, can take 15-30s)
+      setSavingStatus(t('agentWizard.status.creating', 'Creating agent (loading plugins)...'));
       const result = await api.agentsAdd(finalName, modelId, soulContent);
       if (!result.success) {
         const errMsg = result.error || '';
@@ -158,20 +161,25 @@ export default function AgentWizard({ onComplete, onCancel }: AgentWizardProps) 
           setError(t('agentWizard.error.duplicate', 'Agent "{name}" already exists.').replace('{name}', finalName));
         } else if (/permission|access|denied/i.test(errMsg)) {
           setError(t('agentWizard.error.permission', 'Permission denied. Check system permissions.'));
+        } else if (/timed? ?out/i.test(errMsg)) {
+          setError(t('agentWizard.error.timeout', 'OpenClaw is loading plugins — this can take up to 30s. Please try again.'));
         } else {
           setError(errMsg || t('agentWizard.error.createFailed', 'Failed to create agent.'));
         }
         setSaving(false);
+        setSavingStatus('');
         return;
       }
 
       // 2. Set identity (name + emoji)
+      setSavingStatus(t('agentWizard.status.identity', 'Setting identity...'));
       const slug = finalName.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || `agent-${Date.now()}`;
       if (api.agentsSetIdentity) {
         await api.agentsSetIdentity(slug, finalName, agentEmoji);
       }
 
       // 3. Write IDENTITY.md
+      setSavingStatus(t('agentWizard.status.workspace', 'Writing workspace files...'));
       if (api.agentsWriteFile) {
         await api.agentsWriteFile(slug, 'IDENTITY.md',
           `# Identity\n\n- **name**: ${finalName}\n- **emoji**: ${agentEmoji}\n- **role**: AI Assistant\n`
@@ -180,6 +188,7 @@ export default function AgentWizard({ onComplete, onCancel }: AgentWizardProps) 
 
       // 4. Bind selected channels
       if (api.agentsBind && selectedBindings.length > 0) {
+        setSavingStatus(t('agentWizard.status.binding', 'Binding channels...'));
         for (const channel of selectedBindings) {
           try {
             await api.agentsBind(slug, channel);
@@ -192,6 +201,7 @@ export default function AgentWizard({ onComplete, onCancel }: AgentWizardProps) 
       setError(err?.message || t('agentWizard.error.unexpected', 'Unexpected error.'));
     } finally {
       setSaving(false);
+      setSavingStatus('');
     }
   };
 
@@ -486,10 +496,20 @@ export default function AgentWizard({ onComplete, onCancel }: AgentWizardProps) 
           )}
         </div>
 
+        {/* Status message during creation */}
+        {saving && savingStatus && (
+          <div className="mt-4 flex items-center justify-center gap-2 text-xs text-slate-400">
+            <Loader2 size={12} className="animate-spin" />
+            <span>{savingStatus}</span>
+          </div>
+        )}
+
         {/* Navigation buttons */}
-        <div className="flex items-center justify-between mt-6">
+        <div className="flex items-center justify-between mt-4">
           <div>
-            {step > 0 ? (
+            {saving ? (
+              <span />
+            ) : step > 0 ? (
               <button
                 onClick={() => { setStep(step - 1); setError(null); }}
                 className="flex items-center gap-1 text-sm text-slate-400 hover:text-white transition-colors"
