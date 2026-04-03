@@ -145,6 +145,7 @@ export default function Skills() {
   const [actionSlug, setActionSlug] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [installProgress, setInstallProgress] = useState<string | null>(null);
+  const [installResult, setInstallResult] = useState<{ success: boolean; message: string } | null>(null);
   const [detailSkill, setDetailSkill] = useState<SkillDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [skillConfig, setSkillConfig] = useState<Record<string, string>>({});
@@ -261,11 +262,17 @@ export default function Skills() {
   const openDetail = async (slug: string, localSkill?: LocalSkillStatus) => {
     if (!api) return;
     setDetailLoading(true);
+    setInstallResult(null);
     setDetailSkill(localSkill ? buildLocalDetail(localSkill) : null);
     setConfigDirty(false);
-    const [detailRes, configRes] = await Promise.all([
+
+    // Fetch ClawHub detail + config + local info (for install specs) in parallel
+    const [detailRes, configRes, localInfoRes] = await Promise.all([
       api.skillDetail(slug),
       api.skillGetConfig?.(slug).catch(() => ({ success: false, config: {} })),
+      localSkill?.bundled && !localSkill.eligible
+        ? api.skillLocalInfo?.(localSkill.name).catch(() => ({ success: false }))
+        : Promise.resolve(null),
     ]);
     if (detailRes.success && detailRes.skill) {
       setDetailSkill(prev => ({ ...prev, ...detailRes.skill }));
@@ -284,6 +291,14 @@ export default function Skills() {
           emoji: basic.emoji,
         }));
       }
+    }
+    // Merge install specs from openclaw skills info --json
+    if (localInfoRes?.success && localInfoRes.info?.install) {
+      setDetailSkill(prev => prev ? {
+        ...prev,
+        install: localInfoRes.info.install,
+        homepage: localInfoRes.info.homepage || prev.homepage,
+      } : prev);
     }
     setSkillConfig(configRes?.config || {});
     setDetailLoading(false);
@@ -877,33 +892,43 @@ export default function Skills() {
                   <span className="flex items-center gap-1 text-xs text-emerald-400 mr-auto">
                     <Check size={12} /> {t('skills.status.ready', 'Ready')}
                   </span>
-                ) : detailSkill.bundled && (detailSkill.missing?.bins?.length ?? 0) > 0 ? (
-                  /* Built-in skill with missing binaries — install deps via brew/npm */
-                  <button
-                    onClick={async () => {
-                      // Use install specs if available, otherwise generate from missing bins
-                      const specs: InstallSpec[] = detailSkill.install && detailSkill.install.length > 0
-                        ? detailSkill.install
-                        : (detailSkill.missing?.bins || []).map(bin => ({
-                            id: `brew-${bin}`,
-                            kind: 'brew',
-                            label: `brew install ${bin}`,
-                            bins: [bin],
-                          }));
-                      await handleInstallDeps(specs);
-                      setDetailSkill(null);
-                    }}
-                    disabled={!!actionSlug}
-                    className="flex items-center gap-1 px-5 py-2 text-sm bg-brand-600 hover:bg-brand-500 disabled:bg-slate-700 text-white rounded-xl transition-colors"
-                  >
-                    {actionSlug ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-                    {actionSlug ? (installProgress || t('skills.installing')) : t('skills.installDeps', 'Install Dependencies')}
-                  </button>
-                ) : detailSkill.bundled && (detailSkill.missing?.env?.length ?? 0) > 0 ? (
-                  /* Built-in skill missing env vars — show guidance */
-                  <p className="text-xs text-slate-500 mr-auto">
-                    {t('skills.builtinNeedsEnv', 'This skill needs environment variables configured. Set them in the Configuration section above.')}
-                  </p>
+                ) : detailSkill.bundled && !detailSkill.eligible ? (
+                  /* Built-in skill needs setup — show install guidance */
+                  <div className="flex items-center gap-2 w-full">
+                    <div className="flex-1 space-y-1">
+                      {(detailSkill.install && detailSkill.install.length > 0) ? (
+                        detailSkill.install.map((spec: InstallSpec) => (
+                          <div key={spec.id} className="flex items-center gap-2 text-xs text-slate-300">
+                            <span className="px-1.5 py-0.5 bg-slate-700 rounded text-[10px] uppercase">{spec.kind}</span>
+                            <span>{spec.label}</span>
+                          </div>
+                        ))
+                      ) : (detailSkill.missing?.bins?.length ?? 0) > 0 ? (
+                        <p className="text-xs text-slate-400">
+                          {t('skills.missingBinsHint', 'Install the required tools: {bins}').replace('{bins}', (detailSkill.missing?.bins || []).join(', '))}
+                        </p>
+                      ) : (detailSkill.missing?.env?.length ?? 0) > 0 ? (
+                        <p className="text-xs text-slate-400">
+                          {t('skills.missingEnvHint', 'Set required environment variables: {env}').replace('{env}', (detailSkill.missing?.env || []).join(', '))}
+                        </p>
+                      ) : null}
+                      {installResult && (
+                        <p className={`text-xs ${installResult.success ? 'text-emerald-400' : 'text-red-400'}`}>
+                          {installResult.message}
+                        </p>
+                      )}
+                    </div>
+                    {detailSkill.homepage && (
+                      <button
+                        onClick={() => { void openExternal(detailSkill.homepage || '', `skill-install-${detailSkill.slug}`); }}
+                        disabled={isOpening(`skill-install-${detailSkill.slug}`)}
+                        className="flex items-center gap-1 px-4 py-2 text-sm bg-brand-600 hover:bg-brand-500 text-white rounded-xl transition-colors flex-shrink-0"
+                      >
+                        <ExternalLink size={14} />
+                        {t('skills.openInstallGuide', 'Install Guide')}
+                      </button>
+                    )}
+                  </div>
                 ) : installedSlugs.has(detailSkill.slug) ? (
                   /* ClawHub installed skill — show uninstall */
                   <>
@@ -911,7 +936,7 @@ export default function Skills() {
                       <Check size={12} /> {t('skills.installed')}
                     </span>
                     <button
-                      onClick={async () => { await handleUninstall(detailSkill.slug); setDetailSkill(null); }}
+                      onClick={async () => { await handleUninstall(detailSkill.slug); }}
                       disabled={actionSlug === detailSkill.slug}
                       className="flex items-center gap-1 px-4 py-2 text-sm text-red-400 hover:bg-red-600/10 rounded-xl transition-colors"
                     >
@@ -922,7 +947,7 @@ export default function Skills() {
                 ) : (
                   /* ClawHub skill — install from registry */
                   <button
-                    onClick={async () => { await handleInstall(detailSkill.slug); setDetailSkill(null); }}
+                    onClick={async () => { await handleInstall(detailSkill.slug); }}
                     disabled={actionSlug === detailSkill.slug}
                     className="flex items-center gap-1 px-5 py-2 text-sm bg-brand-600 hover:bg-brand-500 disabled:bg-slate-700 text-white rounded-xl transition-colors"
                   >

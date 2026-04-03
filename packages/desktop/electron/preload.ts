@@ -106,6 +106,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   skillInstall: (slug: string) => ipcRenderer.invoke('skill:install', slug),
   skillUninstall: (slug: string) => ipcRenderer.invoke('skill:uninstall', slug),
   skillInstallDeps: (installSpecs: Array<{ id: string; kind: string; label: string; bins: string[]; package?: string }>) => ipcRenderer.invoke('skill:install-deps', installSpecs),
+  skillLocalInfo: (name: string) => ipcRenderer.invoke('skill:local-info', name),
   onSkillInstallProgress: (callback: (data: { stage: string; detail?: string }) => void) => {
     ipcRenderer.on('skill:install-progress', (_e, data) => callback(data));
   },
