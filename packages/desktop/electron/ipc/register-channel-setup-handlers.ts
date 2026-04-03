@@ -11,6 +11,17 @@ export function registerChannelSetupHandlers(deps: {
 }) {
   const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+  const formatSetupError = (openclawId: string, rawError: string) => {
+    const message = (rawError || '').trim();
+    if (/spawn\s+npx\s+ENOENT/i.test(message)) {
+      return 'OpenClaw could not launch required helper tools (npx not found in runtime PATH). Please rerun Setup to repair runtime tools, then retry.';
+    }
+    if (/Unknown channel/i.test(message)) {
+      return `OpenClaw does not recognize channel "${openclawId}" yet. Please reinstall the channel plugin and retry.`;
+    }
+    return message.slice(0, 300) || `Channel setup failed for "${openclawId}".`;
+  };
+
   const isLinkedStatus = (value: string | null | undefined) => /configured|linked|active|enabled/i.test(value || '');
 
   const isChannelLinked = (output: string | null, openclawId: string) => {
@@ -76,7 +87,7 @@ export function registerChannelSetupHandlers(deps: {
 
     const bindToMainAgent = async (bindId: string) => {
       sendStatus('channels.status.binding');
-      try { await deps.safeShellExecAsync(`openclaw agents bind --agent main --bind ${bindId} 2>&1`, 10000); } catch {}
+      await deps.runAsync(`openclaw agents bind --agent main --bind ${bindId} 2>&1`, 10000);
     };
 
     const channelDef = deps.getChannel(safeChannelId);
@@ -86,7 +97,12 @@ export function registerChannelSetupHandlers(deps: {
     const setupFlow = channelDef?.setupFlow || 'qr-login';
 
     sendStatus(`channels.status.configuring::${channelLabel}`);
-    try { await deps.runAsync(`openclaw plugins install "${pluginPkg}" 2>&1`, 30000); } catch {}
+    try {
+      await deps.runAsync(`openclaw plugins install "${pluginPkg}" 2>&1`, 30000);
+    } catch (pluginErr: any) {
+      const pluginMsg = pluginErr?.message || String(pluginErr);
+      return { success: false, error: formatSetupError(openclawId, pluginMsg) };
+    }
 
     if (setupFlow === 'add-only') {
       try {
@@ -94,7 +110,7 @@ export function registerChannelSetupHandlers(deps: {
         await bindToMainAgent(openclawId);
         return { success: true, output: `${channelLabel} connected.` };
       } catch (err: any) {
-        return { success: false, error: err.message?.slice(0, 300) };
+        return { success: false, error: formatSetupError(openclawId, err?.message || String(err)) };
       }
     }
 
@@ -105,7 +121,11 @@ export function registerChannelSetupHandlers(deps: {
     sendStatus(`channels.status.connecting::${channelLabel}`);
     const result = await deps.channelLoginWithQR(`openclaw channels login --channel ${openclawId} --verbose`);
     if (result.success) {
-      await bindToMainAgent(openclawId);
+      try {
+        await bindToMainAgent(openclawId);
+      } catch (bindErr: any) {
+        return { success: false, error: formatSetupError(openclawId, bindErr?.message || String(bindErr)) };
+      }
       const confirmed = await waitForChannelConfirmation(openclawId, channelLabel, sendStatus);
       if (!confirmed) {
         sendStatus(`channels.status.awaitingConfirmation::${channelLabel}`);

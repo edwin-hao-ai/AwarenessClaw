@@ -172,13 +172,57 @@ function getEnabledChannels(config: any | null): string[] {
     .map(([channelId]) => channelId);
 }
 
+function sanitizeChannelId(channelId: string): string | null {
+  const trimmed = String(channelId || '').trim();
+  if (!trimmed) return null;
+  return /^[a-zA-Z0-9_-]+$/.test(trimmed) ? trimmed : null;
+}
+
+function parseBindingsOutput(output: string | null): { ok: boolean; bindings: any[] } {
+  if (!output) return { ok: false, bindings: [] };
+
+  const objectStart = output.indexOf('{');
+  const arrayStart = output.indexOf('[');
+  const jsonStart = [objectStart, arrayStart].filter(index => index >= 0).sort((a, b) => a - b)[0];
+  if (jsonStart === undefined) return { ok: false, bindings: [] };
+
+  try {
+    const parsed = JSON.parse(output.slice(jsonStart));
+    if (Array.isArray(parsed)) return { ok: true, bindings: parsed };
+    if (Array.isArray(parsed.bindings)) return { ok: true, bindings: parsed.bindings };
+    if (Array.isArray(parsed.data)) return { ok: true, bindings: parsed.data };
+    return { ok: true, bindings: [] };
+  } catch {
+    return { ok: false, bindings: [] };
+  }
+}
+
+function getRepairPluginPackage(channelId: string): string | null {
+  if (channelId === 'local') return null;
+  if (channelId === 'openclaw-weixin') return '@tencent-weixin/openclaw-weixin';
+  return `@openclaw/${channelId}`;
+}
+
+const CHANNELS_ADD_SUPPORTED = new Set([
+  'telegram',
+  'whatsapp',
+  'discord',
+  'irc',
+  'googlechat',
+  'slack',
+  'signal',
+  'imessage',
+  'line',
+]);
+
 async function getUnboundChannels(ctx: Ctx): Promise<string[] | null> {
   const enabledChannels = getEnabledChannels(ctx.config);
   if (enabledChannels.length === 0) return [];
 
   const output = await ctx.deps.shellExec('openclaw agents bindings --json 2>/dev/null', 10000);
-  const bindings = parseAgentBindings(output);
-  if (!output || bindings.length === 0) return null;
+  const parsed = parseBindingsOutput(output);
+  if (!parsed.ok) return null;
+  const bindings = parsed.bindings;
 
   const boundChannels = new Set(bindings.map((binding: any) => binding.match?.channel).filter(Boolean));
   return enabledChannels.filter((channelId) => !boundChannels.has(channelId));
@@ -454,7 +498,7 @@ async function fixGatewayStart(ctx: Ctx): Promise<FixResult> {
         const installMessage = installErr?.message || '';
         if (/EACCES|Access is denied|permission denied|拒绝访问|schtasks create failed/i.test(installMessage)) {
           try {
-            await ctx.deps.shellRun('start "" /B openclaw gateway run --force', 10000);
+            await ctx.deps.shellRun('where openclaw >nul 2>nul && start "" /B openclaw gateway run --force', 10000);
             return {
               id: 'gateway-running',
               success: true,
@@ -464,7 +508,7 @@ async function fixGatewayStart(ctx: Ctx): Promise<FixResult> {
             return {
               id: 'gateway-running',
               success: false,
-              message: 'Windows blocked Gateway service installation. Reopen AwarenessClaw as administrator once, then run Doctor again.',
+              message: 'Windows blocked Gateway service installation and the OpenClaw command is not ready yet. Reopen AwarenessClaw as administrator once, then run Doctor again.',
             };
           }
         }
@@ -568,40 +612,108 @@ async function checkChannelBindings(ctx: Ctx): Promise<CheckResult> {
   try {
     const unbound = await getUnboundChannels(ctx);
     if (unbound === null) {
-      return { id: 'channel-bindings', label: 'Channel routing', status: 'warn', message: 'Could not verify channel routing', fixable: 'none' };
+      const hasTelegram = enabledChannels.includes('telegram');
+      return {
+        id: 'channel-bindings',
+        label: 'Channel routing',
+        status: 'warn',
+        message: 'Could not verify channel routing',
+        fixable: 'auto',
+        fixDescription: hasTelegram
+          ? 'Run Telegram one-click repair (plugin + channel + main-agent binding)'
+          : 'Run one-click channel routing repair',
+      };
     }
 
     if (unbound.length > 0) {
+      const hasTelegramUnbound = unbound.includes('telegram');
       return { id: 'channel-bindings', label: 'Channel routing', status: 'warn',
         message: `${unbound.length} channel(s) not bound to any agent`, fixable: 'auto',
-        fixDescription: `Bind ${unbound.join(', ')} to the main agent`, detail: unbound.join(', ') };
+        fixDescription: hasTelegramUnbound
+          ? `Telegram one-click repair + bind ${unbound.join(', ')} to the main agent`
+          : `Bind ${unbound.join(', ')} to the main agent`,
+        detail: unbound.join(', ') };
     }
 
     return { id: 'channel-bindings', label: 'Channel routing', status: 'pass', message: 'All channels routed', fixable: 'none' };
   } catch {
-    return { id: 'channel-bindings', label: 'Channel routing', status: 'warn', message: 'Could not verify channel routing', fixable: 'none' };
+    return {
+      id: 'channel-bindings',
+      label: 'Channel routing',
+      status: 'warn',
+      message: 'Could not verify channel routing',
+      fixable: 'auto',
+      fixDescription: 'Run one-click channel routing repair',
+    };
   }
 }
 
 async function fixChannelBindings(ctx: Ctx): Promise<FixResult> {
-  const unboundChannels = await getUnboundChannels(ctx);
-  if (unboundChannels === null) {
-    return { id: 'channel-bindings', success: false, message: 'Could not verify which channels still need binding' };
+  const enabledChannels = getEnabledChannels(ctx.config);
+  if (enabledChannels.length === 0) {
+    return { id: 'channel-bindings', success: true, message: 'No enabled channels to repair' };
   }
 
-  if (unboundChannels.length === 0) {
+  const unboundChannels = await getUnboundChannels(ctx);
+  const channelsToRepair = unboundChannels === null ? enabledChannels : unboundChannels;
+
+  if (channelsToRepair.length === 0) {
     return { id: 'channel-bindings', success: true, message: 'All channels are already bound' };
   }
 
   let fixed = 0;
   const failed: string[] = [];
+  const repairedViaRecovery: string[] = [];
 
-  for (const ch of unboundChannels) {
+  const tryBind = async (channelId: string) => {
+    await ctx.deps.shellRun(`openclaw agents bind --agent main --bind "${channelId}" 2>&1`, 30000);
+  };
+
+  for (const rawChannelId of channelsToRepair) {
+    const ch = sanitizeChannelId(rawChannelId);
+    if (!ch) {
+      failed.push(rawChannelId);
+      continue;
+    }
+
     try {
-      await ctx.deps.shellRun(`openclaw agents bind --agent main --bind "${ch}" 2>&1`, 10000);
+      await tryBind(ch);
       fixed++;
-    } catch {
-      failed.push(ch);
+      continue;
+    } catch (bindErr: any) {
+      const bindMessage = String(bindErr?.message || '');
+      const needRecovery = /unknown channel|not found|no such channel/i.test(bindMessage) || ch === 'telegram';
+      if (!needRecovery) {
+        failed.push(ch);
+        continue;
+      }
+
+      try {
+        const pluginPackage = getRepairPluginPackage(ch);
+        if (pluginPackage) {
+          await ctx.deps.shellRun(`openclaw plugins install "${pluginPackage}" 2>&1`, 90000);
+        }
+
+        if (CHANNELS_ADD_SUPPORTED.has(ch)) {
+          try {
+            await ctx.deps.shellRun(`openclaw channels add --channel ${ch} 2>&1`, 45000);
+          } catch {
+            // Keep going; existing channel config may already be present.
+          }
+        }
+
+        try {
+          await ctx.deps.shellRun('openclaw gateway restart 2>&1', 30000);
+        } catch {
+          // Binding can still succeed even when restart command reports already running.
+        }
+
+        await tryBind(ch);
+        fixed++;
+        repairedViaRecovery.push(ch);
+      } catch {
+        failed.push(ch);
+      }
     }
   }
 
@@ -609,7 +721,10 @@ async function fixChannelBindings(ctx: Ctx): Promise<FixResult> {
     return { id: 'channel-bindings', success: false, message: `Could not bind: ${failed.join(', ')}` };
   }
 
-  return { id: 'channel-bindings', success: true, message: `Bound ${fixed} channel(s) to main agent` };
+  const recoveryHint = repairedViaRecovery.length > 0
+    ? ` (repaired: ${repairedViaRecovery.join(', ')})`
+    : '';
+  return { id: 'channel-bindings', success: true, message: `Bound ${fixed} channel(s) to main agent${recoveryHint}` };
 }
 
 async function checkConfigPermissions(ctx: Ctx): Promise<CheckResult> {

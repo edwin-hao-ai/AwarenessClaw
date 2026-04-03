@@ -119,11 +119,13 @@ export class GatewayClient extends EventEmitter {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private config: GatewayConfig = { port: 18789, token: '' };
   private destroyed = false;
+  private requestedScopes: string[] = ['operator.read'];
 
   private static readonly CLIENT_ID = 'openclaw-control-ui';
   private static readonly CLIENT_MODE = 'ui';
   private static readonly ROLE = 'operator';
-  private static readonly SCOPES = ['operator.admin', 'operator.write', 'operator.read'];
+  private static readonly READ_SCOPES = ['operator.read'];
+  private static readonly WRITE_SCOPES = ['operator.admin', 'operator.write', 'operator.read'];
 
   /** Connect to Gateway with device identity auth. Resolves when hello-ok received. */
   async connect(): Promise<void> {
@@ -131,8 +133,9 @@ export class GatewayClient extends EventEmitter {
 
     this.config = readGatewayConfig();
     const identity = loadDeviceIdentity();
-    const url = `ws://127.0.0.1:${this.config.port}`;
-    const origin = `http://127.0.0.1:${this.config.port}`;
+    // Prefer localhost for browser secure-context compatibility semantics.
+    const url = `ws://localhost:${this.config.port}`;
+    const origin = `http://localhost:${this.config.port}`;
 
     return new Promise((resolve, reject) => {
       try {
@@ -193,7 +196,7 @@ export class GatewayClient extends EventEmitter {
               displayName: 'AwarenessClaw Desktop',
             },
             role: GatewayClient.ROLE,
-            scopes: GatewayClient.SCOPES,
+            scopes: this.requestedScopes,
           };
 
           // Add device identity if available and challenge nonce received
@@ -201,7 +204,7 @@ export class GatewayClient extends EventEmitter {
             const { signature, signedAt } = signDeviceAuth(
               identity, challengeNonce, this.config,
               GatewayClient.CLIENT_ID, GatewayClient.CLIENT_MODE,
-              GatewayClient.ROLE, GatewayClient.SCOPES,
+              GatewayClient.ROLE, this.requestedScopes,
             );
             connectParams.device = {
               id: identity.deviceId,
@@ -251,6 +254,23 @@ export class GatewayClient extends EventEmitter {
         if (!this.destroyed) this.scheduleReconnect();
       });
     });
+  }
+
+  private scopeSetEquals(a: string[], b: string[]): boolean {
+    if (a.length !== b.length) return false;
+    const sa = [...a].sort().join('|');
+    const sb = [...b].sort().join('|');
+    return sa === sb;
+  }
+
+  private async ensureWriteScopes(): Promise<void> {
+    if (this.scopeSetEquals(this.requestedScopes, GatewayClient.WRITE_SCOPES)) return;
+
+    this.requestedScopes = [...GatewayClient.WRITE_SCOPES];
+    this.connected = false;
+    try { this.ws?.close(); } catch { /* best-effort */ }
+    this.ws = null;
+    await this.connect();
   }
 
   private setupListeners() {
@@ -313,6 +333,7 @@ export class GatewayClient extends EventEmitter {
 
   /** Patch session-level settings (e.g. reasoningLevel, verboseLevel). */
   async sessionPatch(sessionKey: string, patch: Record<string, any>): Promise<any> {
+    await this.ensureWriteScopes();
     return this.rpc('sessions.patch', { key: sessionKey, ...patch }, 10000);
   }
 
@@ -324,6 +345,8 @@ export class GatewayClient extends EventEmitter {
     attachments?: any[];
     agentId?: string;
   }): Promise<any> {
+    await this.ensureWriteScopes();
+
     // reasoning is set via sessions.patch (not chat.send, which has additionalProperties: false)
     if (options?.reasoning) {
       try { await this.sessionPatch(sessionKey, { reasoningLevel: options.reasoning }); } catch { /* best-effort */ }
@@ -346,6 +369,7 @@ export class GatewayClient extends EventEmitter {
 
   /** Abort the current run for a session. */
   async chatAbort(sessionKey: string, runId?: string): Promise<void> {
+    await this.ensureWriteScopes();
     await this.rpc('chat.abort', { sessionKey, ...(runId ? { runId } : {}) });
   }
 

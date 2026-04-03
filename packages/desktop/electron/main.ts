@@ -300,9 +300,20 @@ async function startGatewayInUserSession(send?: (ch: string, data: any) => void)
 
   try {
     if (process.platform === 'win32') {
+      // Guard against global OpenClaw removal: avoid `start ... openclaw` popup.
+      try {
+        await runSpawnAsync('cmd.exe', ['/d', '/c', 'where', 'openclaw'], 5000);
+      } catch {
+        return {
+          ok: false,
+          error: 'OpenClaw command is not ready yet. Please finish Setup first, then retry.',
+        };
+      }
+
       const child = runSpawn('cmd.exe', ['/d', '/c', 'start', '', '/b', 'openclaw', 'gateway', 'run', '--force'], {
         cwd: HOME,
         detached: true,
+        windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
       child.stderr?.on('data', (d: Buffer) => console.error('[gateway-session]', d.toString().trim()));
@@ -312,6 +323,7 @@ async function startGatewayInUserSession(send?: (ch: string, data: any) => void)
       const child = runSpawn('openclaw', ['gateway', 'run', '--force'], {
         cwd: HOME,
         detached: true,
+        windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
       child.stderr?.on('data', (d: Buffer) => console.error('[gateway-session]', d.toString().trim()));

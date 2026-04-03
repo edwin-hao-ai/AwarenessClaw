@@ -127,6 +127,47 @@ describe('doctor', () => {
 
     expect(result).toMatchObject({ success: true, message: 'Bound 1 channel(s) to main agent' });
     expect(shellRun).toHaveBeenCalledTimes(1);
-    expect(shellRun).toHaveBeenCalledWith('openclaw agents bind --agent main --bind "whatsapp" 2>&1', 10000);
+    expect(shellRun).toHaveBeenCalledWith('openclaw agents bind --agent main --bind "whatsapp" 2>&1', 30000);
+  });
+
+  it('repairs telegram routing when channel is unknown before rebinding', async () => {
+    const home = createTempHome();
+    const configDir = path.join(home, '.openclaw');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(path.join(configDir, 'openclaw.json'), JSON.stringify({
+      channels: {
+        telegram: { enabled: true },
+      },
+    }));
+
+    let bindAttempts = 0;
+    const shellRun = vi.fn(async (cmd: string) => {
+      if (cmd.startsWith('openclaw agents bind --agent main --bind "telegram"')) {
+        bindAttempts += 1;
+        if (bindAttempts === 1) throw new Error('Unknown channel: telegram');
+      }
+      return 'ok';
+    });
+
+    const shellExec = vi.fn(async (cmd: string) => {
+      if (cmd.includes('which -a node')) return '/usr/local/bin/node';
+      if (cmd === 'node --version') return 'v23.11.0';
+      if (cmd.includes('which -a openclaw')) return '/usr/local/bin/openclaw';
+      if (cmd === 'openclaw --version') return 'OpenClaw 2026.3.31 (abcd123)';
+      if (cmd === 'npm config get prefix') return '/usr/local';
+      if (cmd.includes('openclaw agents bindings --json')) return JSON.stringify([]);
+      return null;
+    });
+
+    const { doctor } = createDoctorWithMocks(home, { shellExec, shellRun });
+    const result = await doctor.runFix('channel-bindings');
+
+    expect(result).toMatchObject({ success: true });
+    expect(result.message).toContain('repaired: telegram');
+    const calls = shellRun.mock.calls.map((c: any) => c[0]);
+    expect(calls).toContain('openclaw plugins install "@openclaw/telegram" 2>&1');
+    expect(calls).toContain('openclaw channels add --channel telegram 2>&1');
+    expect(calls).toContain('openclaw gateway restart 2>&1');
+    expect(bindAttempts).toBe(2);
   });
 });
