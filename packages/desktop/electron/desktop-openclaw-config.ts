@@ -177,6 +177,27 @@ export function mergeDesktopOpenClawConfig(
         if (!merged.agents.defaults.model) merged.agents.defaults.model = {};
         merged.agents.defaults.model.primary = incomingAgents.defaults.model.primary;
       }
+      // Merge verboseDefault and thinkingDefault into agents.defaults
+      if (incomingAgents?.defaults?.verboseDefault) {
+        if (!merged.agents.defaults) merged.agents.defaults = {};
+        merged.agents.defaults.verboseDefault = incomingAgents.defaults.verboseDefault;
+      }
+      if (incomingAgents?.defaults?.thinkingDefault) {
+        if (!merged.agents.defaults) merged.agents.defaults = {};
+        merged.agents.defaults.thinkingDefault = incomingAgents.defaults.thinkingDefault;
+      }
+      // Merge per-agent settings (reasoningDefault is per-agent, not in defaults)
+      if (Array.isArray(incomingAgents?.list)) {
+        if (!merged.agents.list) merged.agents.list = [];
+        for (const incomingAgent of incomingAgents.list) {
+          const existing = merged.agents.list.find((a: any) => a.id === incomingAgent.id);
+          if (existing) {
+            Object.assign(existing, incomingAgent);
+          } else {
+            merged.agents.list.push(incomingAgent);
+          }
+        }
+      }
     } else if (key === 'plugins') {
       merged.plugins = JSON.parse(JSON.stringify(merged.plugins || {}));
       const incomingPlugins = value as any;

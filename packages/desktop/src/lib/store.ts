@@ -362,13 +362,17 @@ async function syncToOpenClaw(config: AppConfig, providers: ModelProviderDef[]) 
     openclawConfig.models = {
       providers: syncedProviders,
     };
+    // reasoningDefault is per-agent (not allowed in agents.defaults), so set it on each agent in the list
+    const reasoningDefault = config.reasoningDisplay && config.reasoningDisplay !== 'off' ? config.reasoningDisplay : 'on';
     openclawConfig.agents = {
       defaults: {
         model: { primary: `${config.providerKey}/${config.modelId}` },
         verboseDefault: 'full',
         thinkingDefault: config.thinkingLevel || 'low',
-        ...(config.reasoningDisplay && config.reasoningDisplay !== 'off' ? { reasoningDefault: config.reasoningDisplay } : {}),
       },
+      list: [
+        { id: 'main', reasoningDefault },
+      ],
     };
   }
 
