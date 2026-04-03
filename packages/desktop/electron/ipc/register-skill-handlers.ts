@@ -39,6 +39,111 @@ type LocalSkillStatusReport = {
   skills: LocalSkillStatus[];
 };
 
+type SkillInstallSpec = {
+  id: string;
+  kind: string;
+  label: string;
+  bins?: string[];
+  package?: string;
+  command?: string;
+};
+
+function sanitizePackageName(input?: string) {
+  if (!input) return null;
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+  if (!/^[A-Za-z0-9@._/:+-]+$/.test(trimmed)) return null;
+  return trimmed;
+}
+
+function extractPrimaryBinary(command: string) {
+  const parts = command.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '';
+  let idx = 0;
+  while (idx < parts.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(parts[idx])) {
+    idx += 1;
+  }
+  if (parts[idx] === 'sudo' || parts[idx] === 'doas') {
+    idx += 1;
+    while (idx < parts.length && parts[idx].startsWith('-')) {
+      idx += 1;
+    }
+    while (idx < parts.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(parts[idx])) {
+      idx += 1;
+    }
+  }
+  return (parts[idx] || '').replace(/["']/g, '');
+}
+
+function buildInstallCommands(spec: SkillInstallSpec) {
+  if (spec.command && spec.command.trim()) {
+    return [spec.command.trim()];
+  }
+
+  const pkg = sanitizePackageName(spec.package || spec.bins?.[0] || spec.id);
+  if (!pkg) return [];
+
+  const linuxCommands = [
+    `sudo -n apt-get update && sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y ${pkg}`,
+    `sudo -n dnf install -y ${pkg}`,
+    `sudo -n yum install -y ${pkg}`,
+    `sudo -n pacman -S --noconfirm ${pkg}`,
+    `sudo -n zypper install -y ${pkg}`,
+    `apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y ${pkg}`,
+    `dnf install -y ${pkg}`,
+    `yum install -y ${pkg}`,
+    `pacman -S --noconfirm ${pkg}`,
+    `zypper install -y ${pkg}`,
+  ];
+
+  const kind = (spec.kind || 'auto').toLowerCase();
+  switch (kind) {
+    case 'brew':
+      return ['brew install ' + pkg];
+    case 'winget':
+      return [
+        `winget install --id ${pkg} -e --accept-source-agreements --accept-package-agreements --disable-interactivity`,
+        `winget install ${pkg} --accept-source-agreements --accept-package-agreements --disable-interactivity`,
+      ];
+    case 'choco':
+    case 'chocolatey':
+      return [`choco install ${pkg} -y`];
+    case 'scoop':
+      return [`scoop install ${pkg}`];
+    case 'apt':
+    case 'apt-get':
+    case 'dnf':
+    case 'yum':
+    case 'pacman':
+    case 'zypper':
+      return linuxCommands;
+    case 'npm':
+      return [`npm install -g ${pkg}`];
+    case 'pnpm':
+      return [`pnpm add -g ${pkg}`];
+    case 'yarn':
+      return [`yarn global add ${pkg}`];
+    case 'pip':
+      return [`pip install ${pkg}`, `pip3 install ${pkg}`];
+    case 'cargo':
+      return [`cargo install ${pkg}`];
+    case 'auto':
+    default:
+      if (process.platform === 'win32') {
+        return [
+          `winget install --id ${pkg} -e --accept-source-agreements --accept-package-agreements --disable-interactivity`,
+          `choco install ${pkg} -y`,
+          `scoop install ${pkg}`,
+          `npm install -g ${pkg}`,
+        ];
+      }
+      if (process.platform === 'darwin') {
+        return [`brew install ${pkg}`, `npm install -g ${pkg}`];
+      }
+      return [...linuxCommands, `npm install -g ${pkg}`];
+  }
+}
+
 function stripAnsi(text: string) {
   return text.replace(ANSI_REGEX, '');
 }
@@ -264,9 +369,79 @@ export function registerSkillHandlers(deps: {
   });
 
   // Install deps is kept for backward compat but no longer auto-executes brew/npm.
-  // Instead, the frontend shows install guidance from openclaw skills info --json.
-  ipcMain.handle('skill:install-deps', async (_e, _installSpecs: unknown) => {
-    return { success: false, error: 'Deprecated: use skill:local-info to get install instructions' };
+  // This now supports silent cross-platform auto-install for built-in skill deps.
+  ipcMain.handle('skill:install-deps', async (_e, installSpecs: unknown) => {
+    const specs = Array.isArray(installSpecs) ? installSpecs as SkillInstallSpec[] : [];
+    if (specs.length === 0) {
+      return { success: false, error: 'No dependency install specs provided' };
+    }
+
+    const failures: Array<{ id: string; label: string; error: string }> = [];
+    const installed: Array<{ id: string; label: string; command: string }> = [];
+
+    const isCommandAvailable = async (binary: string) => {
+      if (!binary) return false;
+      const probe = process.platform === 'win32' ? `where ${binary}` : `command -v ${binary}`;
+      try {
+        await deps.runAsync(probe, 5000);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    for (const spec of specs) {
+      const commands = buildInstallCommands(spec);
+      if (commands.length === 0) {
+        failures.push({
+          id: spec.id || 'unknown',
+          label: spec.label || spec.id || 'unknown',
+          error: 'No safe install command generated',
+        });
+        continue;
+      }
+
+      let ok = false;
+      let lastError = '';
+
+      for (const command of commands) {
+        const binary = extractPrimaryBinary(command);
+        if (!(await isCommandAvailable(binary))) {
+          continue;
+        }
+        sendProgress('installing', spec.label || spec.id || binary);
+        try {
+          await deps.runAsync(command, 300000);
+          installed.push({ id: spec.id || binary, label: spec.label || spec.id || binary, command });
+          ok = true;
+          break;
+        } catch (err: any) {
+          lastError = err?.message?.slice(0, 200) || 'Install command failed';
+        }
+      }
+
+      if (!ok) {
+        failures.push({
+          id: spec.id || 'unknown',
+          label: spec.label || spec.id || 'unknown',
+          error: lastError || 'No available installer found on this system',
+        });
+      }
+    }
+
+    if (failures.length > 0) {
+      const first = failures[0];
+      sendProgress('error', `${first.label}: ${first.error}`);
+      return {
+        success: false,
+        error: `Failed to install ${failures.length} dependency item(s). First error: ${first.label} - ${first.error}`,
+        installed,
+        failures,
+      };
+    }
+
+    sendProgress('verifying', 'dependencies installed');
+    return { success: true, installed };
   });
 
   ipcMain.handle('skill:get-config', async (_e, slug: string) => {

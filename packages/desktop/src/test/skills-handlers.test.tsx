@@ -78,6 +78,29 @@ describe('Skills — Install Deps for built-in skills', () => {
     });
   });
 
+  it('runs one-click dependency install for built-in skills', async () => {
+    const api = window.electronAPI as any;
+    api.skillInstallDeps = vi.fn().mockResolvedValue({ success: true });
+
+    await act(async () => { render(<Skills />); });
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('apple-notes'));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Auto Install/i })).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Auto Install/i }));
+    });
+
+    await waitFor(() => {
+      expect(api.skillInstallDeps).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('shows missing bins hint when local info is unavailable', async () => {
     const api = window.electronAPI as any;
     api.skillLocalInfo = vi.fn().mockResolvedValue({ success: false });

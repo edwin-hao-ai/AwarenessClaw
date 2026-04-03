@@ -117,6 +117,17 @@ function buildLocalDetail(skill: LocalSkillStatus): SkillDetail {
   };
 }
 
+function buildFallbackInstallSpecs(skill: SkillDetail): InstallSpec[] {
+  const bins = skill.missing?.bins || [];
+  return bins.map((bin, idx) => ({
+    id: `${skill.slug}-bin-${idx}`,
+    kind: 'auto',
+    label: `Install ${bin}`,
+    bins: [bin],
+    package: bin,
+  }));
+}
+
 function matchesLocalStatus(skill: LocalSkillStatus, filter: LocalStatusFilter) {
   if (filter === 'all') return true;
   if (filter === 'disabled') return skill.disabled;
@@ -242,6 +253,38 @@ export default function Skills() {
       setActionError(res.error || t('skills.uninstallFailed', 'Uninstall failed'));
       setInstallResult({ success: false, message: res.error || t('skills.uninstallFailed', 'Uninstall failed') });
     }
+    setActionSlug(null);
+  };
+
+  const handleInstallDeps = async (skill: SkillDetail) => {
+    if (!api) return;
+    const specs = (skill.install && skill.install.length > 0) ? skill.install : buildFallbackInstallSpecs(skill);
+    if (specs.length === 0) {
+      setActionError(t('skills.installDepsNoop', 'No installable dependencies found.'));
+      return;
+    }
+
+    setActionSlug(skill.slug);
+    setActionError(null);
+    setInstallResult(null);
+    setInstallProgress(t('skills.progress.installingDeps', 'Installing dependencies...'));
+
+    const res = await api.skillInstallDeps(specs);
+    setInstallProgress(null);
+
+    if (res?.success) {
+      setInstallResult({ success: true, message: t('skills.installDepsSuccess', 'Dependencies installed') });
+      const listRes = await api.skillListInstalled();
+      if (listRes?.success) {
+        setInstalled(listRes.skills || {});
+        setLocalSkills(Array.isArray(listRes.report?.skills) ? listRes.report.skills : []);
+      }
+    } else {
+      const msg = res?.error || t('skills.installDepsFailed', 'Dependency install failed');
+      setActionError(msg);
+      setInstallResult({ success: false, message: msg });
+    }
+
     setActionSlug(null);
   };
 
@@ -904,11 +947,19 @@ export default function Skills() {
                         </p>
                       )}
                     </div>
+                    <button
+                      onClick={async () => { await handleInstallDeps(detailSkill); }}
+                      disabled={actionSlug === detailSkill.slug}
+                      className="flex items-center gap-1 px-4 py-2 text-sm bg-brand-600 hover:bg-brand-500 disabled:bg-slate-700 text-white rounded-xl transition-colors flex-shrink-0"
+                    >
+                      {actionSlug === detailSkill.slug ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                      {actionSlug === detailSkill.slug ? t('skills.installing', 'Installing...') : t('skills.installDeps', 'Auto Install')}
+                    </button>
                     {detailSkill.homepage && (
                       <button
                         onClick={() => { void openExternal(detailSkill.homepage || '', `skill-install-${detailSkill.slug}`); }}
                         disabled={isOpening(`skill-install-${detailSkill.slug}`)}
-                        className="flex items-center gap-1 px-4 py-2 text-sm bg-brand-600 hover:bg-brand-500 text-white rounded-xl transition-colors flex-shrink-0"
+                        className="flex items-center gap-1 px-4 py-2 text-sm bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl transition-colors flex-shrink-0"
                       >
                         <ExternalLink size={14} />
                         {t('skills.openInstallGuide', 'Install Guide')}
