@@ -216,6 +216,13 @@ export function createShellUtils(options: { home: string; app: any }) {
     });
   }
 
+  /**
+   * Run a shell command asynchronously with activity-based timeout.
+   * The timer resets every time stdout/stderr produces output.
+   * This handles OpenClaw's slow plugin loading (15-30s) gracefully —
+   * as long as it keeps printing "[plugins] Registered xxx", it won't timeout.
+   * Only if nothing happens for `timeoutMs` does it abort.
+   */
   function runAsync(cmd: string, timeoutMs = 180000): Promise<string> {
     return new Promise((resolve, reject) => {
       const enhancedPath = getEnhancedPath();
@@ -235,11 +242,20 @@ export function createShellUtils(options: { home: string; app: any }) {
       let stdout = '';
       let stderr = '';
       let settled = false;
-      const timer = setTimeout(() => {
+
+      // Activity-based timeout: reset on every stdout/stderr output
+      let timer = setTimeout(() => {
         if (!settled) { settled = true; child.kill(); reject(new Error('Command timed out')); }
       }, timeoutMs);
-      child.stdout?.on('data', (d: Buffer) => { stdout += d.toString(); });
-      child.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); });
+      const resetTimer = () => {
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+          if (!settled) { settled = true; child.kill(); reject(new Error('Command timed out')); }
+        }, timeoutMs);
+      };
+
+      child.stdout?.on('data', (d: Buffer) => { stdout += d.toString(); resetTimer(); });
+      child.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); resetTimer(); });
       child.on('close', (code: number | null) => {
         if (!settled) {
           settled = true;
@@ -254,6 +270,7 @@ export function createShellUtils(options: { home: string; app: any }) {
     });
   }
 
+  /** Same as runAsync but with per-line progress callback. Activity-based timeout. */
   function runAsyncWithProgress(
     cmd: string,
     timeoutMs: number,
@@ -279,13 +296,23 @@ export function createShellUtils(options: { home: string; app: any }) {
       let stdoutBuf = '';
       let stderrBuf = '';
       let settled = false;
-      const timer = setTimeout(() => {
+
+      // Activity-based timeout: reset on every output
+      let timer = setTimeout(() => {
         if (!settled) { settled = true; child.kill(); reject(new Error('Command timed out')); }
       }, timeoutMs);
+      const resetTimer = () => {
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+          if (!settled) { settled = true; child.kill(); reject(new Error('Command timed out')); }
+        }, timeoutMs);
+      };
+
       child.stdout?.on('data', (d: Buffer) => {
         const text = d.toString();
         stdout += text;
         stdoutBuf += text;
+        resetTimer();
         const lines = stdoutBuf.split('\n');
         stdoutBuf = lines.pop() || '';
         for (const line of lines) {
@@ -296,6 +323,7 @@ export function createShellUtils(options: { home: string; app: any }) {
         const text = d.toString();
         stderr += text;
         stderrBuf += text;
+        resetTimer();
         const lines = stderrBuf.split('\n');
         stderrBuf = lines.pop() || '';
         for (const line of lines) {

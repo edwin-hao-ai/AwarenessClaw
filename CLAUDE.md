@@ -335,11 +335,12 @@ AwarenessClaw/
 - 踩坑：编辑 `main.ts` 时多了一个 `});` 闭合括号，前端编译没报错但 electron 编译失败
 
 ### OpenClaw CLI 超时规则（必读，反复踩坑）
-- **问题**：OpenClaw 每次 CLI 命令（`agents add`、`agents delete`、`agents bind` 等）都重新加载所有已安装插件（feishu、awareness-memory、device-pair 等），耗时 **15-30 秒**
-- **规则**：所有 `openclaw agents *` 命令的 `runAsync` 超时必须 ≥ **30 秒**（推荐 45 秒给 `agents add`）。绝不设 10-15 秒超时
-- **前端必须有状态提示**：长时间操作（>3 秒）必须向用户实时显示当前步骤（"正在加载插件..."、"正在创建工作区..."），不能只显示一个 spinner 什么也不说
-- **友好的超时错误提示**：如果超时了，不要显示原始的 "Command timed out"，而是告诉用户"OpenClaw 正在加载插件，可能需要 30 秒，请重试"
-- **已修复的超时设置**：`agents:add` = 45s，`agents:delete/set-identity/bind/unbind` = 30s，`agents:list` = 15s（只读操作较快）
+- **问题**：OpenClaw 每次 CLI 命令（`agents add`、`agents delete`、`agents bind` 等）都重新加载所有已安装插件（feishu、awareness-memory、device-pair 等），耗时 **15-30 秒**（低配机器或插件多的环境可能更长）
+- **活动超时机制（idle timeout）**：`runAsync` 和 `runAsyncWithProgress` 已改为活动超时 — 每次 stdout/stderr 有输出就重置计时器。只有连续 N 秒无任何输出才判定超时。这样即使 OpenClaw 加载 50 个插件花 2 分钟，只要还在输出 `[plugins] Registered xxx` 就不会超时
+- **超时参数的含义**：`runAsync(cmd, 30000)` = 30 秒内无任何输出才超时（不是总耗时 30 秒）
+- **推荐超时值**：`agents:add` = 45s idle，`agents:delete/set-identity/bind/unbind` = 30s idle，`agents:list` = 15s idle（只读操作较快）
+- **前端必须有状态提示**：长时间操作必须向用户实时显示当前步骤（"正在加载插件..."、"正在创建工作区..."），不能只显示一个 spinner 什么也不说
+- **友好的超时错误提示**：如果超时了，不要显示原始的 "Command timed out"，而是告诉用户"OpenClaw 正在加载插件，请重试"
 
 ### Gateway 命令踩坑
 - **正确命令**：`openclaw gateway start/stop/status/restart`
