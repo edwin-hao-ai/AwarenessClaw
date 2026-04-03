@@ -995,6 +995,19 @@ const en: Record<string, string> = {
 };
 
 const zh: Record<string, string> = {
+  // Startup
+  'startup.title': '正在启动 AwarenessClaw',
+  'startup.progress': '启动进度',
+  'startup.hint': '首次启动或自动修复可能需要更长时间，应用正在检查 OpenClaw、Gateway 和记忆服务。',
+  'startup.preparing': '正在准备 AwarenessClaw...',
+  'startup.checking': '正在检查安装状态...',
+  'startup.finishing': '正在完成设置...',
+  'startup.complete': '启动完成',
+  'startup.waitingForLocalService': '正在等待本地服务启动...',
+  'startup.everythingLooksGood': '一切正常，正在完成启动...',
+  'startup.repairingCheck': '正在修复 {0}...',
+  'startup.finalizing': '正在完成启动...',
+  'startup.localServiceWarming': '本地服务仍在预热中...',
   // Sidebar
   'nav.chat': '聊天',
   'nav.memory': '记忆',
