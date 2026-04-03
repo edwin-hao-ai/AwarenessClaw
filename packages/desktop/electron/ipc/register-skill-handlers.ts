@@ -515,49 +515,36 @@ export function registerSkillHandlers(deps: {
 
   // Install deps is kept for backward compat but no longer auto-executes brew/npm.
   // This now supports silent cross-platform auto-install for built-in skill deps.
-  ipcMain.handle('skill:install-deps', async (_e, installSpecs: unknown) => {
-    const specs = Array.isArray(installSpecs) ? installSpecs as SkillInstallSpec[] : [];
+  // Second arg is optional skillName — when provided, we read the SKILL.md directly
+  // to get the REAL install specs (with formula/module/package) instead of relying
+  // on the stripped specs from OpenClaw CLI.
+  ipcMain.handle('skill:install-deps', async (_e, installSpecs: unknown, skillName?: string) => {
+    let specs = Array.isArray(installSpecs) ? installSpecs as SkillInstallSpec[] : [];
+
+    // PRIMARY PATH: if skillName is provided, read SKILL.md for authoritative install specs.
+    // This bypasses all the broken chain of stripped CLI specs → frontend → back to IPC.
+    if (skillName && typeof skillName === 'string') {
+      try {
+        const raw = await deps.runAsync(`openclaw skills info ${skillName} --json`, 30000);
+        const parsed = JSON.parse(extractJsonPayload(raw));
+        if (parsed.filePath && fs.existsSync(parsed.filePath)) {
+          const fullSpecs = parseInstallSpecsFromSkillMd(fs.readFileSync(parsed.filePath, 'utf8'));
+          if (fullSpecs.length > 0) {
+            specs = fullSpecs as SkillInstallSpec[];
+            console.log(`[skill:install-deps] using SKILL.md specs for ${skillName}:`, specs.map((s: any) => `${s.kind}:${s.formula || s.module || s.package || '?'}`).join(', '));
+          }
+        }
+      } catch (err) {
+        console.warn(`[skill:install-deps] SKILL.md lookup failed for ${skillName}:`, err);
+      }
+    }
+
     if (specs.length === 0) {
       return { success: false, error: 'No dependency install specs provided' };
     }
 
-    // Safety net: if specs are missing formula/module (OpenClaw CLI strips them),
-    // try to recover from bundled SKILL.md files before building commands.
-    for (const s of specs) {
-      const needsFormula = s.kind === 'brew' && !s.formula;
-      const needsModule = s.kind === 'go' && !s.module;
-      if (!needsFormula && !needsModule) continue;
-
-      // Find the skill name from the spec id (e.g., "brew" → search by bins match)
-      try {
-        const globalDir = await deps.runAsync('npm root -g', 5000).catch(() => '');
-        const skillsDir = globalDir ? path.join(globalDir.trim(), 'openclaw', 'skills') : '';
-        if (skillsDir && fs.existsSync(skillsDir)) {
-          // Search each bundled skill's SKILL.md for matching install spec
-          for (const skillName of fs.readdirSync(skillsDir)) {
-            const skillMdPath = path.join(skillsDir, skillName, 'SKILL.md');
-            if (!fs.existsSync(skillMdPath)) continue;
-            try {
-              const fullSpecs = parseInstallSpecsFromSkillMd(fs.readFileSync(skillMdPath, 'utf8'));
-              const match = fullSpecs.find((f: any) =>
-                f.id === s.id && f.kind === s.kind && JSON.stringify(f.bins) === JSON.stringify(s.bins));
-              if (match) {
-                if (match.formula) s.formula = match.formula;
-                if (match.module) s.module = match.module;
-                if (match.package) s.package = match.package;
-                console.log(`[skill:install-deps] recovered from ${skillName}/SKILL.md: formula=${s.formula || '-'} module=${s.module || '-'}`);
-                break;
-              }
-            } catch {}
-          }
-        }
-      } catch {}
-    }
-
     for (const s of specs) {
       console.log(`[skill:install-deps] spec: kind=${s.kind} formula=${s.formula || '-'} module=${s.module || '-'} package=${s.package || '-'} bins=${(s.bins || []).join(',')}`);
-      const cmds = buildInstallCommands(s);
-      console.log(`[skill:install-deps] commands: ${JSON.stringify(cmds)}`);
     }
 
     const failures: Array<{ id: string; label: string; error: string }> = [];

@@ -271,7 +271,7 @@ export default function Skills() {
     setInstallResult(null);
     setInstallProgress(t('skills.progress.installingDeps', 'Installing dependencies...'));
 
-    const res = await api.skillInstallDeps(specs);
+    const res = await api.skillInstallDeps(specs, skill.name || skill.slug);
     setInstallProgress(null);
 
     if (res?.success) {
