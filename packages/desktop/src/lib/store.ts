@@ -317,7 +317,7 @@ async function syncToOpenClaw(config: AppConfig, providers: ModelProviderDef[]) 
           autoRecall: config.autoRecall,
           autoCapture: config.autoCapture,
           recallLimit: config.recallLimit,
-          ...(config.memoryMode === 'local' ? { localUrl: 'http://localhost:37800' } : {}),
+          ...(config.memoryMode === 'local' ? { localUrl: 'http://127.0.0.1:37800' } : {}),
           ...(config.memoryBlockedSources?.length ? { blockedSources: config.memoryBlockedSources } : {}),
         },
       },

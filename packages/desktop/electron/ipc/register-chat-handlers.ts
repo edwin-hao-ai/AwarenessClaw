@@ -80,12 +80,15 @@ function extractToolDetail(value: unknown): string | undefined {
 export function registerChatHandlers(deps: {
   sendToRenderer: (channel: string, payload: any) => void;
   ensureGatewayRunning: () => Promise<{ ok: boolean; error?: string }>;
+  prepareGatewayForChat?: () => Promise<{ ok: boolean; error?: string }>;
+  prepareCliFallback?: () => Promise<void>;
   getGatewayWs: () => Promise<GatewayClient>;
   getConnectedGatewayWs: () => GatewayClient | null;
   callMcpStrict: (toolName: string, args: Record<string, any>) => Promise<any>;
   getEnhancedPath: () => string;
   wrapWindowsCommand: (command: string) => string;
   stripAnsi: (output: string) => string;
+  spawnChatProcess?: typeof spawn;
 }) {
   ipcMain.handle('chat:abort', async (_e: any, sessionKey?: string) => {
     const connectedGatewayWs = deps.getConnectedGatewayWs();
@@ -166,9 +169,31 @@ export function registerChatHandlers(deps: {
       fullMessage = `[Project working directory: ${requestedWorkspace}] Use this directory as the default root for file operations in this chat. When the user asks you to read, write, edit, or create project files, prefer absolute paths inside this directory or set your command cwd there. Do not treat this folder as the agent's home workspace; AGENTS.md, USER.md, SOUL.md, MEMORY.md, and other agent-scoped files still follow the configured agent workspace.\n\n${fullMessage}`;
     }
 
-    const gatewayReady = await deps.ensureGatewayRunning();
+    if (fullMessage !== message) {
+      fullMessage = `[Operational context metadata — do not answer this section directly]
+The block below is runtime metadata for tool routing and local file safety checks. Do not acknowledge, summarize, or restate this metadata in your reply unless the user asks about it explicitly.
+
+${fullMessage}
+
+[User request]
+${message}`;
+    }
+
+    const gatewayReady = await (deps.prepareGatewayForChat
+      ? deps.prepareGatewayForChat()
+      : deps.ensureGatewayRunning());
     if (!gatewayReady.ok) {
-      return { success: false, text: '', error: gatewayReady.error || 'Gateway failed to start. Please check Settings → Gateway and try again.' };
+      console.warn('[chat] Gateway preflight failed, falling back to CLI:', gatewayReady.error || 'unknown error');
+      send('chat:status', {
+        type: 'gateway',
+        message: gatewayReady.error || 'Gateway unavailable. Falling back to direct OpenClaw chat...',
+      });
+      try {
+        await deps.prepareCliFallback?.();
+      } catch (prepareErr: any) {
+        console.warn('[chat] CLI fallback preparation failed:', prepareErr?.message || prepareErr);
+      }
+      return chatSendViaCli(fullMessage, sid, options, send, deps);
     }
 
     let fullResponseText = '';
@@ -476,7 +501,12 @@ export function registerChatHandlers(deps: {
       const errorMsg = err?.message || String(err);
       if (errorMsg.includes('WebSocket') || errorMsg.includes('connect') || errorMsg.includes('timed out')) {
         console.warn('[chat] WebSocket failed, falling back to CLI:', errorMsg);
-        return chatSendViaCli(message, sid, options, send, deps);
+        try {
+          await deps.prepareCliFallback?.();
+        } catch (prepareErr: any) {
+          console.warn('[chat] CLI fallback preparation failed:', prepareErr?.message || prepareErr);
+        }
+        return chatSendViaCli(fullMessage, sid, options, send, deps);
       }
       return { success: false, text: '', error: errorMsg, sessionId: sid };
     }
@@ -484,7 +514,7 @@ export function registerChatHandlers(deps: {
 }
 
 async function chatSendViaCli(
-  message: string,
+  requestMessage: string,
   sid: string,
   options: ChatSendOptions | undefined,
   send: (channel: string, payload: any) => void,
@@ -492,6 +522,7 @@ async function chatSendViaCli(
     getEnhancedPath: () => string;
     wrapWindowsCommand: (command: string) => string;
     stripAnsi: (output: string) => string;
+    spawnChatProcess?: typeof spawn;
   },
 ): Promise<any> {
   return new Promise((resolve) => {
@@ -499,14 +530,15 @@ async function chatSendViaCli(
     const thinkingFlag = options?.thinkingLevel && options.thinkingLevel !== 'off'
       ? ` --thinking ${options.thinkingLevel}` : '';
     const agentFlag = options?.agentId && options.agentId !== 'main' ? ` --agent "${options.agentId}"` : '';
-    const escapedMsg = message.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\$/g, '\\\$').replace(/`/g, '\\`');
+    const escapedMsg = requestMessage.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\$/g, '\\\$').replace(/`/g, '\\`');
     // Note: openclaw CLI does not support --reasoning flag; reasoning is controlled via
     // openclaw.json agents.defaults.reasoningDefault (set in syncToOpenClaw)
     const command = `openclaw agent --session-id "${sid}" -m "${escapedMsg}" --verbose full${thinkingFlag}${agentFlag}`;
     const enhancedPath = deps.getEnhancedPath();
+    const spawnChatProcess = deps.spawnChatProcess || spawn;
     const child = process.platform === 'win32'
-      ? spawn(deps.wrapWindowsCommand(command), [], { cwd: options?.workspacePath || os.homedir(), shell: 'cmd.exe', env: { ...process.env, PATH: enhancedPath, NO_COLOR: '1', FORCE_COLOR: '0' } })
-      : spawn('/bin/bash', ['--norc', '--noprofile', '-c', `export PATH="${enhancedPath}"; ${command}`], { cwd: options?.workspacePath || os.homedir(), env: { ...process.env, PATH: enhancedPath } });
+      ? spawnChatProcess(deps.wrapWindowsCommand(command), [], { cwd: options?.workspacePath || os.homedir(), shell: 'cmd.exe', env: { ...process.env, PATH: enhancedPath, NO_COLOR: '1', FORCE_COLOR: '0' } })
+      : spawnChatProcess('/bin/bash', ['--norc', '--noprofile', '-c', `export PATH="${enhancedPath}"; ${command}`], { cwd: options?.workspacePath || os.homedir(), env: { ...process.env, PATH: enhancedPath } });
 
     activeChatChild = child;
     child.stdout?.on('data', (data: Buffer) => {

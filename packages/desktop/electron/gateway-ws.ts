@@ -16,6 +16,7 @@ import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
 import { WebSocket } from 'ws';
+import { readJsonFileWithBom } from './json-file';
 
 const HOME = os.homedir();
 
@@ -53,11 +54,11 @@ type GatewayMessage = RpcResponse | GatewayEvent | { type: string; [key: string]
 function readGatewayConfig(): GatewayConfig {
   try {
     const configPath = path.join(HOME, '.openclaw', 'openclaw.json');
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    const config = readJsonFileWithBom<Record<string, any>>(configPath);
     const gw = config.gateway || {};
     return {
       port: gw.port || Number(process.env.OPENCLAW_GATEWAY_PORT) || 18789,
-      token: process.env.OPENCLAW_GATEWAY_TOKEN || gw.auth?.token || '',
+      token: String(process.env.OPENCLAW_GATEWAY_TOKEN || gw.auth?.token || '').trim(),
     };
   } catch {
     return { port: 18789, token: '' };

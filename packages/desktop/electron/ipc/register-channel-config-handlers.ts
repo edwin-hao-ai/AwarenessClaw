@@ -57,6 +57,7 @@ export function registerChannelConfigHandlers(deps: {
   toOpenclawId: (channelId: string) => string;
 }) {
   ipcMain.handle('channel:get-registry', async () => {
+    const stderrRedirect = process.platform === 'win32' ? '2>NUL' : '2>/dev/null';
     const dlog = (msg: string) => { try { fs.appendFileSync(path.join(os.homedir(), '.awareness-channel-debug.log'), `[${new Date().toISOString()}] ${msg}\n`); } catch { } };
     dlog(`ENTRY: channel:get-registry called. _discoveryDone=${discoveryDone}, HOME=${os.homedir()}`);
     if (!discoveryDone) {
@@ -70,7 +71,7 @@ export function registerChannelConfigHandlers(deps: {
           if (managedDist) {
             debugLog(`async managed distDir: ${managedDist} exists=true`);
             try {
-              const helpOut = await deps.safeShellExecAsync('openclaw channels add --help 2>/dev/null', 5000);
+              const helpOut = await deps.safeShellExecAsync(`openclaw channels add --help ${stderrRedirect}`, 5000);
               if (helpOut) {
                 const { cliChannels, channelFields } = deps.parseCliHelp(helpOut);
                 if (cliChannels.size > 0) {
@@ -99,7 +100,7 @@ export function registerChannelConfigHandlers(deps: {
             }
             debugLog(`Final channel count: ${deps.getAllChannels().length}`);
           } else {
-            const globalRoot = await deps.safeShellExecAsync('npm root -g 2>/dev/null', 5000);
+            const globalRoot = await deps.safeShellExecAsync(`npm root -g ${stderrRedirect}`, 5000);
             debugLog(`async npm root -g: "${globalRoot?.trim()}"`);
             if (globalRoot) {
               const distDir = path.join(globalRoot.trim(), 'openclaw', 'dist');
@@ -107,7 +108,7 @@ export function registerChannelConfigHandlers(deps: {
               debugLog(`async distDir: ${distDir} exists=${exists}`);
               if (exists) {
               try {
-                const helpOut = await deps.safeShellExecAsync('openclaw channels add --help 2>/dev/null', 5000);
+                const helpOut = await deps.safeShellExecAsync(`openclaw channels add --help ${stderrRedirect}`, 5000);
                 if (helpOut) {
                   const { cliChannels, channelFields } = deps.parseCliHelp(helpOut);
                   if (cliChannels.size > 0) {

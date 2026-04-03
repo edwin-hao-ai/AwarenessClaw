@@ -7,6 +7,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import { readJsonFileWithBom } from './json-file';
 
 // --- Constants ---
 
@@ -113,7 +114,7 @@ export function isGatewayRunningOutput(output: string | null): boolean {
 export function getGatewayPort(homedir: string): number {
   try {
     const configPath = path.join(homedir, '.openclaw', 'openclaw.json');
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    const config = readJsonFileWithBom<Record<string, any>>(configPath);
     return Number(config?.gateway?.port) || GATEWAY_DEFAULT_PORT;
   } catch {
     return GATEWAY_DEFAULT_PORT;
@@ -124,7 +125,7 @@ export function getAgentWorkspaceDir(homedir: string): string {
   const fallback = path.join(homedir, '.openclaw', 'workspace');
   try {
     const configPath = path.join(homedir, '.openclaw', 'openclaw.json');
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    const config = readJsonFileWithBom<Record<string, any>>(configPath);
     const configured = config?.agents?.defaults?.workspace;
     return typeof configured === 'string' && configured.trim() ? configured.trim() : fallback;
   } catch {
@@ -140,7 +141,7 @@ export function readExecApprovalsConfig(homedir: string): ExecApprovalsConfig {
   const configPath = getExecApprovalsPath(homedir);
 
   try {
-    const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8')) as ExecApprovalsConfig;
+    const parsed = readJsonFileWithBom<ExecApprovalsConfig>(configPath);
     return {
       version: typeof parsed.version === 'number' ? parsed.version : 1,
       defaults: typeof parsed.defaults === 'object' && parsed.defaults ? parsed.defaults : {},

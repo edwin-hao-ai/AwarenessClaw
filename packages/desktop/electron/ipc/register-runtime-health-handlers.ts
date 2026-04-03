@@ -61,6 +61,16 @@ export function registerRuntimeHealthHandlers(deps: {
   recentDaemonStartup: () => boolean;
   getMainWindow: () => any;
 }) {
+  const startupRepairPriority = new Map([
+    ['openclaw-command-health', 10],
+    ['openclaw-installed', 20],
+    ['plugin-installed', 30],
+    ['daemon-running', 40],
+    ['gateway-running', 50],
+    ['channel-bindings', 60],
+    ['launchagent-path', 70],
+  ]);
+
   ipcMain.handle('setup:bootstrap', async () => {
     const result = await deps.safeShellExecAsync('openclaw doctor --fix 2>&1', 30000);
     return { success: !!result, output: result };
@@ -303,7 +313,7 @@ export function registerRuntimeHealthHandlers(deps: {
 
     const startupChecks = [
       'node-installed', 'openclaw-installed', 'openclaw-command-health',
-      'gateway-running', 'plugin-installed', 'daemon-running', 'channel-bindings',
+      'plugin-installed', 'daemon-running', 'gateway-running', 'channel-bindings',
       ...(process.platform === 'darwin' ? ['launchagent-path'] : []),
     ];
 
@@ -319,7 +329,11 @@ export function registerRuntimeHealthHandlers(deps: {
       && check.fixable === 'auto'
       && (check.status === 'fail' || check.status === 'warn')
       && !(check.id === 'daemon-running' && deps.recentDaemonStartup())
-    );
+    ).sort((left: any, right: any) => {
+      const leftPriority = startupRepairPriority.get(left.id) ?? 999;
+      const rightPriority = startupRepairPriority.get(right.id) ?? 999;
+      return leftPriority - rightPriority;
+    });
 
     if (checksToRepair.length === 0) {
       sendStartupStatus('Everything looks good. Finalizing startup...', 85);

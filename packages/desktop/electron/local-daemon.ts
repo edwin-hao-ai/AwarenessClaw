@@ -1,4 +1,3 @@
-import { spawn } from 'child_process';
 import fs from 'fs';
 import http from 'http';
 import path from 'path';
@@ -101,7 +100,29 @@ export async function startLocalDaemonDetached(options: {
   const offlineTarball = options.resolveBundledCache('awareness-sdk-local.tgz');
   const npxArgs = ['-y', offlineTarball || '@awareness-sdk/local@latest', 'start', '--port', '37800', '--project', projectDir, '--background'];
 
-  const startViaBundledNpm = async () => {
+  const launchDetached = (command: string, args: string[]) => new Promise<void>((resolve, reject) => {
+    const child = options.runSpawn(command, args, {
+      detached: true,
+      stdio: 'ignore',
+      env: { ...process.env, PATH: options.getEnhancedPath() },
+    });
+
+    const handleError = (err: any) => reject(err);
+    child.once('error', handleError);
+    child.once('spawn', () => {
+      child.removeListener('error', handleError);
+      child.unref();
+      resolve();
+    });
+  });
+
+  const startViaBundledNodeCli = async () => {
+    const bundledNpxCli = options.getBundledNpmBin('npx');
+    if (bundledNpxCli) {
+      await launchDetached('node', [bundledNpxCli, ...npxArgs]);
+      return;
+    }
+
     const npmCli = options.getBundledNpmBin('npm');
     if (!npmCli) throw new Error('Bundled npm not found');
 
@@ -109,29 +130,28 @@ export async function startLocalDaemonDetached(options: {
       ? ['exec', '--yes', offlineTarball, 'start', '--port', '37800', '--project', projectDir, '--background']
       : ['exec', '--yes', '@awareness-sdk/local@latest', 'start', '--port', '37800', '--project', projectDir, '--background'];
 
-    const child = spawn(process.execPath, [npmCli, ...execArgs], {
-      detached: true,
-      stdio: 'ignore',
-      env: { ...process.env, PATH: options.getEnhancedPath() },
-    });
-    child.unref();
+    await launchDetached('node', [npmCli, ...execArgs]);
   };
 
-  const startWithNpx = () => new Promise<void>((resolve, reject) => {
-    const child = options.runSpawn('npx', npxArgs, {
-      detached: true,
-      stdio: 'ignore',
-    });
-    child.on('error', reject);
-    child.unref();
-    resolve();
-  });
+  const startWithWindowsShellNpx = () => launchDetached('cmd.exe', ['/d', '/c', 'npx', ...npxArgs]);
+  const startWithNpx = () => launchDetached(process.platform === 'win32' ? 'npx.cmd' : 'npx', npxArgs);
+
+  if (process.platform === 'win32') {
+    try {
+      await startViaBundledNodeCli();
+      return;
+    } catch (err: any) {
+      if (err?.code !== 'ENOENT' && err?.message !== 'Bundled npm not found') throw err;
+      await startWithWindowsShellNpx();
+      return;
+    }
+  }
 
   try {
     await startWithNpx();
   } catch (err: any) {
     if (err?.code !== 'ENOENT') throw err;
-    await startViaBundledNpm();
+    await startViaBundledNodeCli();
   }
 }
 

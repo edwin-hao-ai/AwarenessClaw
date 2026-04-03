@@ -59,6 +59,7 @@ let isQuitting = false;
 let daemonStartupPromise: Promise<{ success: boolean; alreadyRunning?: boolean; error?: string }> | null = null;
 let daemonStartupLastKickoff = 0;
 let gatewayWsClient: GatewayClient | null = null;
+let gatewayRepairPromise: Promise<{ ok: boolean; error?: string }> | null = null;
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
@@ -231,6 +232,67 @@ function isGatewayPermissionError(output: string | null) {
   return /EACCES|Access is denied|permission denied|拒绝访问|schtasks create failed/i.test(output);
 }
 
+async function ensureLocalDaemonReadyForRuntime(send?: (ch: string, data: any) => void): Promise<boolean> {
+  if (await checkDaemonHealth()) return true;
+
+  const emit = (message: string) => send?.('chat:status', { type: 'gateway', message });
+
+  if (!daemonStartupPromise) {
+    daemonStartupLastKickoff = Date.now();
+    daemonStartupPromise = (async () => {
+      if (await checkDaemonHealth()) return { success: true, alreadyRunning: true };
+
+      emit('Preparing local memory service...');
+
+      try {
+        await startLocalDaemonDetached({
+          homedir: HOME,
+          resolveBundledCache,
+          getBundledNpmBin,
+          runSpawn,
+          getEnhancedPath,
+        });
+      } catch (err) {
+        console.warn('[gateway] Failed to launch local daemon before Gateway start:', err);
+      }
+
+      const ready = await waitForLocalDaemonReady(45000, 'setup.install.daemonStatus.waiting', {
+        sendStatus: sendSetupDaemonStatus,
+        sleep,
+      });
+
+      if (ready) {
+        emit('Local memory service ready');
+        return { success: true };
+      }
+
+      return { success: false, error: formatDaemonSetupError() };
+    })();
+  }
+
+  try {
+    const result = await daemonStartupPromise;
+    return !!(result.success || result.alreadyRunning || await checkDaemonHealth());
+  } finally {
+    daemonStartupPromise = null;
+  }
+}
+
+function startGatewayRepairInBackground(send?: (ch: string, data: any) => void) {
+  if (gatewayRepairPromise) return gatewayRepairPromise;
+
+  gatewayRepairPromise = startGatewayWithRepair(send)
+    .catch((err) => {
+      console.warn('[gateway] Background repair failed:', err?.message || err);
+      return { ok: false, error: err?.message || String(err) };
+    })
+    .finally(() => {
+      gatewayRepairPromise = null;
+    });
+
+  return gatewayRepairPromise;
+}
+
 async function startGatewayInUserSession(send?: (ch: string, data: any) => void): Promise<{ ok: boolean; error?: string }> {
   send?.('chat:status', { type: 'gateway', message: 'Starting temporary Gateway...' });
 
@@ -283,6 +345,10 @@ async function startGatewayWithRepair(send?: (ch: string, data: any) => void): P
 
   const emit = (message: string) => send?.('chat:status', { type: 'gateway', message });
   const prefs = readRuntimePreferences();
+
+  if (process.platform === 'win32') {
+    await ensureLocalDaemonReadyForRuntime(send);
+  }
 
   if (process.platform === 'win32' && prefs.preferUserSessionGateway) {
     emit('Starting Gateway in your Windows session...');
@@ -418,6 +484,57 @@ async function ensureGatewayRunning(): Promise<{ ok: boolean; error?: string }> 
   }
 }
 
+async function prepareGatewayForChat(): Promise<{ ok: boolean; error?: string }> {
+  const send = (ch: string, data: any) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(ch, data);
+  };
+
+  try {
+    const openclawVersion = await safeShellExecAsync('openclaw --version', 5000);
+    if (!openclawVersion) {
+      return {
+        ok: false,
+        error: 'OpenClaw is not installed yet. Please finish Setup first, or reinstall OpenClaw in Settings before chatting.',
+      };
+    }
+
+    if (gatewayWsClient?.isConnected) {
+      return { ok: true };
+    }
+
+    const statusOutput = await readShellOutputAsync('openclaw gateway status 2>&1', 4000);
+    if (isGatewayRunningOutput(statusOutput)) {
+      return { ok: true };
+    }
+
+    startGatewayRepairInBackground(send);
+
+    return {
+      ok: false,
+      error: 'Local Gateway is still warming up. Answering directly while background services recover.',
+    };
+  } catch {
+    startGatewayRepairInBackground(send);
+    return {
+      ok: false,
+      error: 'OpenClaw background services are still warming up. Answering directly for now.',
+    };
+  }
+}
+
+async function prepareCliFallback(): Promise<void> {
+  const send = (ch: string, data: any) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(ch, data);
+  };
+
+  if (process.platform !== 'win32') return;
+
+  const ready = await ensureLocalDaemonReadyForRuntime(send);
+  if (!ready) {
+    console.warn('[chat] Local daemon was not ready before CLI fallback; continuing anyway');
+  }
+}
+
 // --- Channel Configuration (registry-driven) ---
 // Import channel registry for dynamic channel metadata
 import {
@@ -430,6 +547,7 @@ import {
 // Discover channels from OpenClaw installation at startup
 function discoverOpenClawChannels(): void {
   try {
+    const stderrRedirect = process.platform === 'win32' ? '2>NUL' : '2>/dev/null';
     let distDir = '';
 
     // Strategy 0: managed runtime dist (AwarenessClaw bundled install)
@@ -444,7 +562,7 @@ function discoverOpenClawChannels(): void {
     // Strategy 1: `npm root -g` → <prefix>/lib/node_modules → append openclaw/dist
     // This is the most reliable cross-platform approach (works with nvm, custom prefix, Windows)
     try {
-      const globalRoot = safeShellExec('npm root -g 2>/dev/null')?.trim();
+      const globalRoot = safeShellExec(`npm root -g ${stderrRedirect}`)?.trim();
       if (globalRoot) {
         const candidate = path.join(globalRoot, 'openclaw', 'dist');
         if (fs.existsSync(candidate)) distDir = candidate;
@@ -454,7 +572,10 @@ function discoverOpenClawChannels(): void {
     // Strategy 2: resolve `which openclaw` symlink
     if (!distDir) {
       try {
-        const ocPath = safeShellExec('which openclaw 2>/dev/null')?.trim();
+        const lookupCommand = process.platform === 'win32'
+          ? `where openclaw ${stderrRedirect}`
+          : `which openclaw ${stderrRedirect}`;
+        const ocPath = safeShellExec(lookupCommand)?.trim();
         if (ocPath) {
           const realPath = fs.realpathSync(ocPath);
           const candidate = path.join(path.dirname(realPath), 'dist');
@@ -474,7 +595,7 @@ function discoverOpenClawChannels(): void {
 
     // Parse CLI help: extracts supported channel enum + per-channel config fields
     try {
-      const helpOutput = safeShellExec('openclaw channels add --help 2>/dev/null');
+      const helpOutput = safeShellExec(`openclaw channels add --help ${stderrRedirect}`);
       if (helpOutput) {
         const { cliChannels, channelFields } = parseCliHelp(helpOutput);
         if (cliChannels.size > 0) {
@@ -665,6 +786,8 @@ registerChatHandlers({
     }
   },
   ensureGatewayRunning,
+  prepareGatewayForChat,
+  prepareCliFallback,
   getGatewayWs,
   getConnectedGatewayWs: () => (gatewayWsClient?.isConnected ? gatewayWsClient : null),
   callMcpStrict,
@@ -805,7 +928,7 @@ app.whenReady().then(() => {
   }
 
   // Best-effort: start Gateway early so it's ready when user sends first message
-  startGatewayWithRepair().catch((err) => {
+  startGatewayRepairInBackground().catch((err) => {
     console.warn('[startup] Gateway pre-start failed (will retry on first chat):', err?.message || err);
   });
 

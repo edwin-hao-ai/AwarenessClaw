@@ -7,6 +7,8 @@ const { ipcHandleMock } = vi.hoisted(() => ({
   ipcHandleMock: vi.fn(),
 }));
 
+const spawnMock = vi.hoisted(() => vi.fn());
+
 vi.mock('electron', () => ({
   ipcMain: {
     handle: ipcHandleMock,
@@ -27,9 +29,95 @@ function getRegisteredHandlers() {
   ) as Record<string, (...args: any[]) => Promise<any>>;
 }
 
+function createCliFallbackChild(output: string) {
+  const child = new EventEmitter() as EventEmitter & {
+    stdout: EventEmitter;
+    stderr: EventEmitter;
+    kill: ReturnType<typeof vi.fn>;
+    emitOutput: () => void;
+  };
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.kill = vi.fn();
+
+  child.emitOutput = () => {
+    child.stdout.emit('data', Buffer.from(`${output}\n`));
+    child.emit('exit', 0);
+  };
+
+  return child;
+}
+
 describe('registerChatHandlers', () => {
   beforeEach(() => {
     ipcHandleMock.mockReset();
+    spawnMock.mockReset();
+  });
+
+  it('falls back to CLI when gateway preflight fails before websocket connect', async () => {
+    const fakeChild = createCliFallbackChild('CLI fallback reply');
+    spawnMock.mockReturnValue(fakeChild as any);
+
+    const sendToRenderer = vi.fn();
+
+    registerChatHandlers({
+      sendToRenderer,
+      ensureGatewayRunning: vi.fn(async () => ({ ok: false, error: 'Gateway failed to start.' })),
+      getGatewayWs: vi.fn(),
+      getConnectedGatewayWs: vi.fn(() => null),
+      callMcpStrict: vi.fn(async () => ({})),
+      getEnhancedPath: vi.fn(() => process.env.PATH || ''),
+      wrapWindowsCommand: vi.fn((command: string) => command),
+      stripAnsi: vi.fn((output: string) => output),
+      spawnChatProcess: spawnMock as any,
+    });
+
+    const handlers = getRegisteredHandlers();
+    const pending = handlers['chat:send']({}, 'hello from cli fallback', 'test-session', {});
+    await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledTimes(1));
+    fakeChild.emitOutput();
+    const result = await pending;
+
+    expect(result).toMatchObject({ success: true, text: 'CLI fallback reply', sessionId: 'test-session' });
+    expect(sendToRenderer).toHaveBeenCalledWith(
+      'chat:status',
+      expect.objectContaining({
+        type: 'gateway',
+        message: 'Gateway failed to start.',
+      }),
+    );
+    expect(spawnMock).toHaveBeenCalled();
+  });
+
+  it('preserves workspace instructions when CLI fallback is used', async () => {
+    const fakeChild = createCliFallbackChild('CLI workspace reply');
+    spawnMock.mockReturnValue(fakeChild as any);
+
+    const wrapWindowsCommand = vi.fn((command: string) => command);
+    const workspaceDir = process.cwd();
+
+    registerChatHandlers({
+      sendToRenderer: vi.fn(),
+      ensureGatewayRunning: vi.fn(async () => ({ ok: false, error: 'Gateway warming up.' })),
+      getGatewayWs: vi.fn(),
+      getConnectedGatewayWs: vi.fn(() => null),
+      callMcpStrict: vi.fn(async () => ({})),
+      getEnhancedPath: vi.fn(() => process.env.PATH || ''),
+      wrapWindowsCommand,
+      stripAnsi: vi.fn((output: string) => output),
+      spawnChatProcess: spawnMock as any,
+    });
+
+    const handlers = getRegisteredHandlers();
+  const pending = handlers['chat:send']({}, 'check project files', 'test-session', { workspacePath: workspaceDir });
+  await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledTimes(1));
+  fakeChild.emitOutput();
+  const result = await pending;
+    const escapedWorkspaceDir = workspaceDir.replace(/\\/g, '\\\\');
+
+    expect(result).toMatchObject({ success: true, text: 'CLI workspace reply', sessionId: 'test-session' });
+    expect(wrapWindowsCommand).toHaveBeenCalledWith(expect.stringContaining(`[Project working directory: ${escapedWorkspaceDir}]`));
+    expect(wrapWindowsCommand).toHaveBeenCalledWith(expect.stringContaining('Do not treat this folder as the agent\'s home workspace'));
   });
 
   it('logs an upstream empty-response warning when Gateway finishes with no assistant payload', async () => {
@@ -55,6 +143,7 @@ describe('registerChatHandlers', () => {
       getEnhancedPath: vi.fn(() => process.env.PATH || ''),
       wrapWindowsCommand: vi.fn((command: string) => command),
       stripAnsi: vi.fn((output: string) => output),
+      spawnChatProcess: spawnMock as any,
     });
 
     const handlers = getRegisteredHandlers();
@@ -101,6 +190,7 @@ describe('registerChatHandlers', () => {
       getEnhancedPath: vi.fn(() => process.env.PATH || ''),
       wrapWindowsCommand: vi.fn((command: string) => command),
       stripAnsi: vi.fn((output: string) => output),
+      spawnChatProcess: spawnMock as any,
     });
 
     const handlers = getRegisteredHandlers();
@@ -141,6 +231,7 @@ describe('registerChatHandlers', () => {
       getEnhancedPath: vi.fn(() => process.env.PATH || ''),
       wrapWindowsCommand: vi.fn((command: string) => command),
       stripAnsi: vi.fn((output: string) => output),
+      spawnChatProcess: spawnMock as any,
     });
 
     const handlers = getRegisteredHandlers();
@@ -179,6 +270,7 @@ describe('registerChatHandlers', () => {
       getEnhancedPath: vi.fn(() => process.env.PATH || ''),
       wrapWindowsCommand: vi.fn((command: string) => command),
       stripAnsi: vi.fn((output: string) => output),
+      spawnChatProcess: spawnMock as any,
     });
 
     const handlers = getRegisteredHandlers();
@@ -219,6 +311,7 @@ describe('registerChatHandlers', () => {
       getEnhancedPath: vi.fn(() => process.env.PATH || ''),
       wrapWindowsCommand: vi.fn((command: string) => command),
       stripAnsi: vi.fn((output: string) => output),
+      spawnChatProcess: spawnMock as any,
     });
 
     const handlers = getRegisteredHandlers();
@@ -262,6 +355,7 @@ describe('registerChatHandlers', () => {
       getEnhancedPath: vi.fn(() => process.env.PATH || ''),
       wrapWindowsCommand: vi.fn((command: string) => command),
       stripAnsi: vi.fn((output: string) => output),
+      spawnChatProcess: spawnMock as any,
     });
 
     const handlers = getRegisteredHandlers();
@@ -350,6 +444,7 @@ describe('registerChatHandlers', () => {
       getEnhancedPath: vi.fn(() => process.env.PATH || ''),
       wrapWindowsCommand: vi.fn((command: string) => command),
       stripAnsi: vi.fn((output: string) => output),
+      spawnChatProcess: spawnMock as any,
     });
 
     const handlers = getRegisteredHandlers();

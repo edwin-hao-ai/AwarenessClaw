@@ -70,7 +70,7 @@ export function applyDesktopAwarenessPluginConfig(
       autoRecall: true,
       autoCapture: true,
       recallLimit: 8,
-      localUrl: 'http://localhost:37800',
+      localUrl: 'http://127.0.0.1:37800',
       baseUrl: 'https://awareness.market/api/v1',
       embeddingLanguage: 'multilingual',
     },
@@ -101,6 +101,11 @@ export function sanitizeDesktopAwarenessPluginConfig(config: Record<string, any>
 
   if (config.plugins.entries?.['memory-awareness']) {
     delete config.plugins.entries['memory-awareness'];
+  }
+
+  const awarenessConfig = config.plugins.entries?.['openclaw-memory']?.config;
+  if (awarenessConfig?.localUrl === 'http://localhost:37800') {
+    awarenessConfig.localUrl = 'http://127.0.0.1:37800';
   }
 
   if (Array.isArray(config.plugins.allow)) {

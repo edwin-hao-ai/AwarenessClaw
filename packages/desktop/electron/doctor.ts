@@ -100,7 +100,7 @@ function persistAwarenessPluginConfig(homedir: string) {
       autoRecall: true,
       autoCapture: true,
       recallLimit: 8,
-      localUrl: 'http://localhost:37800',
+      localUrl: 'http://127.0.0.1:37800',
       baseUrl: 'https://awareness.market/api/v1',
       embeddingLanguage: 'multilingual',
     },
