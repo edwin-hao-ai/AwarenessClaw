@@ -130,8 +130,10 @@ export function registerSkillHandlers(deps: {
   readShellOutputAsync: (cmd: string, timeoutMs?: number) => Promise<string | null>;
 }) {
   const clawhubApi = 'https://clawhub.ai/api/v1';
-  const workspaceDir = path.join(deps.home, '.openclaw', 'workspace');
+  const openclawDir = path.join(deps.home, '.openclaw');
+  const workspaceDir = path.join(openclawDir, 'workspace');
   const lockFile = path.join(workspaceDir, '.clawhub', 'lock.json');
+  const configPath = path.join(openclawDir, 'openclaw.json');
 
   ipcMain.handle('skill:list-installed', async () => {
     try {
@@ -170,7 +172,9 @@ export function registerSkillHandlers(deps: {
 
   ipcMain.handle('skill:explore', async () => {
     try {
-      const res = await fetchJson(`${clawhubApi}/skills?limit=60&sort=downloads&nonSuspiciousOnly=true`);
+      // nonSuspiciousOnly=false: most third-party skills get flagged by VirusTotal Code Insight,
+      // using true would filter out nearly all results
+      const res = await fetchJson(`${clawhubApi}/skills?limit=60&sort=downloads`);
       const items = Array.isArray(res?.items) ? res.items : [];
       return { success: true, skills: items.map(mapClawHubListItem), nextCursor: res?.nextCursor || null };
     } catch (err: any) {
@@ -180,8 +184,21 @@ export function registerSkillHandlers(deps: {
 
   ipcMain.handle('skill:search', async (_e, query: string) => {
     try {
-      const res = await fetchJson(`${clawhubApi}/search?q=${encodeURIComponent(query)}&limit=20&nonSuspiciousOnly=true`);
-      return { success: true, results: res?.results || [] };
+      const res = await fetchJson(`${clawhubApi}/search?q=${encodeURIComponent(query)}&limit=20`);
+      const results = Array.isArray(res?.results) ? res.results : [];
+      // Map search results to the same shape as explore items
+      return {
+        success: true,
+        results: results.map((item: any) => ({
+          slug: item.slug,
+          name: item.displayName || item.slug,
+          displayName: item.displayName || item.slug,
+          description: item.summary || '',
+          summary: item.summary || '',
+          version: item.version,
+          score: item.score,
+        })),
+      };
     } catch (err: any) {
       return { success: false, error: err.message };
     }
@@ -198,7 +215,16 @@ export function registerSkillHandlers(deps: {
 
   ipcMain.handle('skill:install', async (_e, slug: string) => {
     try {
-      await deps.runAsync(`npx -y clawhub@latest install ${slug} --force`, 60000);
+      // Ensure workspace dir exists before clawhub install
+      const skillsDir = path.join(workspaceDir, 'skills');
+      if (!fs.existsSync(skillsDir)) {
+        fs.mkdirSync(skillsDir, { recursive: true });
+      }
+      // --workdir prevents clawhub from falling back to cwd (which is "/" in packaged Electron)
+      await deps.runAsync(
+        `npx -y clawhub@latest install ${slug} --force --workdir "${workspaceDir}"`,
+        120000,
+      );
       return { success: true };
     } catch (err: any) {
       return { success: false, error: err.message?.slice(0, 300) };
@@ -207,19 +233,64 @@ export function registerSkillHandlers(deps: {
 
   ipcMain.handle('skill:uninstall', async (_e, slug: string) => {
     try {
-      await deps.runAsync(`npx -y clawhub@latest uninstall ${slug}`, 30000);
+      await deps.runAsync(
+        `npx -y clawhub@latest uninstall ${slug} --workdir "${workspaceDir}"`,
+        30000,
+      );
       return { success: true };
     } catch (err: any) {
       return { success: false, error: err.message?.slice(0, 300) };
     }
   });
 
+  // Install missing dependencies for built-in skills (e.g., brew install memo for apple-notes)
+  ipcMain.handle('skill:install-deps', async (_e, installSpecs: Array<{ id: string; kind: string; label: string; bins: string[]; package?: string }>) => {
+    if (!Array.isArray(installSpecs) || installSpecs.length === 0) {
+      return { success: false, error: 'No install specs provided' };
+    }
+    const errors: string[] = [];
+    for (const spec of installSpecs) {
+      try {
+        if (spec.kind === 'brew') {
+          // Homebrew: install the package (package name is typically the bin name or spec.id)
+          const pkg = spec.package || spec.bins?.[0] || spec.id;
+          await deps.runAsync(`brew install ${pkg}`, 120000);
+        } else if (spec.kind === 'node') {
+          // npm global install
+          const pkg = spec.package || spec.id;
+          await deps.runAsync(`npm install -g ${pkg}`, 120000);
+        } else if (spec.kind === 'uv') {
+          const pkg = spec.package || spec.id;
+          await deps.runAsync(`uv tool install ${pkg}`, 120000);
+        } else if (spec.kind === 'go') {
+          const pkg = spec.package || spec.id;
+          await deps.runAsync(`go install ${pkg}@latest`, 120000);
+        } else {
+          errors.push(`Unsupported installer kind: ${spec.kind} (${spec.label})`);
+          continue;
+        }
+      } catch (err: any) {
+        errors.push(`${spec.label}: ${err.message?.slice(0, 200)}`);
+      }
+    }
+    if (errors.length > 0) {
+      return { success: false, error: errors.join('\n') };
+    }
+    return { success: true };
+  });
+
   ipcMain.handle('skill:get-config', async (_e, slug: string) => {
     try {
-      const configPath = path.join(deps.home, '.openclaw', 'openclaw.json');
       const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-      const skillConfig = config.skills?.[slug]?.config || {};
-      return { success: true, config: skillConfig };
+      // OpenClaw stores skill config at skills.entries[slug] (not skills[slug])
+      const entry = config.skills?.entries?.[slug] || {};
+      return {
+        success: true,
+        config: entry.config || {},
+        enabled: entry.enabled !== false,
+        apiKey: entry.apiKey || '',
+        env: entry.env || {},
+      };
     } catch (err: any) {
       return { success: false, error: err.message, config: {} };
     }
@@ -227,12 +298,28 @@ export function registerSkillHandlers(deps: {
 
   ipcMain.handle('skill:save-config', async (_e, slug: string, newConfig: Record<string, unknown>) => {
     try {
-      const configPath = path.join(deps.home, '.openclaw', 'openclaw.json');
       let config: any = {};
       try { config = JSON.parse(fs.readFileSync(configPath, 'utf8')); } catch {}
+      // Ensure skills.entries path exists
       if (!config.skills) config.skills = {};
-      if (!config.skills[slug]) config.skills[slug] = {};
-      config.skills[slug].config = { ...config.skills[slug].config, ...newConfig };
+      if (!config.skills.entries) config.skills.entries = {};
+      if (!config.skills.entries[slug]) config.skills.entries[slug] = {};
+      const entry = config.skills.entries[slug];
+      // Merge config, apiKey, enabled, env if provided
+      if ('apiKey' in newConfig) {
+        entry.apiKey = newConfig.apiKey;
+        delete newConfig.apiKey;
+      }
+      if ('enabled' in newConfig) {
+        entry.enabled = newConfig.enabled;
+        delete newConfig.enabled;
+      }
+      if ('env' in newConfig && typeof newConfig.env === 'object') {
+        entry.env = { ...entry.env, ...newConfig.env as Record<string, string> };
+        delete newConfig.env;
+      }
+      // Remaining keys go into config
+      entry.config = { ...entry.config, ...newConfig };
       fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
       return { success: true };
     } catch (err: any) {

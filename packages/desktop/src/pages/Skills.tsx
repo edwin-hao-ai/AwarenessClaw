@@ -9,6 +9,14 @@ interface InstalledSkill {
   installedAt: number;
 }
 
+interface InstallSpec {
+  id: string;
+  kind: string;
+  label: string;
+  bins: string[];
+  package?: string;
+}
+
 interface LocalSkillStatus {
   name: string;
   description: string;
@@ -28,6 +36,7 @@ interface LocalSkillStatus {
     config?: string[];
     os?: string[];
   };
+  install?: InstallSpec[];
 }
 
 interface RemoteSkill {
@@ -62,6 +71,7 @@ interface SkillDetail {
   homepage?: string;
   primaryEnv?: string;
   missing?: LocalSkillStatus['missing'];
+  install?: InstallSpec[];
 }
 
 const PAGE_SIZE = 20;
@@ -103,6 +113,7 @@ function buildLocalDetail(skill: LocalSkillStatus): SkillDetail {
     homepage: skill.homepage,
     primaryEnv: skill.primaryEnv,
     missing: skill.missing,
+    install: skill.install,
   };
 }
 
@@ -187,6 +198,24 @@ export default function Skills() {
       }
     } else {
       setActionError(res.error || t('skills.installFailed', 'Install failed'));
+    }
+    setActionSlug(null);
+  };
+
+  const handleInstallDeps = async (installSpecs: InstallSpec[]) => {
+    if (!api || !installSpecs?.length) return;
+    setActionSlug(installSpecs[0].id);
+    setActionError(null);
+    const res = await api.skillInstallDeps(installSpecs);
+    if (res.success) {
+      // Reload to check if the skill is now eligible
+      const r = await api.skillListInstalled();
+      if (r.success) {
+        setInstalled(r.skills || {});
+        setLocalSkills(Array.isArray(r.report?.skills) ? r.report.skills : []);
+      }
+    } else {
+      setActionError(res.error || t('skills.installDepsFailed', 'Failed to install dependencies'));
     }
     setActionSlug(null);
   };
@@ -748,7 +777,7 @@ export default function Skills() {
                   </div>
                 )}
 
-                {installedSlugs.has(detailSkill.slug) && (
+                {(installedSlugs.has(detailSkill.slug) || detailSkill.primaryEnv || detailSkill.missing?.env?.length || detailSkill.missing?.config?.length) && (
                   <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700/50">
                     <h4 className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-3">{t('skills.configuration', 'Configuration')}</h4>
                     {Object.keys(skillConfig).length === 0 ? (
@@ -814,7 +843,28 @@ export default function Skills() {
             {/* Footer actions */}
             {detailSkill && (
               <div className="flex justify-end gap-2 p-5 border-t border-slate-800">
-                {installedSlugs.has(detailSkill.slug) ? (
+                {detailSkill.eligible ? (
+                  /* Skill is ready — show installed badge */
+                  <span className="flex items-center gap-1 text-xs text-emerald-400 mr-auto">
+                    <Check size={12} /> {t('skills.status.ready', 'Ready')}
+                  </span>
+                ) : detailSkill.install && detailSkill.install.length > 0 && detailSkill.missing?.bins?.length ? (
+                  /* Built-in skill with missing binaries and install specs — install deps */
+                  <button
+                    onClick={async () => { await handleInstallDeps(detailSkill.install!); setDetailSkill(null); }}
+                    disabled={!!actionSlug}
+                    className="flex items-center gap-1 px-5 py-2 text-sm bg-brand-600 hover:bg-brand-500 disabled:bg-slate-700 text-white rounded-xl transition-colors"
+                  >
+                    {actionSlug ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                    {actionSlug ? t('skills.installing') : t('skills.installDeps', 'Install Dependencies')}
+                  </button>
+                ) : detailSkill.bundled ? (
+                  /* Built-in skill without install specs — show guidance */
+                  <p className="text-xs text-slate-500 mr-auto">
+                    {t('skills.builtinNeedsSetup', 'This built-in skill needs external tools. Check the missing items above.')}
+                  </p>
+                ) : installedSlugs.has(detailSkill.slug) ? (
+                  /* ClawHub installed skill — show uninstall */
                   <>
                     <span className="flex items-center gap-1 text-xs text-emerald-400 mr-auto">
                       <Check size={12} /> {t('skills.installed')}
@@ -829,6 +879,7 @@ export default function Skills() {
                     </button>
                   </>
                 ) : (
+                  /* ClawHub skill — install from registry */
                   <button
                     onClick={async () => { await handleInstall(detailSkill.slug); setDetailSkill(null); }}
                     disabled={actionSlug === detailSkill.slug}

@@ -98,6 +98,7 @@ Object.defineProperty(window, 'electronAPI', {
     skillSearch: () => Promise.resolve({ success: true, results: [] }),
     skillInstall: () => Promise.resolve({ success: true }),
     skillUninstall: () => Promise.resolve({ success: true }),
+    skillInstallDeps: () => Promise.resolve({ success: true }),
     permissionsGet: () => Promise.resolve({ success: true, profile: 'coding', alsoAllow: [], denied: [], execSecurity: 'deny', execAsk: 'on-miss', execAskFallback: 'deny', execAutoAllowSkills: false, execAllowlist: [] }),
     permissionsUpdate: () => Promise.resolve({ success: true }),
     workspaceReadFile: () => Promise.resolve({ success: true, content: '', exists: false }),
