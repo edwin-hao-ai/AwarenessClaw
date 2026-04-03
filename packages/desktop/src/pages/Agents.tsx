@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Bot, Plus, Trash2, Link, Loader2, RefreshCw, Edit3, Check, X, AlertCircle, FileText, ChevronDown, ChevronUp, Save } from 'lucide-react';
 import { useI18n } from '../lib/i18n';
+import AgentWizard from '../components/AgentWizard';
 
 interface AgentInfo {
   id: string;
@@ -29,12 +30,8 @@ export default function Agents() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Create form state
-  const [showCreateForm, setShowCreateForm] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const [newAgentName, setNewAgentName] = useState('');
-  const [newAgentModel, setNewAgentModel] = useState('');
-  const [newAgentPrompt, setNewAgentPrompt] = useState('');
+  // Wizard state
+  const [showWizard, setShowWizard] = useState(false);
 
   // Identity editing
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -102,38 +99,6 @@ export default function Agents() {
     const result = await (window.electronAPI as any).agentsDelete(agentId);
     if (result.success) loadAgents();
     else setError(result.error || 'Delete failed');
-  };
-
-  const handleCreate = async () => {
-    if (!newAgentName.trim() || !window.electronAPI) return;
-    setCreating(true);
-    setError(null);
-    try {
-      const result = await (window.electronAPI as any).agentsAdd(
-        newAgentName.trim(),
-        newAgentModel || undefined,
-        newAgentPrompt || undefined
-      );
-      if (result.success) {
-        setNewAgentName('');
-        setNewAgentModel('');
-        setNewAgentPrompt('');
-        setShowCreateForm(false);
-        loadAgents();
-      } else {
-        const errMsg = result.error || '';
-        if (/permission|access|denied/i.test(errMsg)) {
-          setError(t('agents.createPermissionDenied', 'Permission denied. Check your system permissions and try again.'));
-        } else if (/already exists|duplicate/i.test(errMsg)) {
-          setError(t('agents.createDuplicate', 'Agent "{name}" already exists. Choose a different name.').replace('{name}', newAgentName.trim()));
-        } else {
-          setError(errMsg || t('agents.createFailed', 'Failed to create agent. Please try again.'));
-        }
-      }
-    } catch {
-      setError(t('agents.unexpectedError', 'Unexpected error. Please try again.'));
-    }
-    setCreating(false);
   };
 
   const handleSetIdentity = async (agentId: string) => {
@@ -264,10 +229,10 @@ export default function Agents() {
             <p className="text-xs text-slate-500">{t('agents.subtitle')}</p>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={() => setShowCreateForm(!showCreateForm)}
+            <button onClick={() => setShowWizard(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-brand-600 hover:bg-brand-500 text-white rounded-lg transition-colors">
-              {showCreateForm ? <X size={12} /> : <Plus size={12} />}
-              {showCreateForm ? t('common.cancel', 'Cancel') : t('agents.createAgent')}
+              <Plus size={12} />
+              {t('agents.createAgent')}
             </button>
             <button onClick={loadAgents} disabled={loading}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200 bg-slate-800 rounded-lg">
@@ -287,40 +252,12 @@ export default function Agents() {
           </div>
         )}
 
-        {/* Create Form */}
-        {showCreateForm && (
-          <div className="p-4 bg-slate-800/70 border border-slate-700 rounded-xl space-y-3">
-            <h3 className="text-sm font-medium flex items-center gap-2">
-              <Plus size={14} className="text-brand-400" /> {t('agents.createAgent')}
-            </h3>
-
-            <div className="grid grid-cols-1 gap-2">
-              <input value={newAgentName} onChange={(e) => setNewAgentName(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleCreate()}
-                placeholder={t('agents.newPlaceholder')}
-                className="px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-sm focus:outline-none focus:border-brand-500" />
-
-              <input value={newAgentModel} onChange={(e) => setNewAgentModel(e.target.value)}
-                placeholder={t('agents.modelPlaceholder')}
-                className="px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-xs text-slate-400 focus:outline-none focus:border-brand-500" />
-
-              <div>
-                <label className="text-[11px] text-slate-500 mb-1 block">{t('agents.systemPrompt')}</label>
-                <textarea value={newAgentPrompt} onChange={(e) => setNewAgentPrompt(e.target.value)}
-                  placeholder={t('agents.systemPromptPlaceholder')}
-                  rows={4}
-                  className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-xs text-slate-300 focus:outline-none focus:border-brand-500 resize-y" />
-              </div>
-            </div>
-
-            <div className="flex justify-end">
-              <button onClick={handleCreate} disabled={!newAgentName.trim() || creating}
-                className="px-4 py-2 bg-brand-600 hover:bg-brand-500 disabled:bg-slate-700 text-white rounded-lg text-sm flex items-center gap-1.5 transition-colors">
-                {creating ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
-                {t('agents.create')}
-              </button>
-            </div>
-          </div>
+        {/* Agent Creation Wizard */}
+        {showWizard && (
+          <AgentWizard
+            onComplete={() => { setShowWizard(false); loadAgents(); }}
+            onCancel={() => setShowWizard(false)}
+          />
         )}
 
         {/* Agent List */}

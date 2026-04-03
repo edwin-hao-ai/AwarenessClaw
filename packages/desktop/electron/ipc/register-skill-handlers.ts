@@ -2,7 +2,7 @@ import fs from 'fs';
 import http from 'http';
 import https from 'https';
 import path from 'path';
-import { ipcMain } from 'electron';
+import { ipcMain, BrowserWindow } from 'electron';
 
 const ANSI_REGEX = new RegExp(String.raw`\u001b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])`, 'g');
 
@@ -129,6 +129,12 @@ export function registerSkillHandlers(deps: {
   runAsync: (cmd: string, timeoutMs?: number) => Promise<string>;
   readShellOutputAsync: (cmd: string, timeoutMs?: number) => Promise<string | null>;
 }) {
+  function sendProgress(stage: string, detail?: string) {
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send('skill:install-progress', { stage, detail });
+    }
+  }
+
   const clawhubApi = 'https://clawhub.ai/api/v1';
   const openclawDir = path.join(deps.home, '.openclaw');
   const workspaceDir = path.join(openclawDir, 'workspace');
@@ -220,13 +226,16 @@ export function registerSkillHandlers(deps: {
       if (!fs.existsSync(skillsDir)) {
         fs.mkdirSync(skillsDir, { recursive: true });
       }
+      sendProgress('downloading', slug);
       // --workdir prevents clawhub from falling back to cwd (which is "/" in packaged Electron)
       await deps.runAsync(
         `npx -y clawhub@latest install ${slug} --force --workdir "${workspaceDir}"`,
         120000,
       );
+      sendProgress('verifying', slug);
       return { success: true };
     } catch (err: any) {
+      sendProgress('error', err.message?.slice(0, 200));
       return { success: false, error: err.message?.slice(0, 300) };
     }
   });
@@ -251,28 +260,31 @@ export function registerSkillHandlers(deps: {
     const errors: string[] = [];
     for (const spec of installSpecs) {
       try {
+        const pkg = spec.package || spec.bins?.[0] || spec.id;
+        // 5 min timeout: brew/npm installs can be slow (downloads, compilation)
+        const depTimeout = 300000;
         if (spec.kind === 'brew') {
-          // Homebrew: install the package (package name is typically the bin name or spec.id)
-          const pkg = spec.package || spec.bins?.[0] || spec.id;
-          await deps.runAsync(`brew install ${pkg}`, 120000);
+          sendProgress('installing', `brew install ${pkg}`);
+          await deps.runAsync(`brew install ${pkg}`, depTimeout);
         } else if (spec.kind === 'node') {
-          // npm global install
-          const pkg = spec.package || spec.id;
-          await deps.runAsync(`npm install -g ${pkg}`, 120000);
+          sendProgress('installing', `npm install -g ${pkg}`);
+          await deps.runAsync(`npm install -g ${pkg}`, depTimeout);
         } else if (spec.kind === 'uv') {
-          const pkg = spec.package || spec.id;
-          await deps.runAsync(`uv tool install ${pkg}`, 120000);
+          sendProgress('installing', `uv tool install ${pkg}`);
+          await deps.runAsync(`uv tool install ${pkg}`, depTimeout);
         } else if (spec.kind === 'go') {
-          const pkg = spec.package || spec.id;
-          await deps.runAsync(`go install ${pkg}@latest`, 120000);
+          sendProgress('installing', `go install ${pkg}@latest`);
+          await deps.runAsync(`go install ${pkg}@latest`, depTimeout);
         } else {
           errors.push(`Unsupported installer kind: ${spec.kind} (${spec.label})`);
           continue;
         }
       } catch (err: any) {
+        sendProgress('error', err.message?.slice(0, 200));
         errors.push(`${spec.label}: ${err.message?.slice(0, 200)}`);
       }
     }
+    sendProgress('verifying');
     if (errors.length > 0) {
       return { success: false, error: errors.join('\n') };
     }

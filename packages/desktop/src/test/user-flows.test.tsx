@@ -44,35 +44,51 @@ describe('Multi-Agent Management (user flows)', () => {
     expect(screen.getByText('telegram')).toBeInTheDocument();
   });
 
-  it('flow: open create form and submit creates agent via agentsAdd(name, ...)', async () => {
-    // agentsAdd is called with positional args: (name, model?, prompt?)
+  it('flow: open wizard and create agent via multi-step flow', async () => {
     const addMock = vi.fn().mockResolvedValue({ success: true });
+    const identityMock = vi.fn().mockResolvedValue({ success: true });
+    const writeMock = vi.fn().mockResolvedValue({ success: true });
     const listMock = vi.fn().mockResolvedValue({
       success: true,
       agents: [{ id: 'main', name: 'Claw', emoji: '🦞', isDefault: true, bindings: [] }],
     });
     getApi().agentsList = listMock;
     getApi().agentsAdd = addMock;
+    getApi().agentsSetIdentity = identityMock;
+    getApi().agentsWriteFile = writeMock;
 
     await act(async () => { render(<Agents />); });
     await waitFor(() => expect(screen.getByText('Claw')).toBeInTheDocument());
 
-    // Open create form
+    // Open wizard
     const createBtn = screen.getAllByRole('button').find(b => b.textContent?.includes('Create Agent'));
     expect(createBtn).toBeTruthy();
     await act(async () => { fireEvent.click(createBtn!); });
 
-    // Find the name input placeholder
-    const input = screen.getByPlaceholderText(/New Agent/i);
-    await act(async () => { fireEvent.change(input, { target: { value: 'SalesBot' } }); });
+    // Step 1: Enter name
+    const nameInput = screen.getByPlaceholderText(/Research/i);
+    await act(async () => { fireEvent.change(nameInput, { target: { value: 'SalesBot' } }); });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /next/i })); });
 
-    // Find and click submit (Create button inside the form)
-    const submitBtn = screen.getAllByRole('button').find(b => b.textContent?.trim() === 'Create');
-    expect(submitBtn).toBeTruthy();
-    await act(async () => { fireEvent.click(submitBtn!); });
+    // Step 2: Keep default style, next
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /next/i })); });
 
-    // agentsAdd is called with the name as the first positional argument
-    await waitFor(() => expect(addMock).toHaveBeenCalledWith('SalesBot', undefined, undefined));
+    // Step 3: Keep default model, next
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /next/i })); });
+
+    // Step 4: Create — the wizard finish button contains a Sparkles icon + "Create Agent" text
+    const finishBtns = screen.getAllByRole('button').filter(b => b.textContent?.includes('Create Agent'));
+    // The wizard finish button is the one inside the fixed overlay (has Sparkles icon)
+    const wizardFinishBtn = finishBtns.find(b => b.querySelector('.lucide-sparkles'));
+    expect(wizardFinishBtn).toBeTruthy();
+    await act(async () => { fireEvent.click(wizardFinishBtn!); });
+
+    // agentsAdd is called with name and SOUL template
+    await waitFor(() => expect(addMock).toHaveBeenCalledWith(
+      'SalesBot',
+      undefined,
+      expect.stringContaining('warm, supportive'),
+    ));
   });
 
   it('flow: cannot delete main/default agent — delete button absent or disabled', async () => {

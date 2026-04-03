@@ -30,13 +30,13 @@ describe('Agents page', () => {
     });
   });
 
-  it('shows create input placeholder after opening form', async () => {
+  it('opens wizard after clicking Create Agent', async () => {
     await act(async () => { render(<Agents />); });
-    // Form is collapsed by default — click the create button to open it
     await waitFor(() => expect(screen.getByText(/Create Agent/i)).toBeInTheDocument());
     await act(async () => { fireEvent.click(screen.getByText(/Create Agent/i)); });
+    // Wizard should show step 1 with name input
     await waitFor(() => {
-      expect(screen.getByPlaceholderText(/new agent name/i)).toBeInTheDocument();
+      expect(screen.getByText('Name your agent')).toBeInTheDocument();
     });
   });
 

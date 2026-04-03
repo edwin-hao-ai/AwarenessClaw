@@ -144,6 +144,7 @@ export default function Skills() {
   const [searching, setSearching] = useState(false);
   const [actionSlug, setActionSlug] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [installProgress, setInstallProgress] = useState<string | null>(null);
   const [detailSkill, setDetailSkill] = useState<SkillDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [skillConfig, setSkillConfig] = useState<Record<string, string>>({});
@@ -173,6 +174,22 @@ export default function Skills() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  useEffect(() => {
+    const progressLabels: Record<string, string> = {
+      downloading: t('skills.progress.downloading', 'Downloading from ClawHub...'),
+      installing: t('skills.progress.installing', 'Installing...'),
+      verifying: t('skills.progress.verifying', 'Verifying installation...'),
+      error: t('skills.progress.error', 'Error'),
+    };
+    api?.onSkillInstallProgress?.((data: { stage: string; detail?: string }) => {
+      const label = progressLabels[data.stage] || data.stage;
+      setInstallProgress(data.detail ? `${label} ${data.detail}` : label);
+      if (data.stage === 'verifying' || data.stage === 'error') {
+        setTimeout(() => setInstallProgress(null), 2000);
+      }
+    });
+  }, []);
+
   const handleSearch = async () => {
     if (!searchQuery.trim() || !api) return;
     setSearching(true);
@@ -189,7 +206,9 @@ export default function Skills() {
     if (!api) return;
     setActionSlug(slug);
     setActionError(null);
+    setInstallProgress(t('skills.progress.downloading', 'Downloading from ClawHub...'));
     const res = await api.skillInstall(slug);
+    setInstallProgress(null);
     if (res.success) {
       const r = await api.skillListInstalled();
       if (r.success) {
@@ -206,7 +225,9 @@ export default function Skills() {
     if (!api || !installSpecs?.length) return;
     setActionSlug(installSpecs[0].id);
     setActionError(null);
+    setInstallProgress(t('skills.progress.installing', 'Installing...'));
     const res = await api.skillInstallDeps(installSpecs);
+    setInstallProgress(null);
     if (res.success) {
       // Reload to check if the skill is now eligible
       const r = await api.skillListInstalled();
@@ -391,6 +412,14 @@ export default function Skills() {
           <AlertCircle size={14} className="flex-shrink-0 mt-0.5" />
           <div className="flex-1">{actionError}</div>
           <button onClick={() => setActionError(null)} className="text-red-500 hover:text-red-300">×</button>
+        </div>
+      )}
+
+      {/* Install progress banner */}
+      {installProgress && !actionError && (
+        <div className="mx-6 mt-3 p-3 bg-brand-600/10 border border-brand-500/20 rounded-xl text-xs text-brand-300 flex items-center gap-2">
+          <Loader2 size={14} className="animate-spin flex-shrink-0" />
+          <span>{installProgress}</span>
         </div>
       )}
 
@@ -868,7 +897,7 @@ export default function Skills() {
                     className="flex items-center gap-1 px-5 py-2 text-sm bg-brand-600 hover:bg-brand-500 disabled:bg-slate-700 text-white rounded-xl transition-colors"
                   >
                     {actionSlug ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-                    {actionSlug ? t('skills.installing') : t('skills.installDeps', 'Install Dependencies')}
+                    {actionSlug ? (installProgress || t('skills.installing')) : t('skills.installDeps', 'Install Dependencies')}
                   </button>
                 ) : detailSkill.bundled && (detailSkill.missing?.env?.length ?? 0) > 0 ? (
                   /* Built-in skill missing env vars — show guidance */
@@ -898,7 +927,7 @@ export default function Skills() {
                     className="flex items-center gap-1 px-5 py-2 text-sm bg-brand-600 hover:bg-brand-500 disabled:bg-slate-700 text-white rounded-xl transition-colors"
                   >
                     {actionSlug === detailSkill.slug ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-                    {actionSlug === detailSkill.slug ? t('skills.installing') : t('skills.install')}
+                    {actionSlug === detailSkill.slug ? (installProgress || t('skills.installing')) : t('skills.install')}
                   </button>
                 )}
               </div>
