@@ -1,3 +1,4 @@
+import React from 'react';
 import { AlertTriangle, Check, Copy, File, FolderOpen, Loader2 } from 'lucide-react';
 import { ChatTracePanel, type ChatTraceEvent } from './ChatTracePanel';
 
@@ -80,10 +81,10 @@ export function ChatMessagesPane({
   onCopyApproval: (toolCall: ToolCallInfo) => void;
   onStopRequest: () => void | Promise<void>;
   onDismissError: () => void;
-  renderStreamingContent: (content: string) => JSX.Element;
-  TypewriterMessage: ({ content, isNew }: { content: string; isNew: boolean }) => JSX.Element;
-  ThinkingBlock: ({ thinking }: { thinking: string }) => JSX.Element | null;
-  LiveThinkingBlock: ({ thinking, expanded, onToggle }: { thinking: string; expanded: boolean; onToggle: () => void }) => JSX.Element | null;
+  renderStreamingContent: (content: string) => React.ReactNode;
+  TypewriterMessage: ({ content, isNew }: { content: string; isNew: boolean }) => React.ReactNode;
+  ThinkingBlock: ({ thinking }: { thinking: string }) => React.ReactNode;
+  LiveThinkingBlock: ({ thinking, expanded, onToggle }: { thinking: string; expanded: boolean; onToggle: () => void }) => React.ReactNode;
 }) {
   const statusLabel = agentStatus === 'thinking'
     ? t('chat.status.thinking')

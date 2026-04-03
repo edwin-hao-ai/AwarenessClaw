@@ -1,6 +1,6 @@
 import { AlertTriangle, CheckCircle, ChevronRight, Cloud, Code2, Download, ExternalLink, Loader2, Play, RefreshCw, RotateCw, Shield, Square, Trash2, Upload, Webhook } from 'lucide-react';
 import type { ReactNode } from 'react';
-import { SettingsRow, SettingsSection, SettingsToggle } from './SettingsPrimitives';
+import { SettingsModalShell, SettingsRow, SettingsSection, SettingsToggle } from './SettingsPrimitives';
 
 type TFunction = (key: string, fallback?: string) => string;
 

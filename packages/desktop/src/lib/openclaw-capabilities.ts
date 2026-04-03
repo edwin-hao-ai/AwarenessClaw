@@ -163,17 +163,18 @@ function buildFieldList(
     const childPath = `${basePath}.${key}`;
     if (SKIP_PATHS.has(childPath)) continue;
 
-    if (child && typeof child === 'object' && child.type === 'object' && child.properties) {
+    const childNode = child as JsonSchemaNode;
+    if (childNode && typeof childNode === 'object' && childNode.type === 'object' && childNode.properties) {
       const nextGroup = groupLabel || titleize(key);
       if (basePath.split('.').length <= 3) {
-        fields.push(...buildFieldList(child, childPath, titleize(key), currentValue?.[key]));
+        fields.push(...buildFieldList(childNode, childPath, titleize(key), currentValue?.[key]));
       } else {
-        fields.push(...buildFieldList(child, childPath, nextGroup, currentValue?.[key]));
+        fields.push(...buildFieldList(childNode, childPath, nextGroup, currentValue?.[key]));
       }
       continue;
     }
 
-    const fieldType = resolveFieldType(child as JsonSchemaNode, childPath);
+    const fieldType = resolveFieldType(childNode, childPath);
     if (!fieldType) continue;
 
     const meta = FIELD_META[childPath];

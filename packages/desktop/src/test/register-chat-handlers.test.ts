@@ -116,8 +116,19 @@ describe('registerChatHandlers', () => {
     const escapedWorkspaceDir = workspaceDir.replace(/\\/g, '\\\\');
 
     expect(result).toMatchObject({ success: true, text: 'CLI workspace reply', sessionId: 'test-session' });
-    expect(wrapWindowsCommand).toHaveBeenCalledWith(expect.stringContaining(`[Project working directory: ${escapedWorkspaceDir}]`));
-    expect(wrapWindowsCommand).toHaveBeenCalledWith(expect.stringContaining('Do not treat this folder as the agent\'s home workspace'));
+
+    // On macOS/Linux the command goes through /bin/bash -c, not wrapWindowsCommand.
+    // The workspace instructions are embedded in the -m message arg (escaped), inside the -c string.
+    if (process.platform === 'win32') {
+      expect(wrapWindowsCommand).toHaveBeenCalledWith(expect.stringContaining(`[Project working directory: ${escapedWorkspaceDir}]`));
+      expect(wrapWindowsCommand).toHaveBeenCalledWith(expect.stringContaining('Do not treat this folder as the agent\'s home workspace'));
+    } else {
+      // spawnChatProcess('/bin/bash', ['--norc', '--noprofile', '-c', 'export PATH=...; openclaw ...'], { cwd })
+      const spawnCall = spawnMock.mock.calls[0];
+      const allArgs = JSON.stringify(spawnCall);
+      expect(allArgs).toContain('[Project working directory:');
+      expect(allArgs).toContain('Do not treat this folder as the agent');
+    }
   });
 
   it('logs an upstream empty-response warning when Gateway finishes with no assistant payload', async () => {

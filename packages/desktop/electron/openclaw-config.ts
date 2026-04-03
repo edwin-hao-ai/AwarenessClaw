@@ -143,11 +143,11 @@ export function readExecApprovalsConfig(homedir: string): ExecApprovalsConfig {
   try {
     const parsed = readJsonFileWithBom<ExecApprovalsConfig>(configPath);
     return {
+      ...parsed,
       version: typeof parsed.version === 'number' ? parsed.version : 1,
       defaults: typeof parsed.defaults === 'object' && parsed.defaults ? parsed.defaults : {},
       agents: typeof parsed.agents === 'object' && parsed.agents ? parsed.agents : {},
       socket: typeof parsed.socket === 'object' && parsed.socket ? parsed.socket : undefined,
-      ...parsed,
     };
   } catch {
     return {

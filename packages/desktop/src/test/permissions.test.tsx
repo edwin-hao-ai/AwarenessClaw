@@ -49,7 +49,8 @@ describe('Settings Page — Permissions Panel', () => {
     });
 
     // Open advanced settings to see the checkbox-based tool/command pickers
-    const advancedBtn = screen.getAllByText(/Show advanced/i).at(-1)!;
+    const advancedBtns = screen.getAllByText(/Show advanced/i);
+    const advancedBtn = advancedBtns[advancedBtns.length - 1];
     await act(async () => { fireEvent.click(advancedBtn); });
 
     // In advanced mode, "Camera" is a known denied command shown as a checkbox button.

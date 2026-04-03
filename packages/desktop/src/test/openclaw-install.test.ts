@@ -344,25 +344,25 @@ describe('Windows env var safety', () => {
 
 describe('npm prefix auto-fix', () => {
   it('detects /usr/local as needing sudo', () => {
-    const prefix = '/usr/local';
+    const prefix: string = '/usr/local';
     const needsSudo = prefix.startsWith('/usr/local') || prefix.startsWith('/usr/lib') || prefix === '/usr';
     expect(needsSudo).toBe(true);
   });
 
   it('detects /usr/lib as needing sudo', () => {
-    const prefix = '/usr/lib';
+    const prefix: string = '/usr/lib';
     const needsSudo = prefix.startsWith('/usr/local') || prefix.startsWith('/usr/lib') || prefix === '/usr';
     expect(needsSudo).toBe(true);
   });
 
   it('does not flag ~/.npm-global as needing sudo', () => {
-    const prefix = '/Users/test/.npm-global';
+    const prefix: string = '/Users/test/.npm-global';
     const needsSudo = prefix.startsWith('/usr/local') || prefix.startsWith('/usr/lib') || prefix === '/usr';
     expect(needsSudo).toBe(false);
   });
 
   it('does not flag /opt/homebrew as needing sudo', () => {
-    const prefix = '/opt/homebrew';
+    const prefix: string = '/opt/homebrew';
     const needsSudo = prefix.startsWith('/usr/local') || prefix.startsWith('/usr/lib') || prefix === '/usr';
     expect(needsSudo).toBe(false);
   });
@@ -415,9 +415,9 @@ describe('Doctor — native npm install', () => {
 
     await doctor.runFix('openclaw-version');
 
-    const calls = shellRun.mock.calls.map(c => c[0]);
+    const calls = shellRun.mock.calls.map((c: unknown[]) => c[0] as string);
     // Should use plain npm install -g, NOT --prefix
-    expect(calls.some((c: string) => c.includes('npm install -g openclaw@latest'))).toBe(true);
-    expect(calls.some((c: string) => c.includes('--prefix'))).toBe(false);
+    expect(calls.some((c) => c.includes('npm install -g openclaw@latest'))).toBe(true);
+    expect(calls.some((c) => c.includes('--prefix'))).toBe(false);
   });
 });

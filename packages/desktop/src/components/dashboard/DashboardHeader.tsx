@@ -90,8 +90,8 @@ export function DashboardHeader({
             <div className="fixed inset-0 z-40" onClick={onCloseModelSelector} />
             <div className="absolute top-full left-0 mt-1 w-72 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-50 max-h-[400px] overflow-y-auto">
               {allProviders.map((provider) => {
-                const isConfigured = hasProviderCredentials(config, provider.key, provider.needsKey);
-                getProviderProfile(config, provider.key);
+                const isConfigured = hasProviderCredentials(config as any, provider.key, provider.needsKey ?? false);
+                getProviderProfile(config as any, provider.key);
 
                 return (
                   <div key={provider.key}>
