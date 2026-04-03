@@ -93,12 +93,38 @@ type LocalSkillStatusReport = {
   skills: LocalSkillStatus[];
 };
 
+// Parse install specs from SKILL.md YAML frontmatter to recover formula/module/package
+// that OpenClaw CLI strips from `openclaw skills info --json` output.
+function parseInstallSpecsFromSkillMd(content: string): SkillInstallSpec[] {
+  // Extract YAML frontmatter between --- delimiters
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (!match) return [];
+  const frontmatter = match[1];
+
+  // The metadata field in OpenClaw SKILL.md uses JSON-in-YAML format.
+  // Find the metadata block and extract the openclaw.install array.
+  const metaMatch = frontmatter.match(/metadata:\s*\n\s*(\{[\s\S]*\})\s*$/m);
+  if (!metaMatch) return [];
+
+  try {
+    // OpenClaw uses JSON5-ish format (trailing commas) — strip them for JSON.parse
+    const cleaned = metaMatch[1].replace(/,(\s*[}\]])/g, '$1');
+    const metadata = JSON.parse(cleaned);
+    const install = metadata?.openclaw?.install;
+    return Array.isArray(install) ? install : [];
+  } catch {
+    return [];
+  }
+}
+
 type SkillInstallSpec = {
   id: string;
   kind: string;
   label: string;
   bins?: string[];
   package?: string;
+  formula?: string;   // brew formula name (e.g., "1password-cli")
+  module?: string;    // go module path (e.g., "github.com/.../cmd/foo@latest")
   command?: string;
 };
 
@@ -133,6 +159,7 @@ function extractPrimaryBinary(command: string) {
 const ALLOWED_INSTALL_BINARIES = new Set([
   'brew', 'apt-get', 'apt', 'dnf', 'yum', 'pacman', 'zypper',
   'npm', 'pnpm', 'yarn', 'pip', 'pip3', 'cargo',
+  'go', 'uv',
   'winget', 'choco', 'scoop',
   'sudo', 'doas',
 ]);
@@ -149,36 +176,60 @@ function buildInstallCommands(spec: SkillInstallSpec) {
     return [spec.command.trim()];
   }
 
-  const pkg = sanitizePackageName(spec.package || spec.bins?.[0] || spec.id);
-  if (!pkg) return [];
-
-  const linuxCommands = [
-    `sudo -n apt-get update && sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y ${pkg}`,
-    `sudo -n dnf install -y ${pkg}`,
-    `sudo -n yum install -y ${pkg}`,
-    `sudo -n pacman -S --noconfirm ${pkg}`,
-    `sudo -n zypper install -y ${pkg}`,
-    `apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y ${pkg}`,
-    `dnf install -y ${pkg}`,
-    `yum install -y ${pkg}`,
-    `pacman -S --noconfirm ${pkg}`,
-    `zypper install -y ${pkg}`,
-  ];
-
   const kind = (spec.kind || 'auto').toLowerCase();
+
+  // Use kind-specific fields first, matching OpenClaw's install spec format:
+  // - brew: spec.formula (e.g., "1password-cli")
+  // - go:   spec.module  (e.g., "github.com/.../cmd/foo@latest")
+  // - node: spec.package (e.g., "typescript")
+  // - uv:   spec.package (e.g., "ruff")
+  // Fallback: spec.package || spec.bins[0] || spec.id
+  const brewFormula = sanitizePackageName(spec.formula || spec.package || spec.bins?.[0] || spec.id);
+  const nodePkg = sanitizePackageName(spec.package || spec.bins?.[0] || spec.id);
+  const goModule = spec.module?.trim();
+  const fallbackPkg = sanitizePackageName(spec.package || spec.bins?.[0] || spec.id);
+
+  const linuxCommands = fallbackPkg ? [
+    `sudo -n apt-get update && sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y ${fallbackPkg}`,
+    `sudo -n dnf install -y ${fallbackPkg}`,
+    `sudo -n yum install -y ${fallbackPkg}`,
+    `sudo -n pacman -S --noconfirm ${fallbackPkg}`,
+    `sudo -n zypper install -y ${fallbackPkg}`,
+    `apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y ${fallbackPkg}`,
+    `dnf install -y ${fallbackPkg}`,
+    `yum install -y ${fallbackPkg}`,
+    `pacman -S --noconfirm ${fallbackPkg}`,
+    `zypper install -y ${fallbackPkg}`,
+  ] : [];
+
   switch (kind) {
     case 'brew':
-      return ['brew install ' + pkg];
+      return brewFormula ? ['brew install ' + brewFormula] : [];
+    case 'go':
+      // go install requires a module path — `go install github.com/.../cmd/foo@latest`
+      if (goModule && /^[a-zA-Z0-9][a-zA-Z0-9._/-]*@[a-z0-9v._-]+$/.test(goModule)) {
+        return [`go install ${goModule}`];
+      }
+      return [];
+    case 'uv':
+      return nodePkg ? [`uv tool install ${nodePkg}`] : [];
+    case 'node':
+    case 'npm':
+      return nodePkg ? [`npm install -g --ignore-scripts ${nodePkg}`] : [];
+    case 'pnpm':
+      return nodePkg ? [`pnpm add -g ${nodePkg}`] : [];
+    case 'yarn':
+      return nodePkg ? [`yarn global add ${nodePkg}`] : [];
     case 'winget':
-      return [
-        `winget install --id ${pkg} -e --accept-source-agreements --accept-package-agreements --disable-interactivity`,
-        `winget install ${pkg} --accept-source-agreements --accept-package-agreements --disable-interactivity`,
-      ];
+      return fallbackPkg ? [
+        `winget install --id ${fallbackPkg} -e --accept-source-agreements --accept-package-agreements --disable-interactivity`,
+        `winget install ${fallbackPkg} --accept-source-agreements --accept-package-agreements --disable-interactivity`,
+      ] : [];
     case 'choco':
     case 'chocolatey':
-      return [`choco install ${pkg} -y`];
+      return fallbackPkg ? [`choco install ${fallbackPkg} -y`] : [];
     case 'scoop':
-      return [`scoop install ${pkg}`];
+      return fallbackPkg ? [`scoop install ${fallbackPkg}`] : [];
     case 'apt':
     case 'apt-get':
     case 'dnf':
@@ -186,30 +237,24 @@ function buildInstallCommands(spec: SkillInstallSpec) {
     case 'pacman':
     case 'zypper':
       return linuxCommands;
-    case 'npm':
-      return [`npm install -g --ignore-scripts ${pkg}`];
-    case 'pnpm':
-      return [`pnpm add -g ${pkg}`];
-    case 'yarn':
-      return [`yarn global add ${pkg}`];
     case 'pip':
-      return [`pip install ${pkg}`, `pip3 install ${pkg}`];
+      return fallbackPkg ? [`pip install ${fallbackPkg}`, `pip3 install ${fallbackPkg}`] : [];
     case 'cargo':
-      return [`cargo install ${pkg}`];
+      return fallbackPkg ? [`cargo install ${fallbackPkg}`] : [];
     case 'auto':
     default:
       if (process.platform === 'win32') {
-        return [
-          `winget install --id ${pkg} -e --accept-source-agreements --accept-package-agreements --disable-interactivity`,
-          `choco install ${pkg} -y`,
-          `scoop install ${pkg}`,
-          `npm install -g --ignore-scripts ${pkg}`,
-        ];
+        return fallbackPkg ? [
+          `winget install --id ${fallbackPkg} -e --accept-source-agreements --accept-package-agreements --disable-interactivity`,
+          `choco install ${fallbackPkg} -y`,
+          `scoop install ${fallbackPkg}`,
+          `npm install -g --ignore-scripts ${fallbackPkg}`,
+        ] : [];
       }
       if (process.platform === 'darwin') {
-        return [`brew install ${pkg}`, `npm install -g --ignore-scripts ${pkg}`];
+        return brewFormula ? [`brew install ${brewFormula}`, ...(nodePkg ? [`npm install -g --ignore-scripts ${nodePkg}`] : [])] : [];
       }
-      return [...linuxCommands, `npm install -g --ignore-scripts ${pkg}`];
+      return [...linuxCommands, ...(nodePkg ? [`npm install -g --ignore-scripts ${nodePkg}`] : [])];
   }
 }
 
@@ -396,6 +441,26 @@ export function registerSkillHandlers(deps: {
     try {
       const raw = await deps.runAsync(`openclaw skills info ${name} --json`, 30000);
       const parsed = JSON.parse(extractJsonPayload(raw));
+
+      // OpenClaw CLI strips formula/module/package from install specs (only keeps id/kind/label/bins).
+      // Read the actual SKILL.md to recover the full install spec with correct package names.
+      // Without this, `brew install op` runs instead of `brew install 1password-cli`.
+      if (parsed.filePath && Array.isArray(parsed.install) && parsed.install.length > 0) {
+        try {
+          const skillMd = fs.readFileSync(parsed.filePath, 'utf8');
+          const fullSpecs = parseInstallSpecsFromSkillMd(skillMd);
+          if (fullSpecs.length > 0) {
+            // Merge full specs back by matching id+kind
+            parsed.install = parsed.install.map((cliSpec: any) => {
+              const full = fullSpecs.find((f: any) => f.id === cliSpec.id && f.kind === cliSpec.kind);
+              return full ? { ...cliSpec, ...full } : cliSpec;
+            });
+          }
+        } catch {
+          // SKILL.md read failed — use CLI output as-is
+        }
+      }
+
       return { success: true, info: parsed };
     } catch (err: any) {
       return { success: false, error: err.message?.slice(0, 300) };
@@ -518,31 +583,39 @@ export function registerSkillHandlers(deps: {
       };
     }
 
-    // After successful install, verify target binaries exist via enhanced PATH
-    // and persist them so `skill:list-installed` can patch OpenClaw's false negatives.
+    // After successful install, verify target binaries actually exist via enhanced PATH.
+    // The install command may exit 0 but install the wrong package (e.g., `brew install grizzly`
+    // installs Grafana's `grr`, not Bear Notes' `grizzly`). We must verify the actual binary.
     sendProgress('verifying', 'dependencies installed');
     const verifiedBins = loadVerifiedBins(deps.home);
-    let verifiedCount = 0;
+    const verifiedList: string[] = [];
+    const unverifiedList: string[] = [];
     for (const spec of specs) {
       const targetBins = spec.bins || [];
       for (const bin of targetBins) {
         if (await isCommandAvailable(bin)) {
-          // Find the actual path for diagnostics (best-effort)
           let binPath: string | undefined;
           try {
             const probe = process.platform === 'win32' ? 'where' : 'which';
             binPath = (await deps.runSpawnAsync(probe, [bin], 5000)).split(/\r?\n/)[0]?.trim();
           } catch {}
           verifiedBins[bin] = { verifiedAt: Date.now(), path: binPath };
-          verifiedCount++;
+          verifiedList.push(bin);
+        } else {
+          unverifiedList.push(bin);
         }
       }
     }
-    if (verifiedCount > 0) {
+    if (verifiedList.length > 0) {
       saveVerifiedBins(deps.home, verifiedBins);
     }
 
-    return { success: true, installed, verified: verifiedCount };
+    return {
+      success: true,
+      installed,
+      verified: verifiedList,
+      unverified: unverifiedList,
+    };
   });
 
   ipcMain.handle('skill:get-config', async (_e, slug: string) => {

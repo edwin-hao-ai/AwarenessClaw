@@ -15,6 +15,8 @@ interface InstallSpec {
   label: string;
   bins: string[];
   package?: string;
+  formula?: string;   // brew formula (e.g., "1password-cli")
+  module?: string;    // go module path (e.g., "github.com/.../cmd/foo@latest")
 }
 
 interface LocalSkillStatus {
@@ -273,7 +275,19 @@ export default function Skills() {
     setInstallProgress(null);
 
     if (res?.success) {
-      setInstallResult({ success: true, message: t('skills.installDepsSuccess', 'Dependencies installed') });
+      // Check if target binaries were actually verified after install.
+      // Install command may exit 0 but install the wrong package (e.g., `brew install grizzly`
+      // installs Grafana's tool, not Bear Notes CLI). Show honest feedback.
+      const unverified: string[] = res.unverified || [];
+      if (unverified.length > 0) {
+        // Install ran but binary not found — guide user to manual install
+        setInstallResult({
+          success: false,
+          message: t('skills.installDepsUnverified', 'Install ran but {bins} not detected. Please install manually or check the install guide.').replace('{bins}', unverified.join(', ')),
+        });
+      } else {
+        setInstallResult({ success: true, message: t('skills.installDepsSuccess', 'Dependencies installed') });
+      }
       const listRes = await api.skillListInstalled();
       if (listRes?.success) {
         setInstalled(listRes.skills || {});
