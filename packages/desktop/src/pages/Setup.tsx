@@ -54,13 +54,30 @@ export default function SetupWizard({ onComplete }: SetupProps) {
 
   useEffect(() => {
     const api = window.electronAPI;
-    if (!api?.onSetupDaemonStatus) return;
+    const disposers: Array<() => void> = [];
 
-    return api.onSetupDaemonStatus((status) => {
-      setInstallSteps((prev) => prev.map((step) => step.key === 'daemon'
-        ? { ...step, detail: status.detail ? `${t(status.key)} (${status.detail})` : t(status.key) }
-        : step));
-    });
+    if (api?.onSetupStatus) {
+      const dispose = api.onSetupStatus((status) => {
+        setInstallSteps((prev) => prev.map((step) => step.key === status.stepKey
+          ? { ...step, detail: status.detail ? `${t(status.key, status.key)} (${status.detail})` : t(status.key, status.key) }
+          : step));
+      });
+      if (dispose) disposers.push(dispose);
+    }
+
+    if (api?.onSetupDaemonStatus) {
+      const dispose = api.onSetupDaemonStatus((status) => {
+        setInstallSteps((prev) => prev.map((step) => step.key === 'daemon'
+          ? { ...step, detail: status.detail ? `${t(status.key)} (${status.detail})` : t(status.key) }
+          : step));
+      });
+      if (dispose) disposers.push(dispose);
+    }
+
+    if (disposers.length === 0) return;
+    return () => {
+      for (const dispose of disposers) dispose();
+    };
   }, [t]);
 
   const updateInstallStep = (key: string, status: 'running' | 'done' | 'error', detail?: string) => {
@@ -145,6 +162,11 @@ export default function SetupWizard({ onComplete }: SetupProps) {
             updateInstallStep('openclaw', 'error', res.error || t('setup.install.networkFailed'));
             setInstallError({ key: 'openclaw', message: res.error || t('setup.install.networkFailed') });
             return;
+          }
+          if (res.alreadyInstalled) {
+            updateInstallStep('openclaw', 'running', t('setup.install.alreadyInstalled'));
+          } else if (res.version) {
+            updateInstallStep('openclaw', 'running', res.version);
           }
         }
         updateInstallStep('openclaw', 'done');

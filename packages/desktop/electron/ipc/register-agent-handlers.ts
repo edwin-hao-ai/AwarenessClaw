@@ -101,27 +101,27 @@ export function registerAgentHandlers(deps: {
 
   ipcMain.handle('agents:add', async (_e: any, name: string, model?: string, systemPrompt?: string) => {
     try {
-      const safeName = name.replace(/[^a-zA-Z0-9 _-]/g, '').trim();
-      if (!safeName) return { success: false, error: 'Invalid agent name' };
+      const displayName = name.replace(/["\\\n\r]/g, '').trim();
+      if (!displayName) return { success: false, error: 'Invalid agent name' };
       await deps.ensureGatewayRunning();
       const baseWsDir = path.join(deps.home, '.openclaw', 'workspaces');
       const baseAgentsDir = path.join(deps.home, '.openclaw', 'agents');
       fs.mkdirSync(baseWsDir, { recursive: true });
       fs.mkdirSync(baseAgentsDir, { recursive: true });
-      const slug = safeName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+      const slug = displayName.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || `agent-${Date.now()}`;
       const wsDir = path.join(baseWsDir, slug);
       fs.mkdirSync(wsDir, { recursive: true });
       const flags = ['--non-interactive', `--workspace "${wsDir}"`];
       const safeModel = model ? model.replace(/[^a-zA-Z0-9/_:.-]/g, '') : '';
       if (safeModel) flags.push(`--model "${safeModel}"`);
-      await deps.runAsync(`openclaw agents add "${safeName}" ${flags.join(' ')}`, 15000);
+      await deps.runAsync(`openclaw agents add "${displayName}" ${flags.join(' ')}`, 15000);
       if (systemPrompt) {
         const agentDir = path.join(baseAgentsDir, slug, 'agent');
         fs.mkdirSync(agentDir, { recursive: true });
         fs.writeFileSync(path.join(wsDir, 'SOUL.md'), systemPrompt, 'utf-8');
         fs.writeFileSync(path.join(agentDir, 'SOUL.md'), systemPrompt, 'utf-8');
       }
-      return { success: true };
+      return { success: true, agentId: slug };
     } catch (err: any) {
       return { success: false, error: err.message?.slice(0, 200) };
     }

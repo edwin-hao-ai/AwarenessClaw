@@ -47,6 +47,13 @@ describe('Skills — Install Deps for built-in skills', () => {
     api.skillDetail = vi.fn().mockResolvedValue({ success: false });
     api.skillGetConfig = vi.fn().mockResolvedValue({ success: true, config: {} });
     api.skillInstallDeps = vi.fn().mockResolvedValue({ success: true });
+    api.skillLocalInfo = vi.fn().mockResolvedValue({
+      success: true,
+      info: {
+        install: [{ id: 'brew', kind: 'brew', label: 'Install memo via Homebrew', bins: ['memo'] }],
+        homepage: 'https://github.com/antoniorodr/memo',
+      },
+    });
   });
 
   it('shows "Needs Setup" badge for skills missing binaries', async () => {
@@ -59,44 +66,32 @@ describe('Skills — Install Deps for built-in skills', () => {
     expect(badges.length).toBeGreaterThan(0);
   });
 
-  it('shows "Install Dependencies" button for built-in skill with install specs', async () => {
-    const api = window.electronAPI as any;
-    api.skillDetail = vi.fn().mockResolvedValue({ success: false });
-
+  it('shows install guidance with label from openclaw skills info', async () => {
     await act(async () => { render(<Skills />); });
 
-    // Click on apple-notes to open detail
     await act(async () => {
       fireEvent.click(screen.getByText('apple-notes'));
     });
 
-    // Should show "Install Dependencies" instead of "Install"
     await waitFor(() => {
-      expect(screen.getByText('Install Dependencies')).toBeInTheDocument();
+      expect(screen.getByText('Install memo via Homebrew')).toBeInTheDocument();
+      expect(screen.getByText('Install Guide')).toBeInTheDocument();
     });
   });
 
-  it('calls skillInstallDeps with correct install specs', async () => {
+  it('shows missing bins hint when local info is unavailable', async () => {
     const api = window.electronAPI as any;
-    api.skillDetail = vi.fn().mockResolvedValue({ success: false });
-    api.skillInstallDeps = vi.fn().mockResolvedValue({ success: true });
+    api.skillLocalInfo = vi.fn().mockResolvedValue({ success: false });
 
     await act(async () => { render(<Skills />); });
 
-    // Open detail for apple-notes
     await act(async () => {
       fireEvent.click(screen.getByText('apple-notes'));
     });
 
-    // Click Install Dependencies
-    await act(async () => {
-      fireEvent.click(screen.getByText('Install Dependencies'));
+    await waitFor(() => {
+      expect(screen.getByText(/Install the required tools: memo/)).toBeInTheDocument();
     });
-
-    // Auto-generated from missing.bins since openclaw doesn't provide install specs
-    expect(api.skillInstallDeps).toHaveBeenCalledWith([
-      { id: 'brew-memo', kind: 'brew', label: 'brew install memo', bins: ['memo'] },
-    ]);
   });
 
   it('shows "Ready" for eligible skills in detail modal', async () => {

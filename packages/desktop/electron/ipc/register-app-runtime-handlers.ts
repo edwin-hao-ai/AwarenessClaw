@@ -2,6 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import { app, ipcMain, shell } from 'electron';
 
+const OPENCLAW_INSTALL_TIMEOUT_MS = 300000;
+
 export function registerAppRuntimeHandlers(deps: {
   home: string;
   safeShellExecAsync: (cmd: string, timeoutMs?: number) => Promise<string | null>;
@@ -135,7 +137,7 @@ export function registerAppRuntimeHandlers(deps: {
               const cmd = npmCli
                 ? `"${process.execPath}" "${npmCli}" install -g openclaw@latest ${reg}`.trim()
                 : `npm install -g openclaw@latest ${reg}`.trim();
-              await deps.runAsync(cmd, 120000);
+              await deps.runAsync(cmd, OPENCLAW_INSTALL_TIMEOUT_MS);
               upgraded = true;
               break;
             } catch {}
@@ -146,9 +148,9 @@ export function registerAppRuntimeHandlers(deps: {
         if (!upgraded) {
           try {
             if (process.platform === 'win32') {
-              await deps.runAsync('powershell -Command "irm https://openclaw.ai/install.ps1 | iex"', 120000);
+              await deps.runAsync('powershell -Command "irm https://openclaw.ai/install.ps1 | iex"', OPENCLAW_INSTALL_TIMEOUT_MS);
             } else {
-              await deps.runAsync('curl -fsSL https://openclaw.ai/install.sh | bash', 120000);
+              await deps.runAsync('curl -fsSL https://openclaw.ai/install.sh | bash', OPENCLAW_INSTALL_TIMEOUT_MS);
             }
             upgraded = true;
           } catch {}

@@ -252,43 +252,19 @@ export function registerSkillHandlers(deps: {
     }
   });
 
-  // Install missing dependencies for built-in skills (e.g., brew install memo for apple-notes)
-  ipcMain.handle('skill:install-deps', async (_e, installSpecs: Array<{ id: string; kind: string; label: string; bins: string[]; package?: string }>) => {
-    if (!Array.isArray(installSpecs) || installSpecs.length === 0) {
-      return { success: false, error: 'No install specs provided' };
+  ipcMain.handle('skill:local-info', async (_e, name: string) => {
+    try {
+      const raw = await deps.runAsync(`openclaw skills info ${name} --json`, 30000);
+      const parsed = JSON.parse(extractJsonPayload(raw));
+      return { success: true, info: parsed };
+    } catch (err: any) {
+      return { success: false, error: err.message?.slice(0, 300) };
     }
-    const errors: string[] = [];
-    for (const spec of installSpecs) {
-      try {
-        const pkg = spec.package || spec.bins?.[0] || spec.id;
-        // 5 min timeout: brew/npm installs can be slow (downloads, compilation)
-        const depTimeout = 300000;
-        if (spec.kind === 'brew') {
-          sendProgress('installing', `brew install ${pkg}`);
-          await deps.runAsync(`brew install ${pkg}`, depTimeout);
-        } else if (spec.kind === 'node') {
-          sendProgress('installing', `npm install -g ${pkg}`);
-          await deps.runAsync(`npm install -g ${pkg}`, depTimeout);
-        } else if (spec.kind === 'uv') {
-          sendProgress('installing', `uv tool install ${pkg}`);
-          await deps.runAsync(`uv tool install ${pkg}`, depTimeout);
-        } else if (spec.kind === 'go') {
-          sendProgress('installing', `go install ${pkg}@latest`);
-          await deps.runAsync(`go install ${pkg}@latest`, depTimeout);
-        } else {
-          errors.push(`Unsupported installer kind: ${spec.kind} (${spec.label})`);
-          continue;
-        }
-      } catch (err: any) {
-        sendProgress('error', err.message?.slice(0, 200));
-        errors.push(`${spec.label}: ${err.message?.slice(0, 200)}`);
-      }
-    }
-    sendProgress('verifying');
-    if (errors.length > 0) {
-      return { success: false, error: errors.join('\n') };
-    }
-    return { success: true };
+  });
+
+  // Backward-compatible stub: the desktop now shows install guidance instead of auto-running package managers.
+  ipcMain.handle('skill:install-deps', async (_e, _installSpecs: unknown) => {
+    return { success: false, error: 'Deprecated: use skill:local-info to get install instructions' };
   });
 
   ipcMain.handle('skill:get-config', async (_e, slug: string) => {

@@ -119,7 +119,7 @@ export class GatewayClient extends EventEmitter {
   private config: GatewayConfig = { port: 18789, token: '' };
   private destroyed = false;
 
-  private static readonly CLIENT_ID = 'openclaw-tui';
+  private static readonly CLIENT_ID = 'openclaw-control-ui';
   private static readonly CLIENT_MODE = 'ui';
   private static readonly ROLE = 'operator';
   private static readonly SCOPES = ['operator.admin', 'operator.write', 'operator.read'];
@@ -131,10 +131,11 @@ export class GatewayClient extends EventEmitter {
     this.config = readGatewayConfig();
     const identity = loadDeviceIdentity();
     const url = `ws://127.0.0.1:${this.config.port}`;
+    const origin = `http://127.0.0.1:${this.config.port}`;
 
     return new Promise((resolve, reject) => {
       try {
-        this.ws = new WebSocket(url);
+        this.ws = new WebSocket(url, { headers: { Origin: origin } });
       } catch (err) {
         return reject(new Error(`WebSocket creation failed: ${err}`));
       }

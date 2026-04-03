@@ -56,6 +56,12 @@ Feel free to explore ideas from multiple angles.
 Match the language of the user's input — if they write in Chinese, respond in Chinese; if in English, respond in English.`,
 };
 
+const AGENT_EMOJIS = [
+  '🤖', '🧠', '🔬', '🎯', '📊', '💡', '🛡️', '🚀',
+  '📝', '🔧', '🎨', '📚', '🐾', '💼', '⚡', '🌙',
+  '🔥', '🐚', '🏠', '🦞', '👨‍💻', '🧪', '📡', '🎭',
+];
+
 const TOTAL_STEPS = 4;
 
 export default function AgentWizard({ onComplete, onCancel }: AgentWizardProps) {
@@ -160,7 +166,7 @@ export default function AgentWizard({ onComplete, onCancel }: AgentWizardProps) 
       }
 
       // 2. Set identity (name + emoji)
-      const slug = finalName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+      const slug = result.agentId || finalName.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || `agent-${Date.now()}`;
       if (api.agentsSetIdentity) {
         await api.agentsSetIdentity(slug, finalName, agentEmoji);
       }
@@ -253,20 +259,16 @@ export default function AgentWizard({ onComplete, onCancel }: AgentWizardProps) 
 
           {/* Step 0: Name + Emoji */}
           {step === 0 && (
-            <div className="flex-1 flex flex-col items-center justify-center gap-5">
+            <div className="flex-1 flex flex-col gap-4">
               <div className="text-center">
                 <h2 className="text-lg font-semibold text-white mb-1">{t('agentWizard.step1.title', 'Name your agent')}</h2>
                 <p className="text-xs text-slate-500">{t('agentWizard.step1.hint', 'Give it a unique name and emoji')}</p>
               </div>
-              <div className="flex items-center gap-3 w-full max-w-xs">
-                <input
-                  type="text"
-                  value={agentEmoji}
-                  onChange={e => { setAgentEmoji(e.target.value); }}
-                  className="w-14 px-2 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-center text-xl focus:outline-none focus:border-brand-500"
-                  maxLength={4}
-                  title={t('agentWizard.step1.emojiHint', 'Choose an emoji')}
-                />
+
+              <div className="flex items-center gap-3 mx-auto w-full max-w-xs">
+                <div className="w-12 h-12 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center text-2xl shrink-0">
+                  {agentEmoji}
+                </div>
                 <input
                   type="text"
                   value={agentName}
@@ -277,7 +279,28 @@ export default function AgentWizard({ onComplete, onCancel }: AgentWizardProps) 
                   onKeyDown={e => e.key === 'Enter' && canProceed() && handleNext()}
                 />
               </div>
-              <p className="text-[10px] text-slate-600">{t('agentWizard.step1.naming', 'Letters, numbers, and hyphens only')}</p>
+
+              <div>
+                <p className="text-[11px] text-slate-500 mb-2">{t('agentWizard.step1.pickEmoji', 'Pick an icon:')}</p>
+                <div className="grid grid-cols-8 gap-1.5">
+                  {AGENT_EMOJIS.map(emoji => (
+                    <button
+                      key={emoji}
+                      type="button"
+                      onClick={() => setAgentEmoji(emoji)}
+                      className={`w-9 h-9 rounded-lg text-lg flex items-center justify-center transition-all ${
+                        agentEmoji === emoji
+                          ? 'bg-brand-500/20 ring-2 ring-brand-500 scale-110'
+                          : 'bg-slate-800/50 hover:bg-slate-700/70'
+                      }`}
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <p className="text-[10px] text-slate-600 text-center">{t('agentWizard.step1.naming', 'Any language supported - Chinese, English, etc.')}</p>
             </div>
           )}
 

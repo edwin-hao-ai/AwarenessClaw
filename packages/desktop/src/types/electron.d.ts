@@ -12,9 +12,10 @@ export interface ElectronAPI {
   onStartupStatus: (callback: (status: { message: string; progress?: number }) => void) => void;
   detectEnvironment: () => Promise<EnvironmentInfo>;
   installNodeJs: () => Promise<{ success: boolean; alreadyInstalled?: boolean; method?: string; error?: string; hint?: string }>;
-  installOpenClaw: () => Promise<{ success: boolean; alreadyInstalled?: boolean; error?: string }>;
+  installOpenClaw: () => Promise<{ success: boolean; alreadyInstalled?: boolean; version?: string; method?: string; error?: string; hint?: string }>;
   installPlugin: () => Promise<{ success: boolean; error?: string }>;
   startDaemon: () => Promise<{ success: boolean; alreadyRunning?: boolean; error?: string }>;
+  onSetupStatus?: (callback: (status: { stepKey: string; key: string; detail?: string }) => void) => (() => void);
   onSetupDaemonStatus?: (callback: (status: { key: string; detail?: string }) => void) => (() => void);
   saveConfig: (config: Record<string, unknown>) => Promise<{ success: boolean }>;
   openAuthUrl: (url: string) => Promise<void>;
@@ -44,6 +45,16 @@ export interface ElectronAPI {
   agentsListFiles?: (id: string) => Promise<{ success: boolean; files?: string[]; error?: string }>;
   agentsReadFile?: (id: string, fileName: string) => Promise<{ success: boolean; content?: string; path?: string; error?: string }>;
   agentsWriteFile?: (id: string, fileName: string, content: string) => Promise<{ success: boolean; error?: string }>;
+  skillListInstalled?: () => Promise<{ success: boolean; skills?: Record<string, unknown>; report?: { skills?: unknown[] }; error?: string }>;
+  skillExplore?: () => Promise<{ success: boolean; skills?: unknown[]; error?: string }>;
+  skillSearch?: (query: string) => Promise<{ success: boolean; results?: unknown[]; error?: string }>;
+  skillDetail?: (slug: string) => Promise<{ success: boolean; skill?: unknown; error?: string }>;
+  skillInstall?: (slug: string) => Promise<{ success: boolean; error?: string }>;
+  skillUninstall?: (slug: string) => Promise<{ success: boolean; error?: string }>;
+  skillInstallDeps?: (installSpecs: Array<{ id: string; kind: string; label: string; bins: string[]; package?: string }>) => Promise<{ success: boolean; error?: string }>;
+  skillLocalInfo?: (name: string) => Promise<{ success: boolean; info?: { install?: Array<{ id: string; kind: string; label: string; bins: string[]; package?: string }>; homepage?: string }; error?: string }>;
+  skillGetConfig?: (slug: string) => Promise<{ success: boolean; config?: Record<string, string>; enabled?: boolean; apiKey?: string; env?: Record<string, string>; error?: string }>;
+  skillSaveConfig?: (slug: string, config: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>;
   readExistingConfig?: () => Promise<{ exists: boolean; hasProviders: boolean; providers: string[]; primaryModel: string; hasApiKey: boolean }>;
   bootstrap?: () => Promise<{ success: boolean; output?: string | null }>;
   modelsReadProviders?: () => Promise<{ success: boolean; providers: Array<{ key: string; baseUrl: string; apiType?: string; hasApiKey: boolean; models: Array<{ id: string; name: string }> }>; primaryModel: string }>;

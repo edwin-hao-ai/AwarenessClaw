@@ -1,9 +1,22 @@
-import { execSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { ipcMain, shell } from 'electron';
 import { writeExecApprovalAsk } from '../openclaw-config';
+
+const OPENCLAW_INSTALL_TIMEOUT_MS = 300000;
+const OPENCLAW_STATUS_PULSE_MS = 15000;
+
+function isCommandTimeoutError(message: string) {
+  return /timed out/i.test(message);
+}
+
+function formatElapsed(ms: number) {
+  const totalSeconds = Math.max(1, Math.floor(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+}
 
 export function registerSetupHandlers(deps: {
   home: string;
@@ -42,7 +55,24 @@ export function registerSetupHandlers(deps: {
   setDaemonStartupPromise: (value: Promise<{ success: boolean; alreadyRunning?: boolean; error?: string }> | null) => void;
   getDaemonStartupLastKickoff: () => number;
   setDaemonStartupLastKickoff: (value: number) => void;
+  sendSetupStatus: (stepKey: string, key: string, detail?: string) => void;
 }) {
+  const sendOpenClawStatus = (key: string, detail?: string) => deps.sendSetupStatus('openclaw', key, detail);
+
+  const runOpenClawStage = async <T>(key: string, task: () => Promise<T>) => {
+    sendOpenClawStatus(key);
+    const startedAt = Date.now();
+    const interval = setInterval(() => {
+      sendOpenClawStatus(key, formatElapsed(Date.now() - startedAt));
+    }, OPENCLAW_STATUS_PULSE_MS);
+
+    try {
+      return await task();
+    } finally {
+      clearInterval(interval);
+    }
+  };
+
   ipcMain.handle('setup:detect-environment', async () => {
     const result: Record<string, unknown> = {
       platform: process.platform,
@@ -57,21 +87,7 @@ export function registerSetupHandlers(deps: {
       hasExistingConfig: false,
     };
 
-    const safeExec = (cmd: string): string | null => {
-      try {
-        const ep = deps.getEnhancedPath();
-        if (process.platform === 'win32') {
-          return execSync(cmd, { encoding: 'utf8', timeout: 5000, stdio: 'pipe', shell: 'cmd.exe', env: { ...process.env, PATH: ep } }).trim();
-        }
-        return execSync(`/bin/bash --norc --noprofile -c 'export PATH="${ep}"; ${cmd.replace(/'/g, "'\\''")}'`, {
-          encoding: 'utf8', timeout: 5000, stdio: 'pipe', env: { ...process.env, PATH: ep },
-        }).trim();
-      } catch {
-        return null;
-      }
-    };
-
-    const nodeVersion = safeExec('node --version');
+    const nodeVersion = await deps.safeShellExecAsync('node --version', 5000);
     if (nodeVersion) {
       result.systemNodeInstalled = true;
       result.systemNodeVersion = nodeVersion;
@@ -81,9 +97,9 @@ export function registerSetupHandlers(deps: {
       result.nodeVersionTooOld = major > 0 && major < 20;
     }
 
-    result.npmInstalled = safeExec('npm --version') !== null;
+    result.npmInstalled = await deps.safeShellExecAsync('npm --version', 5000) !== null;
 
-    const openclawVersion = safeExec('openclaw --version');
+    const openclawVersion = await deps.safeShellExecAsync('openclaw --version', 8000);
     if (openclawVersion) {
       result.openclawInstalled = true;
       result.openclawVersion = openclawVersion;
@@ -214,9 +230,12 @@ export function registerSetupHandlers(deps: {
   });
 
   ipcMain.handle('setup:install-openclaw', async () => {
+    sendOpenClawStatus('setup.install.openclawStatus.checking');
+
     // Check if already installed (PATH-based + npm root)
     const existing = await deps.safeShellExecAsync('openclaw --version');
     if (existing) {
+      sendOpenClawStatus('setup.install.openclawStatus.ready');
       return { success: true, alreadyInstalled: true, version: existing };
     }
 
@@ -224,12 +243,12 @@ export function registerSetupHandlers(deps: {
     if (npmRoot) {
       const globalOpenClawPkg = path.join(npmRoot.trim(), 'openclaw', 'package.json');
       if (fs.existsSync(globalOpenClawPkg)) {
-        const ver = await deps.safeShellExecAsync('npm exec -g openclaw -- --version', 5000);
+        sendOpenClawStatus('setup.install.openclawStatus.foundPackage');
+        const ver = await deps.safeShellExecAsync('openclaw --version', 8000);
         return {
           success: true,
           alreadyInstalled: true,
-          version: ver || 'installed (not in PATH)',
-          hint: 'OpenClaw is installed globally but not in your PATH. Restart your terminal or add it to PATH.',
+          version: ver || 'OpenClaw installed',
         };
       }
     }
@@ -262,11 +281,23 @@ export function registerSetupHandlers(deps: {
     const npmCli = deps.getBundledNpmBin('npm');
     for (const reg of registries) {
       try {
+        sendOpenClawStatus(
+          reg
+            ? 'setup.install.openclawStatus.retryingMirror'
+            : npmCli
+              ? 'setup.install.openclawStatus.preparingBundledNpm'
+              : 'setup.install.openclawStatus.preparingNpm'
+        );
         const cmd = npmCli
           ? `"${process.execPath}" "${npmCli}" install -g openclaw ${reg}`.trim()
           : `npm install -g openclaw ${reg}`.trim();
-        await deps.runAsync(cmd, 90000);
-        return { success: true };
+        await runOpenClawStage('setup.install.openclawStatus.downloading', () => deps.runAsync(cmd, OPENCLAW_INSTALL_TIMEOUT_MS));
+        sendOpenClawStatus('setup.install.openclawStatus.verifying');
+        const verified = await deps.safeShellExecAsync('openclaw --version', 10000);
+        if (verified) {
+          sendOpenClawStatus('setup.install.openclawStatus.ready');
+          return { success: true, version: verified };
+        }
       } catch (err) {
         lastError = String(err);
       }
@@ -282,13 +313,31 @@ export function registerSetupHandlers(deps: {
             error: 'PowerShell execution policy is too restrictive to install OpenClaw.\nPlease run in PowerShell as administrator:\n  Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser\nThen reopen AwarenessClaw.',
           };
         }
-        await deps.runAsync('powershell -NoProfile -Command "irm https://openclaw.ai/install.ps1 | iex"', 120000);
+        await runOpenClawStage('setup.install.openclawStatus.officialInstaller', () => deps.runAsync('powershell -NoProfile -Command "irm https://openclaw.ai/install.ps1 | iex"', OPENCLAW_INSTALL_TIMEOUT_MS));
       } else {
-        await deps.runAsync('curl -fsSL https://openclaw.ai/install.sh | bash', 120000);
+        await runOpenClawStage('setup.install.openclawStatus.officialInstaller', () => deps.runAsync('curl -fsSL https://openclaw.ai/install.sh | bash', OPENCLAW_INSTALL_TIMEOUT_MS));
       }
-      return { success: true, method: 'official-script' };
+      sendOpenClawStatus('setup.install.openclawStatus.verifying');
+      const verified = await deps.safeShellExecAsync('openclaw --version', 10000);
+      if (verified) {
+        sendOpenClawStatus('setup.install.openclawStatus.ready');
+        return { success: true, method: 'official-script', version: verified };
+      }
+      return {
+        success: false,
+        error: 'OpenClaw files were downloaded, but the command is still unavailable. AwarenessClaw will not continue until OpenClaw can actually run.',
+      };
     } catch (err) {
       const msg = String(err);
+      if (isCommandTimeoutError(msg) || isCommandTimeoutError(lastError)) {
+        return {
+          success: false,
+          error: process.platform === 'win32'
+            ? 'Installing OpenClaw is taking longer than expected. First-time setup on Windows can take 2-5 minutes. Please keep this window open and retry once.'
+            : 'Installing OpenClaw is taking longer than expected. First-time setup can take several minutes. Please keep this window open and retry once.',
+          hint: 'You can also install manually in terminal: npm install -g openclaw',
+        };
+      }
       if (/EACCES|permission denied|Access is denied/i.test(msg) || /EACCES|permission denied/i.test(lastError)) {
         return {
           success: false,

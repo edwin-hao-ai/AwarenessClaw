@@ -16,6 +16,8 @@ import {
   writeExecApprovalAsk,
 } from './openclaw-config';
 
+const OPENCLAW_INSTALL_TIMEOUT_MS = 300000;
+
 // --- Types ---
 
 export type CheckStatus = 'pass' | 'warn' | 'fail' | 'skipped';
@@ -57,6 +59,7 @@ interface Ctx {
   nodePath: string | null;
   openclawVersion: string | null;
   openclawPath: string | null;
+  openclawPackageDir: string | null;
   openclawCandidates: string[];
   npmPrefix: string | null;
   configPath: string;
@@ -196,7 +199,21 @@ async function buildContext(deps: DoctorDeps): Promise<Ctx> {
     ? normalizeWindowsCommandCandidates(openclawCandidatesRaw)
     : openclawCandidatesRaw;
   const openclawPath = openclawCandidates[0] || null;
-  const openclawVersion = openclawPath ? await deps.shellExec('openclaw --version', 8000) : null;
+  const npmRoot = await deps.shellExec('npm root -g', 5000);
+  const openclawPackageDir = npmRoot
+    ? path.join(npmRoot.trim(), 'openclaw')
+    : null;
+  const hasOpenClawPackage = !!openclawPackageDir && fs.existsSync(path.join(openclawPackageDir, 'package.json'));
+  let openclawVersion = openclawPath ? await deps.shellExec('openclaw --version', 8000) : null;
+  if (!openclawVersion && hasOpenClawPackage) {
+    openclawVersion = await deps.shellExec('openclaw --version', 8000);
+    if (!openclawVersion) {
+      try {
+        const pkg = JSON.parse(fs.readFileSync(path.join(openclawPackageDir!, 'package.json'), 'utf8'));
+        if (pkg?.version) openclawVersion = `OpenClaw ${pkg.version}`;
+      } catch {}
+    }
+  }
   const npmPrefix = await deps.shellExec('npm config get prefix', 5000);
 
   return {
@@ -204,6 +221,7 @@ async function buildContext(deps: DoctorDeps): Promise<Ctx> {
     nodePath: nodePath?.trim() || null,
     openclawVersion: openclawVersion?.trim() || null,
     openclawPath: openclawPath?.trim() || null,
+    openclawPackageDir: hasOpenClawPackage ? openclawPackageDir : null,
     openclawCandidates,
     npmPrefix: npmPrefix?.trim() || null,
     configPath, config, deps,
@@ -221,15 +239,30 @@ async function checkNodeInstalled(ctx: Ctx): Promise<CheckResult> {
 
 async function checkOpenclawInstalled(ctx: Ctx): Promise<CheckResult> {
   if (!ctx.nodePath) return { id: 'openclaw-installed', label: 'OpenClaw', status: 'skipped', message: 'Skipped (Node.js required)', fixable: 'none' };
-  if (ctx.openclawPath && ctx.openclawVersion) {
+  if ((ctx.openclawPath || ctx.openclawPackageDir) && ctx.openclawVersion) {
     return { id: 'openclaw-installed', label: 'OpenClaw', status: 'pass', message: `Installed (${ctx.openclawVersion.match(/\d+\.\d+\.\d+/)?.[0] || ctx.openclawVersion})`, fixable: 'none' };
   }
   return { id: 'openclaw-installed', label: 'OpenClaw', status: 'fail', message: 'OpenClaw is not installed', fixable: 'auto', fixDescription: 'Install OpenClaw via npm' };
 }
 
 async function checkOpenclawCommandHealth(ctx: Ctx): Promise<CheckResult> {
-  if (!ctx.openclawPath) {
+  if (!ctx.openclawPath && !ctx.openclawPackageDir) {
     return { id: 'openclaw-command-health', label: 'OpenClaw command path', status: 'skipped', message: 'Skipped (OpenClaw not installed)', fixable: 'none' };
+  }
+
+  if (!ctx.openclawPath && ctx.openclawPackageDir) {
+    return {
+      id: 'openclaw-command-health',
+      label: 'OpenClaw command path',
+      status: 'warn',
+      message: ctx.deps.platform === 'win32'
+        ? 'OpenClaw is installed, but the Windows command shim is missing or not visible yet.'
+        : 'OpenClaw is installed, but the shell command is missing from the current PATH.',
+      fixable: 'auto',
+      fixDescription: ctx.deps.platform === 'win32'
+        ? 'Refresh the Windows OpenClaw command shims'
+        : 'Refresh the OpenClaw command link',
+    };
   }
 
   const duplicates = ctx.openclawCandidates.filter(candidate => candidate !== ctx.openclawPath);
@@ -261,7 +294,7 @@ async function fixOpenclawCommandHealth(ctx: Ctx): Promise<FixResult> {
       } catch {
         // May need sudo — that's OK, managed install will still pin the correct version
       }
-      await ctx.deps.shellRun(`${getNpmInstallCommand('openclaw@latest')} 2>&1`, 120000);
+      await ctx.deps.shellRun(`${getNpmInstallCommand('openclaw@latest')} 2>&1`, OPENCLAW_INSTALL_TIMEOUT_MS);
       return {
         id: 'openclaw-command-health',
         success: true,
@@ -280,7 +313,7 @@ async function fixOpenclawCommandHealth(ctx: Ctx): Promise<FixResult> {
       if (fs.existsSync(filePath)) fs.rmSync(filePath, { force: true });
     }
 
-    await ctx.deps.shellRun(`${getNpmInstallCommand()} 2>&1`, 90000);
+    await ctx.deps.shellRun(`${getNpmInstallCommand()} 2>&1`, OPENCLAW_INSTALL_TIMEOUT_MS);
     return { id: 'openclaw-command-health', success: true, message: 'OpenClaw command shims refreshed' };
   } catch (err: any) {
     return { id: 'openclaw-command-health', success: false, message: err.message?.slice(0, 200) || 'Cleanup failed' };
@@ -289,7 +322,7 @@ async function fixOpenclawCommandHealth(ctx: Ctx): Promise<FixResult> {
 
 async function fixOpenclawInstall(ctx: Ctx): Promise<FixResult> {
   try {
-    await ctx.deps.shellRun(`${getNpmInstallCommand()} 2>&1`, 60000);
+    await ctx.deps.shellRun(`${getNpmInstallCommand()} 2>&1`, OPENCLAW_INSTALL_TIMEOUT_MS);
     return { id: 'openclaw-installed', success: true, message: 'OpenClaw installed successfully' };
   } catch (err: any) {
     return { id: 'openclaw-installed', success: false, message: err.message?.slice(0, 200) || 'Installation failed' };
@@ -313,7 +346,7 @@ async function checkOpenclawVersion(ctx: Ctx): Promise<CheckResult> {
 
 async function fixOpenclawUpdate(ctx: Ctx): Promise<FixResult> {
   try {
-    await ctx.deps.shellRun(`${getNpmInstallCommand('openclaw@latest')} 2>&1`, 60000);
+    await ctx.deps.shellRun(`${getNpmInstallCommand('openclaw@latest')} 2>&1`, OPENCLAW_INSTALL_TIMEOUT_MS);
     return { id: 'openclaw-version', success: true, message: 'Updated successfully' };
   } catch (err: any) {
     return { id: 'openclaw-version', success: false, message: err.message?.slice(0, 200) || 'Update failed' };

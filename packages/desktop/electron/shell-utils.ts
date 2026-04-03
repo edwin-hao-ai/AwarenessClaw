@@ -85,7 +85,7 @@ export function createShellUtils(options: { home: string; app: any }) {
     return getGatewayPortShared(home);
   }
 
-  function safeShellExec(cmd: string, timeoutMs = 5000): string | null {
+  function rawShellExecSync(cmd: string, timeoutMs = 5000): string | null {
     try {
       const enhancedPath = getEnhancedPath();
       if (process.platform === 'win32') {
@@ -99,7 +99,7 @@ export function createShellUtils(options: { home: string; app: any }) {
     }
   }
 
-  function safeShellExecAsync(cmd: string, timeoutMs = 5000): Promise<string | null> {
+  function rawShellExecAsync(cmd: string, timeoutMs = 5000): Promise<string | null> {
     return new Promise(resolve => {
       const enhancedPath = getEnhancedPath();
       const shellCmd = process.platform === 'win32' ? wrapWindowsCommand(cmd) : `export PATH="${enhancedPath}"; ${cmd}`;
@@ -117,38 +117,112 @@ export function createShellUtils(options: { home: string; app: any }) {
     });
   }
 
+  function getOpenClawPackageDirSync(): string | null {
+    const npmRoot = rawShellExecSync('npm root -g', 5000);
+    if (!npmRoot) return null;
+    const pkgDir = path.join(npmRoot.trim(), 'openclaw');
+    return fs.existsSync(path.join(pkgDir, 'package.json')) ? pkgDir : null;
+  }
+
+  async function getOpenClawPackageDirAsync(): Promise<string | null> {
+    const npmRoot = await rawShellExecAsync('npm root -g', 5000);
+    if (!npmRoot) return null;
+    const pkgDir = path.join(npmRoot.trim(), 'openclaw');
+    return fs.existsSync(path.join(pkgDir, 'package.json')) ? pkgDir : null;
+  }
+
+  function getOpenClawEntryPath(pkgDir: string): string | null {
+    const candidates = [
+      path.join(pkgDir, 'openclaw.mjs'),
+      path.join(pkgDir, 'dist', 'index.js'),
+    ];
+    return candidates.find((candidate) => fs.existsSync(candidate)) || null;
+  }
+
+  function buildOpenClawShellFallbackSync(): string | null {
+    const existing = rawShellExecSync(process.platform === 'win32' ? 'where openclaw' : 'which openclaw', 3000);
+    if (existing) return null;
+    const pkgDir = getOpenClawPackageDirSync();
+    if (!pkgDir) return null;
+    const entryPath = getOpenClawEntryPath(pkgDir);
+    if (!entryPath) return null;
+    const candidate = `${getNodeInvocationCommand()} "${entryPath}"`;
+    return rawShellExecSync(`${candidate} --version`, 8000) ? candidate : null;
+  }
+
+  async function buildOpenClawShellFallbackAsync(): Promise<string | null> {
+    const existing = await rawShellExecAsync(process.platform === 'win32' ? 'where openclaw' : 'which openclaw', 3000);
+    if (existing) return null;
+    const pkgDir = await getOpenClawPackageDirAsync();
+    if (!pkgDir) return null;
+    const entryPath = getOpenClawEntryPath(pkgDir);
+    if (!entryPath) return null;
+    const candidate = `${getNodeInvocationCommand()} "${entryPath}"`;
+    return await rawShellExecAsync(`${candidate} --version`, 8000) ? candidate : null;
+  }
+
+  function getOpenClawDirectSpawnSync(): { command: string; argsPrefix: string[] } | null {
+    const existing = rawShellExecSync(process.platform === 'win32' ? 'where openclaw' : 'which openclaw', 3000);
+    if (existing) return null;
+    const pkgDir = getOpenClawPackageDirSync();
+    if (!pkgDir) return null;
+    const entryPath = getOpenClawEntryPath(pkgDir);
+    if (!entryPath) return null;
+    return { command: findNodeExecutable(), argsPrefix: [entryPath] };
+  }
+
+  function rewriteOpenClawShellCommand(command: string, fallback: string | null) {
+    if (!fallback || !/\bopenclaw\b/.test(command)) return command;
+    let rewritten = command.replace(/^openclaw\b/, fallback);
+    rewritten = rewritten.replace(/(&&\s*)openclaw\b/g, `$1${fallback}`);
+    rewritten = rewritten.replace(/(\|\|\s*)openclaw\b/g, `$1${fallback}`);
+    rewritten = rewritten.replace(/(;\s*)openclaw\b/g, `$1${fallback}`);
+    return rewritten;
+  }
+
+  function safeShellExec(cmd: string, timeoutMs = 5000): string | null {
+    return rawShellExecSync(rewriteOpenClawShellCommand(cmd, buildOpenClawShellFallbackSync()), timeoutMs);
+  }
+
+  function safeShellExecAsync(cmd: string, timeoutMs = 5000): Promise<string | null> {
+    return buildOpenClawShellFallbackAsync().then((fallback) => rawShellExecAsync(rewriteOpenClawShellCommand(cmd, fallback), timeoutMs));
+  }
+
   function readShellOutputAsync(cmd: string, timeoutMs = 5000): Promise<string | null> {
     return new Promise(resolve => {
       const enhancedPath = getEnhancedPath();
-      const shellCmd = process.platform === 'win32' ? wrapWindowsCommand(cmd) : `export PATH="${enhancedPath}"; ${cmd}`;
-      const child = process.platform === 'win32'
-        ? spawn(shellCmd, [], { shell: 'cmd.exe', env: { ...process.env, PATH: enhancedPath, NO_COLOR: '1', FORCE_COLOR: '0' }, stdio: 'pipe' })
-        : spawn('/bin/bash', ['--norc', '--noprofile', '-c', shellCmd], { env: { ...process.env, PATH: enhancedPath }, stdio: 'pipe' });
-      let stdout = '';
-      let stderr = '';
-      let settled = false;
-      const timer = setTimeout(() => {
-        if (!settled) {
-          settled = true;
-          child.kill();
-          resolve((stdout + stderr).trim() || null);
-        }
-      }, timeoutMs);
-      child.stdout?.on('data', (d: Buffer) => { stdout += d.toString(); });
-      child.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); });
-      child.on('close', () => {
-        if (!settled) {
-          settled = true;
-          clearTimeout(timer);
-          resolve((stdout + stderr).trim() || null);
-        }
-      });
-      child.on('error', () => {
-        if (!settled) {
-          settled = true;
-          clearTimeout(timer);
-          resolve((stdout + stderr).trim() || null);
-        }
+      buildOpenClawShellFallbackAsync().then((fallback) => {
+        const rewrittenCmd = rewriteOpenClawShellCommand(cmd, fallback);
+        const shellCmd = process.platform === 'win32' ? wrapWindowsCommand(rewrittenCmd) : `export PATH="${enhancedPath}"; ${rewrittenCmd}`;
+        const child = process.platform === 'win32'
+          ? spawn(shellCmd, [], { shell: 'cmd.exe', env: { ...process.env, PATH: enhancedPath, NO_COLOR: '1', FORCE_COLOR: '0' }, stdio: 'pipe' })
+          : spawn('/bin/bash', ['--norc', '--noprofile', '-c', shellCmd], { env: { ...process.env, PATH: enhancedPath }, stdio: 'pipe' });
+        let stdout = '';
+        let stderr = '';
+        let settled = false;
+        const timer = setTimeout(() => {
+          if (!settled) {
+            settled = true;
+            child.kill();
+            resolve((stdout + stderr).trim() || null);
+          }
+        }, timeoutMs);
+        child.stdout?.on('data', (d: Buffer) => { stdout += d.toString(); });
+        child.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); });
+        child.on('close', () => {
+          if (!settled) {
+            settled = true;
+            clearTimeout(timer);
+            resolve((stdout + stderr).trim() || null);
+          }
+        });
+        child.on('error', () => {
+          if (!settled) {
+            settled = true;
+            clearTimeout(timer);
+            resolve((stdout + stderr).trim() || null);
+          }
+        });
       });
     });
   }
@@ -177,10 +251,11 @@ export function createShellUtils(options: { home: string; app: any }) {
 
   function run(cmd: string, opts: Record<string, unknown> = {}): string {
     const enhancedPath = getEnhancedPath();
+    const rewrittenCmd = rewriteOpenClawShellCommand(cmd, buildOpenClawShellFallbackSync());
     if (process.platform === 'win32') {
-      return execSync(cmd, { encoding: 'utf8', timeout: 180000, stdio: 'pipe', shell: 'cmd.exe', env: { ...process.env, PATH: enhancedPath }, ...opts } as any);
+      return execSync(rewrittenCmd, { encoding: 'utf8', timeout: 180000, stdio: 'pipe', shell: 'cmd.exe', env: { ...process.env, PATH: enhancedPath }, ...opts } as any);
     }
-    return execSync(`/bin/bash --norc --noprofile -c 'export PATH="${enhancedPath}"; ${cmd.replace(/'/g, "'\\''")}'`, {
+    return execSync(`/bin/bash --norc --noprofile -c 'export PATH="${enhancedPath}"; ${rewrittenCmd.replace(/'/g, "'\\''")}'`, {
       encoding: 'utf8', timeout: 180000, stdio: 'pipe', env: { ...process.env, PATH: enhancedPath }, ...opts,
     } as any);
   }
@@ -210,6 +285,16 @@ export function createShellUtils(options: { home: string; app: any }) {
       }
     }
 
+    if (cmd === 'openclaw') {
+      const fallback = getOpenClawDirectSpawnSync();
+      if (fallback) {
+        return spawn(fallback.command, [...fallback.argsPrefix, ...args], {
+          env: { ...process.env, PATH: getEnhancedPath() },
+          ...opts,
+        });
+      }
+    }
+
     return spawn(cmd, args, {
       env: { ...process.env, PATH: getEnhancedPath() },
       ...opts,
@@ -227,30 +312,33 @@ export function createShellUtils(options: { home: string; app: any }) {
         return `${process.execPath} "${npxCli}" ${rest}`;
       };
 
-      const shellCmdRaw = process.platform === 'win32' ? wrapWindowsCommand(cmd) : `export PATH="${enhancedPath}"; ${cmd}`;
-      const shellCmd = rewriteNpx(shellCmdRaw);
-      const child = process.platform === 'win32'
-        ? spawn(shellCmd, [], { shell: 'cmd.exe', env: { ...process.env, PATH: enhancedPath, NO_COLOR: '1', FORCE_COLOR: '0' }, stdio: 'pipe' })
-        : spawn('/bin/bash', ['--norc', '--noprofile', '-c', shellCmd], { env: { ...process.env, PATH: enhancedPath }, stdio: 'pipe' });
-      let stdout = '';
-      let stderr = '';
-      let settled = false;
-      const timer = setTimeout(() => {
-        if (!settled) { settled = true; child.kill(); reject(new Error('Command timed out')); }
-      }, timeoutMs);
-      child.stdout?.on('data', (d: Buffer) => { stdout += d.toString(); });
-      child.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); });
-      child.on('close', (code: number | null) => {
-        if (!settled) {
-          settled = true;
-          clearTimeout(timer);
-          if (code === 0) resolve(stdout.trim());
-          else reject(new Error(stderr.trim() || stdout.trim().slice(-500) || `Exit code ${code}`));
-        }
-      });
-      child.on('error', (err: Error) => {
-        if (!settled) { settled = true; clearTimeout(timer); reject(err); }
-      });
+      buildOpenClawShellFallbackAsync().then((fallback) => {
+        const rewrittenCommand = rewriteOpenClawShellCommand(cmd, fallback);
+        const shellCmdRaw = process.platform === 'win32' ? wrapWindowsCommand(rewrittenCommand) : `export PATH="${enhancedPath}"; ${rewrittenCommand}`;
+        const shellCmd = rewriteNpx(shellCmdRaw);
+        const child = process.platform === 'win32'
+          ? spawn(shellCmd, [], { shell: 'cmd.exe', env: { ...process.env, PATH: enhancedPath, NO_COLOR: '1', FORCE_COLOR: '0' }, stdio: 'pipe' })
+          : spawn('/bin/bash', ['--norc', '--noprofile', '-c', shellCmd], { env: { ...process.env, PATH: enhancedPath }, stdio: 'pipe' });
+        let stdout = '';
+        let stderr = '';
+        let settled = false;
+        const timer = setTimeout(() => {
+          if (!settled) { settled = true; child.kill(); reject(new Error('Command timed out')); }
+        }, timeoutMs);
+        child.stdout?.on('data', (d: Buffer) => { stdout += d.toString(); });
+        child.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); });
+        child.on('close', (code: number | null) => {
+          if (!settled) {
+            settled = true;
+            clearTimeout(timer);
+            if (code === 0) resolve(stdout.trim());
+            else reject(new Error(stderr.trim() || stdout.trim().slice(-500) || `Exit code ${code}`));
+          }
+        });
+        child.on('error', (err: Error) => {
+          if (!settled) { settled = true; clearTimeout(timer); reject(err); }
+        });
+      }).catch(reject);
     });
   }
 

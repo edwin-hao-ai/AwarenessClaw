@@ -101,6 +101,10 @@ function sendSetupDaemonStatus(key: string, detail?: string) {
   mainWindow?.webContents.send('setup:daemon-status', { key, detail });
 }
 
+function sendSetupStatus(stepKey: string, key: string, detail?: string) {
+  mainWindow?.webContents.send('setup:status', { stepKey, key, detail });
+}
+
 function createWindow() {
   const builtIndexPath = path.join(__dirname, '../dist/index.html');
 
@@ -518,7 +522,26 @@ async function getGatewayWs(): Promise<GatewayClient> {
   }
 
   if (!gatewayWsClient.isConnected) {
-    await gatewayWsClient.connect();
+    try {
+      await gatewayWsClient.connect();
+    } catch (err: any) {
+      const message = err?.message || '';
+      if (!/pairing required/i.test(message)) throw err;
+
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('chat:status', {
+          type: 'gateway',
+          message: 'Approving local Gateway device access...',
+        });
+      }
+
+      const approvalOutput = await runAsync('openclaw devices approve --latest 2>&1', 30000).catch(() => '');
+      if (!/Approved\s+/i.test(approvalOutput || '')) {
+        throw err;
+      }
+
+      await gatewayWsClient.connect();
+    }
   }
   return gatewayWsClient;
 }
@@ -749,6 +772,7 @@ registerSetupHandlers({
   setDaemonStartupPromise: (value) => { daemonStartupPromise = value; },
   getDaemonStartupLastKickoff: () => daemonStartupLastKickoff,
   setDaemonStartupLastKickoff: (value) => { daemonStartupLastKickoff = value; },
+  sendSetupStatus,
 });
 registerRuntimeHealthHandlers({
   home: HOME,

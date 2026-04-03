@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 // --- helpers ---
 
 const tempDirs: string[] = [];
+const OPENCLAW_INSTALL_TIMEOUT_MS = 300000;
 
 function createTempHome() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ac-install-test-'));
@@ -58,8 +59,12 @@ async function simulateSetupInstallOpenClaw(deps: SetupDeps, home: string) {
     const cmd = npmCli
       ? `"node" "${npmCli}" install -g openclaw`
       : 'npm install -g openclaw';
-    await deps.runAsync(cmd, 90000);
-    return { success: true };
+    await deps.runAsync(cmd, OPENCLAW_INSTALL_TIMEOUT_MS);
+    const verified = await deps.safeShellExecAsync('openclaw --version', 10000);
+    if (verified) {
+      return { success: true, version: verified };
+    }
+    return { success: false, error: 'OpenClaw files were downloaded, but the command is still unavailable.' };
   } catch (err) {
     const msg = String(err);
     if (/EACCES|permission denied/i.test(msg)) {
@@ -99,7 +104,7 @@ async function simulateUpgradeOpenClaw(deps: UpgradeDeps) {
       const cmd = npmCli
         ? `"node" "${npmCli}" install -g openclaw@latest`
         : 'npm install -g openclaw@latest';
-      await deps.runAsync(cmd, 120000);
+      await deps.runAsync(cmd, OPENCLAW_INSTALL_TIMEOUT_MS);
       upgraded = true;
     } catch {}
   }
@@ -165,10 +170,17 @@ describe('OpenClaw install — duplicate prevention', () => {
   it('installs with npm install -g when nothing exists', async () => {
     const home = createTempHome();
     const runAsync = vi.fn(async () => 'installed');
+    let openclawChecks = 0;
 
     const result = await simulateSetupInstallOpenClaw(
       {
-        safeShellExecAsync: vi.fn(async () => null),
+        safeShellExecAsync: vi.fn(async (cmd) => {
+          if (cmd === 'openclaw --version') {
+            openclawChecks += 1;
+            return openclawChecks > 1 ? 'OpenClaw 2026.4.2 (abc123)' : null;
+          }
+          return null;
+        }),
         runAsync,
         getBundledNpmBin: () => null,
       },
@@ -177,16 +189,23 @@ describe('OpenClaw install — duplicate prevention', () => {
 
     expect(result.success).toBe(true);
     expect(result.alreadyInstalled).toBeUndefined();
-    expect(runAsync).toHaveBeenCalledWith(expect.stringContaining('npm install -g openclaw'), 90000);
+    expect(runAsync).toHaveBeenCalledWith(expect.stringContaining('npm install -g openclaw'), OPENCLAW_INSTALL_TIMEOUT_MS);
   });
 
   it('uses bundled npm when available', async () => {
     const home = createTempHome();
     const runAsync = vi.fn(async () => 'installed');
+    let openclawChecks = 0;
 
     const result = await simulateSetupInstallOpenClaw(
       {
-        safeShellExecAsync: vi.fn(async () => null),
+        safeShellExecAsync: vi.fn(async (cmd) => {
+          if (cmd === 'openclaw --version') {
+            openclawChecks += 1;
+            return openclawChecks > 1 ? 'OpenClaw 2026.4.2 (abc123)' : null;
+          }
+          return null;
+        }),
         runAsync,
         getBundledNpmBin: (bin) => bin === 'npm' ? '/bundled/npm-cli.js' : null,
       },
@@ -194,7 +213,7 @@ describe('OpenClaw install — duplicate prevention', () => {
     );
 
     expect(result.success).toBe(true);
-    expect(runAsync).toHaveBeenCalledWith(expect.stringContaining('/bundled/npm-cli.js'), 90000);
+    expect(runAsync).toHaveBeenCalledWith(expect.stringContaining('/bundled/npm-cli.js'), OPENCLAW_INSTALL_TIMEOUT_MS);
   });
 
   it('detects EACCES and returns permission error', async () => {
@@ -211,6 +230,22 @@ describe('OpenClaw install — duplicate prevention', () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain('Permission denied');
+  });
+
+  it('fails when npm install finishes but openclaw command is still unavailable', async () => {
+    const home = createTempHome();
+
+    const result = await simulateSetupInstallOpenClaw(
+      {
+        safeShellExecAsync: vi.fn(async () => null),
+        runAsync: vi.fn(async () => 'installed'),
+        getBundledNpmBin: () => null,
+      },
+      home,
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('command is still unavailable');
   });
 });
 
@@ -246,7 +281,7 @@ describe('OpenClaw upgrade — native', () => {
     });
 
     expect(result.success).toBe(true);
-    expect(runAsync).toHaveBeenCalledWith(expect.stringContaining('npm install -g openclaw@latest'), 120000);
+    expect(runAsync).toHaveBeenCalledWith(expect.stringContaining('npm install -g openclaw@latest'), OPENCLAW_INSTALL_TIMEOUT_MS);
   });
 
   it('installs fresh when no OpenClaw exists', async () => {
@@ -259,7 +294,7 @@ describe('OpenClaw upgrade — native', () => {
     });
 
     expect(result.success).toBe(true);
-    expect(runAsync).toHaveBeenCalledWith(expect.stringContaining('npm install -g openclaw@latest'), 120000);
+    expect(runAsync).toHaveBeenCalledWith(expect.stringContaining('npm install -g openclaw@latest'), OPENCLAW_INSTALL_TIMEOUT_MS);
   });
 });
 

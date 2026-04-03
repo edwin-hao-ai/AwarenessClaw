@@ -92,6 +92,9 @@
 - [x] 已安装 OpenClaw 检测 + 配置复用（setup:read-existing-config）（2026-03-30）
 - [x] 新用户 bootstrap 流程引导（安装后自动运行 `openclaw doctor --fix`）（2026-03-30）
 - [x] openclaw.json 安全写入（深度合并，不覆盖 providers）（2026-03-29）
+- [x] **Windows 首装 OpenClaw 安装超时修复**：OpenClaw 安装/升级超时统一提升到 5 分钟，避免正常安装在 90 秒时被误杀；超时提示改为用户友好文案（2026-04-03）
+- [x] **Setup 安装状态细化**：OpenClaw 安装过程增加阶段状态和心跳提示，展示“检查 / 下载 / 验证 / 备用源 / 官方安装器”等实时进度，减少首装焦虑（2026-04-03）
+- [x] **Windows Chat `pairing required` 修复**：桌面端 Gateway WebSocket 改为使用 OpenClaw control UI 客户端标识和 loopback Origin；若命中本地 scope upgrade 配对请求，主进程自动执行 `openclaw devices approve --latest` 后重连，避免用户手动修复（2026-04-03）
 
 ---
 

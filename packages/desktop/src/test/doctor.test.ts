@@ -73,6 +73,31 @@ describe('doctor', () => {
     expect(calls.some((c: string) => c.includes('--prefix'))).toBe(false);
   });
 
+  it('treats npm-global package as installed even if the shell shim is missing', async () => {
+    const home = createTempHome();
+    const npmRoot = path.join(home, 'npm-global', 'lib', 'node_modules');
+    const openclawDir = path.join(npmRoot, 'openclaw');
+    fs.mkdirSync(openclawDir, { recursive: true });
+    fs.writeFileSync(path.join(openclawDir, 'package.json'), JSON.stringify({ name: 'openclaw', version: '2026.4.2' }));
+
+    const shellExec = vi.fn(async (cmd: string) => {
+      if (cmd.includes('which -a node')) return '/usr/local/bin/node';
+      if (cmd === 'node --version') return 'v23.11.0';
+      if (cmd.includes('which -a openclaw')) return null;
+      if (cmd === 'openclaw --version') return 'OpenClaw 2026.4.2';
+      if (cmd === 'npm root -g') return npmRoot;
+      if (cmd === 'npm config get prefix') return '/usr/local';
+      if (cmd.includes('openclaw agents bindings --json')) return '[]';
+      return null;
+    });
+
+    const { doctor } = createDoctorWithMocks(home, { shellExec });
+    const report = await doctor.runChecks(['openclaw-installed', 'openclaw-command-health']);
+
+    expect(report.checks[0]).toMatchObject({ status: 'pass' });
+    expect(report.checks[1]).toMatchObject({ status: 'warn', fixable: 'auto' });
+  });
+
   it('binds only channels that are still unbound', async () => {
     const home = createTempHome();
     const configDir = path.join(home, '.openclaw');
