@@ -83,6 +83,7 @@ export default function AgentWizard({ onComplete, onCancel }: AgentWizardProps) 
   const [style, setStyle] = useState<PersonalityStyle>('friendly');
   const [customPrompt, setCustomPrompt] = useState('');
   const [useCustom, setUseCustom] = useState(false);
+  const [useBootstrap, setUseBootstrap] = useState(false); // Let agent discover identity via chat
 
   // Step 2: Model
   const [selectedProvider, setSelectedProvider] = useState('');
@@ -147,10 +148,10 @@ export default function AgentWizard({ onComplete, onCancel }: AgentWizardProps) 
       const finalName = agentName.trim();
       const modelId = getModelId();
 
-      // Build SOUL.md content
-      const soulContent = useCustom && customPrompt.trim()
-        ? customPrompt.trim()
-        : SOUL_TEMPLATES[style];
+      // Build SOUL.md content — only when NOT using bootstrap mode
+      const soulContent = useBootstrap
+        ? undefined
+        : (useCustom && customPrompt.trim() ? customPrompt.trim() : SOUL_TEMPLATES[style]);
 
       // 1. Create agent via IPC (calls openclaw agents add — loads all plugins, can take 15-30s)
       setSavingStatus(t('agentWizard.status.creating', 'Creating agent (loading plugins)...'));
@@ -178,12 +179,30 @@ export default function AgentWizard({ onComplete, onCancel }: AgentWizardProps) 
         await api.agentsSetIdentity(slug, finalName, agentEmoji);
       }
 
-      // 3. Write IDENTITY.md
+      // 3. Write workspace files based on mode
       setSavingStatus(t('agentWizard.status.workspace', 'Writing workspace files...'));
-      if (api.agentsWriteFile) {
-        await api.agentsWriteFile(slug, 'IDENTITY.md',
-          `# Identity\n\n- **name**: ${finalName}\n- **emoji**: ${agentEmoji}\n- **role**: AI Assistant\n`
-        );
+      if (useBootstrap) {
+        // Bootstrap mode: keep BOOTSTRAP.md, DON'T write SOUL.md — agent will discover
+        // its identity through conversation on first chat (OpenClaw native bootstrap flow).
+        // Only write minimal IDENTITY.md with name + emoji so the agent selector works.
+        if (api.agentsWriteFile) {
+          await api.agentsWriteFile(slug, 'IDENTITY.md',
+            `# Identity\n\n- **name**: ${finalName}\n- **emoji**: ${agentEmoji}\n- **role**: AI Assistant\n`
+          );
+        }
+      } else {
+        // Template mode: write SOUL.md + IDENTITY.md, delete BOOTSTRAP.md
+        if (api.agentsWriteFile) {
+          await api.agentsWriteFile(slug, 'IDENTITY.md',
+            `# Identity\n\n- **name**: ${finalName}\n- **emoji**: ${agentEmoji}\n- **role**: AI Assistant\n`
+          );
+        }
+        // Delete BOOTSTRAP.md — our wizard already set the personality via SOUL.md template
+        try {
+          if (api.agentsDeleteFile) {
+            await api.agentsDeleteFile(slug, 'BOOTSTRAP.md');
+          }
+        } catch { /* ignore — file may not exist */ }
       }
 
       // 4. Bind selected channels
@@ -195,14 +214,6 @@ export default function AgentWizard({ onComplete, onCancel }: AgentWizardProps) 
           } catch { /* ignore individual bind failures */ }
         }
       }
-
-      // 5. Delete BOOTSTRAP.md — OpenClaw seeds this in new workspaces as a one-time ritual.
-      // Our wizard already collected identity info, so remove it to prevent double-bootstrap.
-      try {
-        if (api.agentsDeleteFile) {
-          await api.agentsDeleteFile(slug, 'BOOTSTRAP.md');
-        }
-      } catch { /* ignore — file may not exist */ }
 
       onComplete();
     } catch (err: any) {
@@ -352,17 +363,32 @@ export default function AgentWizard({ onComplete, onCancel }: AgentWizardProps) 
                 ))}
               </div>
 
-              {/* Custom prompt toggle */}
+              {/* Bootstrap: let agent discover itself through conversation */}
               <button
-                onClick={() => setUseCustom(!useCustom)}
+                onClick={() => { setUseBootstrap(!useBootstrap); setUseCustom(false); }}
                 className={`px-3 py-2 rounded-lg border text-xs text-left transition-all ${
-                  useCustom ? 'border-brand-500 bg-brand-500/10 text-brand-300' : 'border-slate-700 text-slate-500 hover:border-slate-600'
+                  useBootstrap ? 'border-amber-500 bg-amber-500/10 text-amber-300' : 'border-slate-700 text-slate-500 hover:border-slate-600'
                 }`}
               >
-                ✏️ {t('agentWizard.step2.custom', 'Write custom system prompt')}
+                💬 {t('agentWizard.step2.bootstrap', 'Discover through conversation')}
+                <span className="block text-[10px] mt-0.5 opacity-70">
+                  {t('agentWizard.step2.bootstrapHint', 'Agent will ask you questions on first chat to define itself')}
+                </span>
               </button>
 
-              {useCustom && (
+              {/* Custom prompt toggle */}
+              {!useBootstrap && (
+                <button
+                  onClick={() => setUseCustom(!useCustom)}
+                  className={`px-3 py-2 rounded-lg border text-xs text-left transition-all ${
+                    useCustom ? 'border-brand-500 bg-brand-500/10 text-brand-300' : 'border-slate-700 text-slate-500 hover:border-slate-600'
+                  }`}
+                >
+                  ✏️ {t('agentWizard.step2.custom', 'Write custom system prompt')}
+                </button>
+              )}
+
+              {useCustom && !useBootstrap && (
                 <textarea
                   value={customPrompt}
                   onChange={e => setCustomPrompt(e.target.value)}
