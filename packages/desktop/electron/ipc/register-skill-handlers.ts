@@ -449,15 +449,19 @@ export function registerSkillHandlers(deps: {
         try {
           const skillMd = fs.readFileSync(parsed.filePath, 'utf8');
           const fullSpecs = parseInstallSpecsFromSkillMd(skillMd);
+          console.log(`[skill:local-info] ${name}: parsed ${fullSpecs.length} install specs from SKILL.md`);
           if (fullSpecs.length > 0) {
             // Merge full specs back by matching id+kind
             parsed.install = parsed.install.map((cliSpec: any) => {
               const full = fullSpecs.find((f: any) => f.id === cliSpec.id && f.kind === cliSpec.kind);
+              if (full) {
+                console.log(`[skill:local-info] ${name}: merged spec id=${cliSpec.id} kind=${cliSpec.kind} formula=${full.formula || '-'} module=${full.module || '-'}`);
+              }
               return full ? { ...cliSpec, ...full } : cliSpec;
             });
           }
-        } catch {
-          // SKILL.md read failed — use CLI output as-is
+        } catch (mergeErr) {
+          console.warn(`[skill:local-info] ${name}: SKILL.md merge failed:`, mergeErr);
         }
       }
 
@@ -515,6 +519,12 @@ export function registerSkillHandlers(deps: {
     const specs = Array.isArray(installSpecs) ? installSpecs as SkillInstallSpec[] : [];
     if (specs.length === 0) {
       return { success: false, error: 'No dependency install specs provided' };
+    }
+    // Debug: log what specs we received to diagnose wrong package names
+    for (const s of specs) {
+      console.log(`[skill:install-deps] spec: kind=${s.kind} formula=${s.formula || '-'} module=${s.module || '-'} package=${s.package || '-'} bins=${(s.bins || []).join(',')}`);
+      const cmds = buildInstallCommands(s);
+      console.log(`[skill:install-deps] commands: ${JSON.stringify(cmds)}`);
     }
 
     const failures: Array<{ id: string; label: string; error: string }> = [];

@@ -450,6 +450,28 @@ AwarenessClaw/
   - 确定进度（如 daemon 健康检查 i/12）传 `progressFraction: 0-1`，不确定进度不传该字段
   - 复用已有模式：`skill:install-progress`（register-skill-handlers.ts）和 `app:startup-status`
 
+### OpenClaw 技能依赖安装三大坑（严重踩坑，已修复）
+
+#### 1. `openclaw skills info --json` 丢弃 install spec 关键字段
+- **问题**：SKILL.md frontmatter 中定义了 `formula`（brew 包名）、`module`（go 模块路径）、`package`（node/uv 包名），但 `openclaw skills info --json` 的 `install` 数组只返回 `id/kind/label/bins`，丢弃了所有包名相关字段
+- **后果**：`buildInstallCommands` 用 `bins[0]` 当包名 → `brew install op`（应该是 `brew install 1password-cli`）、`brew install grizzly`（安装了 Grafana 的工具而非 Bear Notes CLI）
+- **修复**：`skill:local-info` IPC 在获取 CLI 输出后，通过 `filePath` 字段直接读取 SKILL.md，解析 YAML frontmatter 恢复完整 install spec 再 merge 回 CLI 输出
+- **SKILL.md 格式注意**：`metadata` 字段用 JSON-in-YAML 格式（花括号），且有 trailing commas（JSON5 风格），解析时需 `.replace(/,(\s*[}\]])/g, '$1')` 先清理
+
+#### 2. OpenClaw 支持 5 种 install kind（必须全部覆盖）
+- **brew**: `spec.formula` → `brew install <formula>`（如 `brew install 1password-cli`、`brew install antoniorodr/memo/memo`）
+- **go**: `spec.module` → `go install <module>`（如 `go install github.com/tylerwince/grizzly/cmd/grizzly@latest`）
+- **node**: `spec.package` → `npm install -g <package>`（用户可配 pnpm/yarn/bun）
+- **uv**: `spec.package` → `uv tool install <package>`
+- **download**: `spec.url` → 下载+解压（我们暂未支持）
+- **`ALLOWED_INSTALL_BINARIES`** 必须包含 `go` 和 `uv`，否则这两种 kind 的命令会被安全检查拦截
+
+#### 3. OpenClaw CLI JSON 输出到 stderr（不是 stdout）
+- **问题**：`openclaw skills info <name> --json` 的 JSON 输出在 **stderr**，不在 stdout
+- **Config warnings** 也在 stderr（如 "duplicate plugin id detected"）
+- **影响**：测试脚本用 `2>/dev/null` 会吃掉 JSON 输出；桌面端 `runAsync`/`readShellOutputAsync` 合并 stdout+stderr 所以不受影响
+- **规则**：测试 OpenClaw CLI 输出时必须用 `2>&1` 或不重定向，不能用 `2>/dev/null`
+
 ### Electron dev 模式踩坑（monorepo）
 - **问题**：`./node_modules/.bin/electron .` 在 monorepo 中找不到 electron 二进制（被 hoist 到根 node_modules）
 - **`require('electron')` 返回字符串**：在非 Electron 进程中 `require('electron')` 返回的是 electron 可执行文件的路径字符串，不是 API 对象
