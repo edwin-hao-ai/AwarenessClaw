@@ -199,7 +199,7 @@ describe('Dashboard (Chat)', () => {
     await act(async () => { render(<Dashboard />); });
 
     await act(async () => {
-      fireEvent.click(screen.getByTitle(/Switch permissions/));
+      fireEvent.click(screen.getByTitle(/Permissions/));
     });
 
     expect(screen.getAllByText(/^(Safe|安全模式)$/).length).toBeGreaterThan(0);
@@ -252,7 +252,7 @@ describe('Dashboard (Chat)', () => {
     await act(async () => { render(<Dashboard />); });
 
     await act(async () => {
-      fireEvent.click(screen.getByTitle(/Switch permissions/));
+      fireEvent.click(screen.getByTitle(/Permissions/));
     });
 
     await waitFor(() => {

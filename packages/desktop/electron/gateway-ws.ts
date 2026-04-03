@@ -309,6 +309,11 @@ export class GatewayClient extends EventEmitter {
     });
   }
 
+  /** Patch session-level settings (e.g. reasoningLevel, verboseLevel). */
+  async sessionPatch(sessionKey: string, patch: Record<string, any>): Promise<any> {
+    return this.rpc('sessions.patch', { key: sessionKey, ...patch }, 10000);
+  }
+
   /** Send a chat message (non-blocking — Gateway queues if agent is busy). */
   async chatSend(sessionKey: string, text: string, options?: {
     thinking?: string;
@@ -317,14 +322,20 @@ export class GatewayClient extends EventEmitter {
     attachments?: any[];
     agentId?: string;
   }): Promise<any> {
+    // reasoning is set via sessions.patch (not chat.send, which has additionalProperties: false)
+    if (options?.reasoning) {
+      try { await this.sessionPatch(sessionKey, { reasoningLevel: options.reasoning }); } catch { /* best-effort */ }
+    }
+    if (options?.verbose) {
+      try { await this.sessionPatch(sessionKey, { verboseLevel: options.verbose }); } catch { /* best-effort */ }
+    }
+
     const params: any = {
       sessionKey,
       message: text,
       idempotencyKey: `ac-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     };
     if (options?.thinking) params.thinking = options.thinking;
-    if (options?.verbose) params.verbose = options.verbose;
-    if (options?.reasoning) params.reasoning = options.reasoning;
     if (options?.attachments?.length) params.attachments = options.attachments;
     if (options?.agentId) params.agentId = options.agentId;
     // chat.send uses 120s timeout (agent may take a while with tool calls)

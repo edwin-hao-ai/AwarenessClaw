@@ -135,16 +135,20 @@ export function SettingsMemoryPrivacyPanel({
 export function SettingsTokenPanel({
   t,
   thinkingLevel,
+  reasoningDisplay,
   recallLimit,
   autoRecall,
   onThinkingLevelChange,
+  onReasoningDisplayChange,
   onRecallLimitChange,
 }: {
   t: TFunction;
   thinkingLevel: string;
+  reasoningDisplay: string;
   recallLimit: number;
   autoRecall: boolean;
   onThinkingLevelChange: (value: string) => void;
+  onReasoningDisplayChange: (value: string) => void;
   onRecallLimitChange: (value: number) => void;
 }) {
   const thinkingTokens = { off: 0, minimal: 100, low: 300, medium: 800, high: 2000 }[thinkingLevel || 'low'] || 300;
@@ -163,6 +167,17 @@ export function SettingsTokenPanel({
           <option value="low">{t('settings.token.thinkingLow')}</option>
           <option value="medium">{t('settings.token.thinkingMedium')}</option>
           <option value="high">{t('settings.token.thinkingHigh')}</option>
+        </select>
+      </SettingsRow>
+      <SettingsRow label={t('settings.token.reasoningDisplay')} desc={t('settings.token.reasoningDisplay.desc')}>
+        <select
+          value={reasoningDisplay || 'on'}
+          onChange={(event) => onReasoningDisplayChange(event.target.value)}
+          className="px-3 py-1.5 bg-slate-700 rounded-lg text-sm border-none focus:outline-none focus:ring-2 focus:ring-brand-500/50"
+        >
+          <option value="off">{t('settings.token.reasoningOff')}</option>
+          <option value="on">{t('settings.token.reasoningOn')}</option>
+          <option value="stream">{t('settings.token.reasoningStream')}</option>
         </select>
       </SettingsRow>
       <SettingsRow label={t('settings.token.recallLimit')} desc={t('settings.token.recallLimit.desc')}>

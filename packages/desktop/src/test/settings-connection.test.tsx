@@ -9,9 +9,9 @@ describe('Settings Connection Test', () => {
     expect(screen.getByText(/OpenClaw Gateway/)).toBeInTheDocument();
   });
 
-  it('renders model switch button', async () => {
+  it('renders token optimization section', async () => {
     await act(async () => { render(<Settings />); });
-    expect(screen.getByText(/Change Model/)).toBeInTheDocument();
+    expect(screen.getByText(/Token Optimization/)).toBeInTheDocument();
   });
 
   it('renders version info', async () => {

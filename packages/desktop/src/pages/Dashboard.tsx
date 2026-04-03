@@ -930,6 +930,7 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
       try {
       const result = await (window.electronAPI as any).chatSend(trimmed, activeSessionId, {
         thinkingLevel: config.thinkingLevel || 'low',
+        reasoningDisplay: config.reasoningDisplay || 'on',
         files: filePaths,
         workspacePath: projectRoot || undefined,
         agentId: config.selectedAgentId || 'main',
@@ -1012,6 +1013,12 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
   }, [activeSessionId]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // Escape key stops the active request
+    if (e.key === 'Escape' && (agentStatus === 'thinking' || agentStatus === 'generating')) {
+      e.preventDefault();
+      void handleStopActiveRequest();
+      return;
+    }
     if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return;
     e.preventDefault();
     if (!canSendMessage((e.currentTarget as HTMLTextAreaElement).value)) return;
@@ -1286,6 +1293,7 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
           onManagePermissions={onNavigate ? () => { setShowPermissionMenu(false); onNavigate('settings'); } : undefined}
           onDismissMemoryWarning={() => setMemoryWarning(null)}
           onSend={() => { void handleSend(); }}
+          onStop={() => { void handleStopActiveRequest(); }}
         />
         </>
         )}

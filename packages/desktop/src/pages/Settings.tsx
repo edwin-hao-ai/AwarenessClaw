@@ -693,9 +693,11 @@ export default function Settings() {
         <SettingsTokenPanel
           t={t}
           thinkingLevel={config.thinkingLevel || 'low'}
+          reasoningDisplay={config.reasoningDisplay || 'on'}
           recallLimit={config.recallLimit}
           autoRecall={config.autoRecall}
           onThinkingLevelChange={(value) => updateConfig({ thinkingLevel: value as any })}
+          onReasoningDisplayChange={(value) => updateConfig({ reasoningDisplay: value as any })}
           onRecallLimitChange={handleRecallLimit}
         />
 

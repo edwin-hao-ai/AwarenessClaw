@@ -8,6 +8,7 @@ import { getExecApprovalSettings } from '../openclaw-config';
 
 type ChatSendOptions = {
   thinkingLevel?: string;
+  reasoningDisplay?: string;
   model?: string;
   files?: string[];
   workspacePath?: string;
@@ -363,6 +364,7 @@ export function registerChatHandlers(deps: {
       await ws.chatSend(sid, fullMessage, {
         thinking: options?.thinkingLevel && options.thinkingLevel !== 'off' ? options.thinkingLevel : undefined,
         verbose: 'full',
+        reasoning: options?.reasoningDisplay && options.reasoningDisplay !== 'off' ? options.reasoningDisplay : 'on',
         agentId: options?.agentId && options.agentId !== 'main' ? options.agentId : undefined,
       });
 
@@ -498,6 +500,8 @@ async function chatSendViaCli(
       ? ` --thinking ${options.thinkingLevel}` : '';
     const agentFlag = options?.agentId && options.agentId !== 'main' ? ` --agent "${options.agentId}"` : '';
     const escapedMsg = message.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\$/g, '\\\$').replace(/`/g, '\\`');
+    // Note: openclaw CLI does not support --reasoning flag; reasoning is controlled via
+    // openclaw.json agents.defaults.reasoningDefault (set in syncToOpenClaw)
     const command = `openclaw agent --session-id "${sid}" -m "${escapedMsg}" --verbose full${thinkingFlag}${agentFlag}`;
     const enhancedPath = deps.getEnhancedPath();
     const child = process.platform === 'win32'

@@ -1,4 +1,4 @@
-import { AlertTriangle, Bot, Check, ChevronDown, File, Image, Loader2, Paperclip, Send, Shield, X } from 'lucide-react';
+import { AlertTriangle, Bot, Check, ChevronDown, File, Image, Loader2, Paperclip, Send, Shield, Square, X } from 'lucide-react';
 
 type AttachedFile = {
   name: string;
@@ -55,6 +55,7 @@ export function ChatComposer({
   onManagePermissions,
   onDismissMemoryWarning,
   onSend,
+  onStop,
 }: {
   t: (key: string, fallback?: string) => string;
   input: string;
@@ -86,7 +87,9 @@ export function ChatComposer({
   onManagePermissions?: () => void;
   onDismissMemoryWarning: () => void;
   onSend: () => void;
+  onStop?: () => void;
 }) {
+  const isRunning = agentStatus === 'thinking' || agentStatus === 'generating';
   return (
     <>
       {memoryWarning && (
@@ -160,74 +163,83 @@ export function ChatComposer({
               onChange={(event) => onFilesSelected(event.target.files)}
             />
             <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between">
-              <div className="flex items-center gap-1">
-                <button onClick={onOpenFilePicker} aria-label={t('chat.attachFile', 'Attach file')} className="p-1.5 text-slate-500 hover:text-slate-300 hover:bg-slate-700 rounded-lg transition-colors" title={t('chat.attachFile', 'Attach file')}>
+              <div className="flex items-center gap-0.5">
+                {/* Attach file */}
+                <button onClick={onOpenFilePicker} aria-label={t('chat.attachFile', 'Attach file')} className="p-1.5 text-slate-500 hover:text-slate-300 hover:bg-slate-700/50 rounded-lg transition-colors" title={t('chat.attachFile', 'Attach file')}>
                   <Paperclip size={14} />
                 </button>
+
+                {/* Divider */}
+                <div className="w-px h-4 bg-slate-700/50 mx-0.5" />
+
+                {/* Permission — icon-only with tooltip, dropdown on click */}
                 <div className="relative" ref={permissionMenuRef}>
                   <button
                     onClick={onTogglePermissionMenu}
-                    className="flex items-center gap-1 px-2 py-1 text-[11px] text-slate-500 hover:text-slate-300 hover:bg-slate-700 rounded-lg transition-colors"
-                    title={t('chat.permissions.switch', 'Switch permissions')}
+                    className="p-1.5 text-slate-500 hover:text-slate-300 hover:bg-slate-700/50 rounded-lg transition-colors"
+                    title={`${t('chat.permissions.switch', 'Permissions')}: ${selectedPermissionLabel}`}
                     disabled={permissionUpdating}
                   >
-                    {permissionUpdating ? <Loader2 size={11} className="animate-spin" /> : <Shield size={11} />}
-                    <span className="max-w-[92px] truncate">{selectedPermissionLabel}</span>
-                    <ChevronDown size={10} />
+                    {permissionUpdating ? <Loader2 size={14} className="animate-spin" /> : <Shield size={14} />}
                   </button>
                   {showPermissionMenu && (
-                    <div className="absolute bottom-full left-0 mb-1 min-w-[220px] bg-slate-800 border border-slate-700 rounded-xl shadow-lg overflow-hidden z-50">
+                    <div className="absolute bottom-full left-0 mb-1 w-52 bg-slate-800/95 backdrop-blur-sm border border-slate-700/80 rounded-xl shadow-xl overflow-hidden z-50">
+                      <div className="px-3 py-1.5 text-[10px] text-slate-500 uppercase tracking-wider border-b border-slate-700/50">{t('chat.permissions.switch', 'Permissions')}</div>
                       {permissionOptions.map((option) => (
                         <button
                           key={option.key}
                           onClick={() => onSelectPermission(option.key)}
-                          className="w-full px-3 py-2.5 text-left transition-colors text-slate-300 hover:bg-slate-700"
+                          className={`w-full flex items-center gap-2 px-3 py-2 text-left transition-colors ${
+                            option.label === selectedPermissionLabel ? 'bg-brand-600/15 text-brand-300' : 'text-slate-300 hover:bg-slate-700/60'
+                          }`}
                         >
-                          <div className="flex items-center justify-between gap-2">
+                          <div className="flex-1 min-w-0">
                             <span className="text-xs font-medium">{option.label}</span>
-                            {option.label === selectedPermissionLabel && <Check size={12} className="text-brand-400 flex-shrink-0" />}
+                            <span className="ml-1.5 text-[10px] text-slate-500">{option.desc}</span>
                           </div>
-                          <div className="mt-1 text-[10px] text-slate-500">{option.desc}</div>
+                          {option.label === selectedPermissionLabel && <Check size={11} className="text-brand-400 flex-shrink-0" />}
                         </button>
                       ))}
                       {onManagePermissions && (
-                        <button onClick={onManagePermissions} className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left text-slate-500 hover:text-slate-300 hover:bg-slate-700 border-t border-slate-700 transition-colors">
-                          <Shield size={12} />
-                          <span>{t('chat.permissions.manage', 'Open full permission settings')}</span>
+                        <button onClick={onManagePermissions} className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 text-[10px] text-slate-500 hover:text-slate-300 hover:bg-slate-700/40 border-t border-slate-700/50 transition-colors">
+                          <Shield size={10} />
+                          <span>{t('chat.permissions.manage', 'Full settings')}</span>
                         </button>
                       )}
                     </div>
                   )}
                 </div>
+
+                {/* Agent selector — compact icon + name */}
                 {agents.length > 1 && (
                   <div className="relative" ref={agentMenuRef}>
                     <button
                       onClick={onToggleAgentMenu}
-                      className="flex items-center gap-1 px-2 py-1 text-[11px] text-slate-500 hover:text-slate-300 hover:bg-slate-700 rounded-lg transition-colors"
-                      title={t('chat.agent.switch')}
+                      className="flex items-center gap-1 p-1.5 text-slate-500 hover:text-slate-300 hover:bg-slate-700/50 rounded-lg transition-colors"
+                      title={`${t('chat.agent.switch', 'Switch agent')}: ${agents.find((a) => a.id === selectedAgentId)?.name || ''}`}
                     >
-                      <span>{agents.find((agent) => agent.id === selectedAgentId)?.emoji || '🤖'}</span>
-                      <span className="max-w-[80px] truncate">{agents.find((agent) => agent.id === selectedAgentId)?.name || t('chat.agent.default')}</span>
+                      <span className="text-xs">{agents.find((a) => a.id === selectedAgentId)?.emoji || '🤖'}</span>
                       <ChevronDown size={10} />
                     </button>
                     {showAgentMenu && (
-                      <div className="absolute bottom-full left-0 mb-1 min-w-[180px] bg-slate-800 border border-slate-700 rounded-xl shadow-lg overflow-hidden z-50">
+                      <div className="absolute bottom-full left-0 mb-1 w-48 bg-slate-800/95 backdrop-blur-sm border border-slate-700/80 rounded-xl shadow-xl overflow-hidden z-50">
+                        <div className="px-3 py-1.5 text-[10px] text-slate-500 uppercase tracking-wider border-b border-slate-700/50">{t('chat.agent.switch', 'Agents')}</div>
                         {agents.map((agent) => (
                           <button
                             key={agent.id}
                             onClick={() => onSelectAgent(agent.id)}
                             className={`w-full flex items-center gap-2 px-3 py-2 text-xs text-left transition-colors ${
-                              agent.id === selectedAgentId ? 'bg-brand-600/20 text-brand-300' : 'text-slate-300 hover:bg-slate-700'
+                              agent.id === selectedAgentId ? 'bg-brand-600/15 text-brand-300' : 'text-slate-300 hover:bg-slate-700/60'
                             }`}
                           >
                             <span>{agent.emoji}</span>
                             <span className="flex-1 truncate">{agent.name}</span>
-                            {agent.id === selectedAgentId && <Check size={12} className="text-brand-400" />}
+                            {agent.id === selectedAgentId && <Check size={11} className="text-brand-400" />}
                           </button>
                         ))}
                         {onManageAgents && (
-                          <button onClick={onManageAgents} className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left text-slate-500 hover:text-slate-300 hover:bg-slate-700 border-t border-slate-700 transition-colors">
-                            <Bot size={12} />
+                          <button onClick={onManageAgents} className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 text-[10px] text-slate-500 hover:text-slate-300 hover:bg-slate-700/40 border-t border-slate-700/50 transition-colors">
+                            <Bot size={10} />
                             <span>{t('chat.agent.manage', 'Manage Agents')}</span>
                           </button>
                         )}
@@ -236,9 +248,21 @@ export function ChatComposer({
                   </div>
                 )}
               </div>
-              <button onClick={onSend} disabled={!canSendCurrentMessage} className="p-1.5 bg-brand-600 hover:bg-brand-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded-lg transition-colors">
-                {!canSendCurrentMessage && agentStatus !== 'idle' ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-              </button>
+
+              {/* Send / Stop button */}
+              {isRunning && onStop ? (
+                <button
+                  onClick={onStop}
+                  className="p-1.5 bg-red-600 hover:bg-red-500 text-white rounded-lg transition-colors"
+                  title={`${t('chat.stop', 'Stop')} (Esc)`}
+                >
+                  <Square size={14} fill="currentColor" />
+                </button>
+              ) : (
+                <button onClick={onSend} disabled={!canSendCurrentMessage} className="p-1.5 bg-brand-600 hover:bg-brand-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded-lg transition-colors">
+                  <Send size={14} />
+                </button>
+              )}
             </div>
           </div>
         </div>

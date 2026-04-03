@@ -54,6 +54,8 @@ export interface AppConfig {
   memoryBlockedSources: string[];
   // Token optimization
   thinkingLevel: 'off' | 'minimal' | 'low' | 'medium' | 'high';
+  // Reasoning display — controls whether the model's thinking process is shown to the user
+  reasoningDisplay: 'off' | 'on' | 'stream';
   // Appearance
   language: string;
   theme: 'dark' | 'light' | 'system';
@@ -78,6 +80,7 @@ const DEFAULT_CONFIG: AppConfig = {
   memoryMode: 'local',
   memoryBlockedSources: [],
   thinkingLevel: 'low',
+  reasoningDisplay: 'on',
   language: 'zh',
   theme: 'dark',
   autoUpdate: true,
@@ -362,6 +365,9 @@ async function syncToOpenClaw(config: AppConfig, providers: ModelProviderDef[]) 
     openclawConfig.agents = {
       defaults: {
         model: { primary: `${config.providerKey}/${config.modelId}` },
+        verboseDefault: 'full',
+        thinkingDefault: config.thinkingLevel || 'low',
+        ...(config.reasoningDisplay && config.reasoningDisplay !== 'off' ? { reasoningDefault: config.reasoningDisplay } : {}),
       },
     };
   }
