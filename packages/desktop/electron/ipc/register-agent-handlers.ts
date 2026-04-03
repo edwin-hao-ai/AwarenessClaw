@@ -113,7 +113,9 @@ export function registerAgentHandlers(deps: {
       // Slug must be ASCII for filesystem safety
       const slug = displayName.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || `agent-${Date.now()}`;
       const wsDir = path.join(baseWsDir, slug);
-      fs.mkdirSync(wsDir, { recursive: true });
+      // Do NOT pre-create wsDir — OpenClaw agents add only seeds workspace files
+      // (AGENTS.md, BOOTSTRAP.md, SOUL.md, etc.) when the directory does NOT exist.
+      // Pre-creating an empty dir causes OpenClaw to skip seeding.
       // Use runSpawnAsync (array args) to prevent shell injection from displayName
       const spawnArgs = ['agents', 'add', displayName, '--non-interactive', '--workspace', wsDir];
       const safeModel = model ? model.replace(/[^a-zA-Z0-9/_:.-]/g, '') : '';
@@ -122,6 +124,8 @@ export function registerAgentHandlers(deps: {
       await deps.runSpawnAsync('openclaw', spawnArgs, 45000);
       if (systemPrompt) {
         const agentDir = path.join(baseAgentsDir, slug, 'agent');
+        // Ensure dirs exist (OpenClaw should have created them, but be safe)
+        fs.mkdirSync(wsDir, { recursive: true });
         fs.mkdirSync(agentDir, { recursive: true });
         fs.writeFileSync(path.join(wsDir, 'SOUL.md'), systemPrompt, 'utf-8');
         fs.writeFileSync(path.join(agentDir, 'SOUL.md'), systemPrompt, 'utf-8');
