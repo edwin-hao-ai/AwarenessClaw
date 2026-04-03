@@ -454,9 +454,11 @@ export function registerSkillHandlers(deps: {
   });
 
   // Fetch detailed local skill info including install specs from OpenClaw CLI
+  // CRITICAL: use readShellOutputAsync — OpenClaw outputs JSON to stderr, not stdout.
   ipcMain.handle('skill:local-info', async (_e, name: string) => {
     try {
-      const raw = await deps.runAsync(`openclaw skills info ${name} --json`, 30000);
+      const raw = await deps.readShellOutputAsync(`openclaw skills info ${name} --json`, 30000);
+      if (!raw) throw new Error('No output from openclaw skills info');
       const parsed = JSON.parse(extractJsonPayload(raw));
 
       // OpenClaw CLI strips formula/module/package from install specs (only keeps id/kind/label/bins).
@@ -530,30 +532,37 @@ export function registerSkillHandlers(deps: {
     }
   });
 
-  // Install deps is kept for backward compat but no longer auto-executes brew/npm.
-  // This now supports silent cross-platform auto-install for built-in skill deps.
-  // Second arg is optional skillName — when provided, we read the SKILL.md directly
-  // to get the REAL install specs (with formula/module/package) instead of relying
-  // on the stripped specs from OpenClaw CLI.
+  // Install skill dependencies (brew/go/uv/node).
+  // Second arg is optional skillName (slug) — used to read SKILL.md for correct install specs.
   ipcMain.handle('skill:install-deps', async (_e, installSpecs: unknown, skillName?: string) => {
-    let specs = Array.isArray(installSpecs) ? installSpecs as SkillInstallSpec[] : [];
+    const frontendSpecs = Array.isArray(installSpecs) ? installSpecs as SkillInstallSpec[] : [];
+    let specs: SkillInstallSpec[] = [];
 
-    // PRIMARY PATH: if skillName is provided, read SKILL.md for authoritative install specs.
-    // This bypasses all the broken chain of stripped CLI specs → frontend → back to IPC.
+    // Try to read SKILL.md for authoritative install specs (with formula/module/package).
+    // CRITICAL: use readShellOutputAsync, NOT runAsync — OpenClaw outputs JSON to stderr,
+    // and runAsync only captures stdout on exit code 0 → empty string → parse fails.
     if (skillName && typeof skillName === 'string') {
       try {
-        const raw = await deps.runAsync(`openclaw skills info ${skillName} --json`, 30000);
-        const parsed = JSON.parse(extractJsonPayload(raw));
-        if (parsed.filePath && fs.existsSync(parsed.filePath)) {
-          const fullSpecs = parseInstallSpecsFromSkillMd(fs.readFileSync(parsed.filePath, 'utf8'));
-          if (fullSpecs.length > 0) {
-            specs = fullSpecs as SkillInstallSpec[];
-            console.log(`[skill:install-deps] using SKILL.md specs for ${skillName}:`, specs.map((s: any) => `${s.kind}:${s.formula || s.module || s.package || '?'}`).join(', '));
+        const raw = await deps.readShellOutputAsync(`openclaw skills info ${skillName} --json`, 30000);
+        if (raw) {
+          const parsed = JSON.parse(extractJsonPayload(raw));
+          if (parsed.filePath && fs.existsSync(parsed.filePath)) {
+            const fullSpecs = parseInstallSpecsFromSkillMd(fs.readFileSync(parsed.filePath, 'utf8'));
+            if (fullSpecs.length > 0) {
+              specs = fullSpecs as SkillInstallSpec[];
+              console.log(`[skill:install-deps] using SKILL.md specs for ${skillName}:`, specs.map((s: any) => `${s.kind}:${s.formula || s.module || s.package || '?'}`).join(', '));
+            }
           }
         }
       } catch (err) {
         console.warn(`[skill:install-deps] SKILL.md lookup failed for ${skillName}:`, err);
       }
+    }
+
+    // Fallback: use frontend-provided specs if SKILL.md lookup didn't produce results
+    if (specs.length === 0 && frontendSpecs.length > 0) {
+      specs = frontendSpecs;
+      console.log(`[skill:install-deps] using frontend specs (SKILL.md unavailable)`);
     }
 
     if (specs.length === 0) {

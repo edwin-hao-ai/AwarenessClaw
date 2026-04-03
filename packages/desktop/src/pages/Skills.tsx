@@ -271,7 +271,8 @@ export default function Skills() {
     setInstallResult(null);
     setInstallProgress(t('skills.progress.installingDeps', 'Installing dependencies...'));
 
-    const res = await api.skillInstallDeps(specs, skill.name || skill.slug);
+    // Pass skill slug (CLI identifier), NOT skill.name (may be display name like "Apple Notes")
+    const res = await api.skillInstallDeps(specs, skill.slug);
     setInstallProgress(null);
 
     if (res?.success) {
