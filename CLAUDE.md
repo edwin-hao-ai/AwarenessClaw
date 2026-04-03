@@ -1,5 +1,13 @@
 # AwarenessClaw 项目规则
 
+## ⚠️ Web Search 验证规则（必须遵守）
+
+在做技术决策、调试问题、实现功能前，**尽可能多用 Web Search 获取最新信息**。特别是：
+- **OpenClaw API/CLI/Gateway 行为**：OpenClaw 迭代快，CLI 参数、Gateway 协议、插件行为随版本变化，必须 Web Search 验证当前版本的真实行为
+- **已知 bug 和 workaround**：搜索 GitHub Issues 确认问题是上游 bug 还是我们的实现问题
+- **第三方库 API**：Electron、npm、clawhub 等的 API 和行为，不要凭记忆假设
+- **每一步都可以搜**：不要只在开始搜一次，过程中遇到不确定的点都应该搜索验证
+
 ## ⚠️ 变更报告规则（必须遵守）
 
 每次完成代码修改后，必须向用户报告以下信息：

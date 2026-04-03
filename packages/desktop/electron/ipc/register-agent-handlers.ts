@@ -217,4 +217,28 @@ export function registerAgentHandlers(deps: {
       return { success: false, error: err.message?.slice(0, 200) };
     }
   });
+
+  // Delete a workspace file (e.g. BOOTSTRAP.md after first-run wizard completes)
+  ipcMain.handle('agents:delete-file', async (_e: any, agentId: string, fileName: string) => {
+    if (!isAllowedMarkdownFile(fileName)) return { success: false, error: 'File not allowed' };
+    try {
+      const slug = toAgentSlug(agentId);
+      const wsDir = path.join(deps.home, '.openclaw', 'workspaces', slug);
+      const agentDir = path.join(deps.home, '.openclaw', 'agents', slug, 'agent');
+      const globalWs = path.join(deps.home, '.openclaw', 'workspace');
+      const isDefault = DEFAULT_AGENT_IDS.has(agentId);
+      const targets = isDefault ? [globalWs] : [wsDir, agentDir];
+      let deleted = false;
+      for (const dir of targets) {
+        const fp = path.join(dir, fileName);
+        if (fs.existsSync(fp)) {
+          fs.unlinkSync(fp);
+          deleted = true;
+        }
+      }
+      return { success: true, deleted };
+    } catch (err: any) {
+      return { success: false, error: err.message?.slice(0, 200) };
+    }
+  });
 }

@@ -824,7 +824,7 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [sessions, agentStatus]);
 
-  // When tab becomes active again, restore focus + scroll to bottom
+  // When tab becomes active again, restore focus + scroll to bottom + refresh agents
   useEffect(() => {
     if (!isActive) return;
     messagesEndRef.current?.scrollIntoView({ behavior: 'instant' });
@@ -833,6 +833,15 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
       const t = setTimeout(() => textareaRef.current?.focus(), 50);
       return () => clearTimeout(t);
     }
+    // Refresh agents list — user may have created/deleted agents on the Agents page
+    const api = window.electronAPI as any;
+    api?.agentsList?.().then((res: any) => {
+      if (res?.success && res.agents?.length > 0) {
+        setAgents(res.agents.map((a: any) => ({
+          id: a.id, name: a.name || a.id, emoji: a.emoji || '🤖', isDefault: a.isDefault,
+        })));
+      }
+    }).catch(() => {});
   }, [isActive]);
 
   const activeSession = sessions.find(s => s.id === activeSessionId);
@@ -1322,8 +1331,14 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
           onRemoveFile={(index) => setAttachedFiles((prev) => prev.filter((_, currentIndex) => currentIndex !== index))}
           onToggleAgentMenu={() => setShowAgentMenu(!showAgentMenu)}
           onSelectAgent={(agentId) => {
+            const prevAgentId = config.selectedAgentId || 'main';
             updateConfig({ selectedAgentId: agentId });
             setShowAgentMenu(false);
+            // Switching agents requires a new session — Gateway associates sessions with agents,
+            // so reusing the same session would keep routing to the previous agent.
+            if (agentId !== prevAgentId) {
+              handleNewSession();
+            }
           }}
           onTogglePermissionMenu={() => setShowPermissionMenu(!showPermissionMenu)}
           onSelectPermission={applyChatPermissionPreset}

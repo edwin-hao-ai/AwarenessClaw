@@ -162,6 +162,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   agentsListFiles: (id: string) => ipcRenderer.invoke('agents:list-files', id),
   agentsReadFile: (id: string, fileName: string) => ipcRenderer.invoke('agents:read-file', id, fileName),
   agentsWriteFile: (id: string, fileName: string, content: string) => ipcRenderer.invoke('agents:write-file', id, fileName, content),
+  agentsDeleteFile: (id: string, fileName: string) => ipcRenderer.invoke('agents:delete-file', id, fileName),
 
   // Models (dynamic)
   modelsReadProviders: () => ipcRenderer.invoke('models:read-providers'),

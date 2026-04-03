@@ -87,6 +87,14 @@ export default function BootstrapWizard({ onComplete, onSkip }: BootstrapWizardP
         `# Identity\n\n- **name**: ${finalAgentName}\n- **emoji**: ${emoji}\n- **role**: AI Assistant\n`
       );
 
+      // Delete BOOTSTRAP.md — OpenClaw creates this as a one-time first-run ritual file.
+      // Once our wizard completes, we delete it so OpenClaw doesn't re-run its own bootstrap.
+      try {
+        if (api.agentsDeleteFile) {
+          await api.agentsDeleteFile('main', 'BOOTSTRAP.md');
+        }
+      } catch { /* ignore — file may not exist */ }
+
       onComplete();
     } catch {
       // If writing fails, still complete — user can edit later

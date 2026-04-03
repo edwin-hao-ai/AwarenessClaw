@@ -196,6 +196,14 @@ export default function AgentWizard({ onComplete, onCancel }: AgentWizardProps) 
         }
       }
 
+      // 5. Delete BOOTSTRAP.md — OpenClaw seeds this in new workspaces as a one-time ritual.
+      // Our wizard already collected identity info, so remove it to prevent double-bootstrap.
+      try {
+        if (api.agentsDeleteFile) {
+          await api.agentsDeleteFile(slug, 'BOOTSTRAP.md');
+        }
+      } catch { /* ignore — file may not exist */ }
+
       onComplete();
     } catch (err: any) {
       setError(err?.message || t('agentWizard.error.unexpected', 'Unexpected error.'));
@@ -237,7 +245,7 @@ export default function AgentWizard({ onComplete, onCancel }: AgentWizardProps) 
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/95 flex items-center justify-center p-6">
-      <div className="w-full max-w-lg">
+      <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="text-center mb-6">
           <div className="w-14 h-14 rounded-full bg-brand-500/10 flex items-center justify-center mx-auto mb-3">
@@ -463,7 +471,7 @@ export default function AgentWizard({ onComplete, onCancel }: AgentWizardProps) 
                   </p>
                 </div>
               ) : (
-                <div className="space-y-2">
+                <div className="space-y-2 max-h-[40vh] overflow-y-auto pr-1">
                   <p className="text-[11px] text-slate-500">
                     {t('agentWizard.step4.selectChannels', 'Select channels to route to this agent:')}
                   </p>
