@@ -20,15 +20,16 @@ describe('AgentWizard', () => {
     vi.restoreAllMocks();
   });
 
-  it('renders step 1 with name and emoji inputs', async () => {
+  it('renders step 1 with name input and emoji picker', async () => {
     await act(async () => {
       render(<AgentWizard onComplete={vi.fn()} onCancel={vi.fn()} />);
     });
 
     expect(screen.getByText('Name your agent')).toBeTruthy();
-    // Should have two text inputs: emoji + name
-    const inputs = screen.getAllByRole('textbox');
-    expect(inputs.length).toBeGreaterThanOrEqual(2);
+    // Should have name input
+    expect(screen.getByPlaceholderText(/Research/i)).toBeTruthy();
+    // Should have emoji picker buttons
+    expect(screen.getByText('Pick an icon:')).toBeTruthy();
   });
 
   it('disables Next when name is empty', async () => {
@@ -46,9 +47,7 @@ describe('AgentWizard', () => {
     });
 
     // Step 1: Enter name
-    const inputs = screen.getAllByRole('textbox');
-    const nameInput = inputs.find(input => (input as HTMLInputElement).placeholder?.includes('Research'));
-    expect(nameInput).toBeTruthy();
+    const nameInput = screen.getByPlaceholderText(/Research/i);
 
     await act(async () => {
       fireEvent.change(nameInput!, { target: { value: 'TestAgent' } });
