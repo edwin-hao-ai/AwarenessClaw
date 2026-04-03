@@ -149,9 +149,9 @@ export function ChatComposer({
                   ? t('chat.input.canQueue', 'AI is working... you can still type')
                   : t('chat.input.placeholder')
               }
-              rows={1}
-              className="w-full pl-4 pr-4 pt-3 pb-10 bg-transparent rounded-2xl text-sm focus:outline-none resize-none placeholder:text-slate-600 disabled:opacity-50 disabled:cursor-not-allowed"
-              style={{ minHeight: '52px', maxHeight: '160px', height: input.includes('\n') ? 'auto' : '52px' }}
+              rows={2}
+              className="w-full pl-4 pr-4 pt-3 pb-11 bg-transparent rounded-2xl text-sm leading-relaxed focus:outline-none resize-none placeholder:text-slate-600 disabled:opacity-50 disabled:cursor-not-allowed"
+              style={{ minHeight: '80px', maxHeight: '200px' }}
               disabled={false}
             />
             <input
@@ -162,8 +162,8 @@ export function ChatComposer({
               aria-label={t('chat.attachFile', 'Attach file')}
               onChange={(event) => onFilesSelected(event.target.files)}
             />
-            <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between">
-              <div className="flex items-center gap-0.5">
+            <div className="absolute bottom-2.5 left-3 right-3 flex items-center justify-between">
+              <div className="flex items-center gap-1">
                 {/* Attach file */}
                 <button onClick={onOpenFilePicker} aria-label={t('chat.attachFile', 'Attach file')} className="p-1.5 text-slate-500 hover:text-slate-300 hover:bg-slate-700/50 rounded-lg transition-colors" title={t('chat.attachFile', 'Attach file')}>
                   <Paperclip size={14} />
