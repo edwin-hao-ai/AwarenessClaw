@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { ChevronRight, ChevronLeft, Check, ExternalLink, X, Loader2 } from 'lucide-react';
+import { ChevronRight, ChevronLeft, Check, ExternalLink, X, Loader2, Unplug } from 'lucide-react';
 import { useI18n } from '../lib/i18n';
 import { useExternalNavigator } from '../lib/useExternalNavigator';
 import PasswordInput from '../components/PasswordInput';
@@ -88,6 +88,8 @@ export default function Channels() {
   const [configuredChannels, setConfiguredChannels] = useState<Set<string>>(new Set());
   const [channels, setChannels] = useState<ChannelDef[]>(getAllChannels());
   const [loadingChannels, setLoadingChannels] = useState(true);
+  const [removingChannel, setRemovingChannel] = useState<string | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
   const hasLoadedOnce = useRef(false);
 
   // Get the active channel definition from registry
@@ -168,6 +170,22 @@ export default function Channels() {
   };
 
   const closeWizard = () => { setActiveWizard(null); loadConfiguredChannels(false); };
+
+  const handleRemove = async (channelId: string) => {
+    if (!window.electronAPI) return;
+    setRemovingChannel(channelId);
+    setConfirmRemove(null);
+    try {
+      const result = await (window.electronAPI as any).channelRemove(channelId);
+      if (!result.success) {
+        console.error('[Channels] remove failed:', result.error);
+      }
+    } catch (e) {
+      console.error('[Channels] remove error:', e);
+    }
+    setRemovingChannel(null);
+    loadConfiguredChannels(false);
+  };
 
   // Build config from form values — driven by channel definition
   const buildConfig = (): Record<string, string> | null => {
@@ -331,17 +349,33 @@ export default function Channels() {
           <h3 className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-3">{t('channels.connected')}</h3>
           <div className="grid grid-cols-2 gap-3">
             {channels.filter((c) => c.id === 'local' || configuredChannels.has(c.id)).map((ch) => (
-              <button key={ch.id} onClick={() => ch.id !== 'local' && openWizard(ch.id)} disabled={ch.id === 'local'}
-                className={`p-4 bg-emerald-600/10 border border-emerald-600/30 rounded-xl text-left ${ch.id !== 'local' ? 'hover:border-emerald-500/50 cursor-pointer' : ''} transition-colors`}>
+              <div key={ch.id} className={`p-4 bg-emerald-600/10 border border-emerald-600/30 rounded-xl text-left ${ch.id !== 'local' ? 'hover:border-emerald-500/50' : ''} transition-colors`}>
                 <div className="flex items-center gap-3">
-                  <ChannelIcon channelId={ch.id} size={28} />
-                  <div className="flex-1">
-                    <div className="font-medium text-sm">{getChannelLabel(ch)}</div>
-                    <div className="text-xs text-emerald-400">✅ {ch.id === 'local' ? t('channels.builtIn') : t('channels.configured')}</div>
-                  </div>
-                  {ch.id !== 'local' && <ChevronRight size={14} className="text-slate-600" />}
+                  <button onClick={() => ch.id !== 'local' && openWizard(ch.id)} disabled={ch.id === 'local'}
+                    className="flex items-center gap-3 flex-1 min-w-0 text-left">
+                    <ChannelIcon channelId={ch.id} size={28} />
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-sm">{getChannelLabel(ch)}</div>
+                      <div className="text-xs text-emerald-400">✅ {ch.id === 'local' ? t('channels.builtIn') : t('channels.configured')}</div>
+                    </div>
+                  </button>
+                  {ch.id !== 'local' && (
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button onClick={() => openWizard(ch.id)} className="p-1 text-slate-600 hover:text-slate-300 transition-colors" title={t('channels.editingBadge', 'Edit')}>
+                        <ChevronRight size={14} />
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setConfirmRemove(ch.id); }}
+                        disabled={removingChannel === ch.id}
+                        className="p-1 text-slate-600 hover:text-red-400 transition-colors"
+                        title={t('channels.disconnect', 'Disconnect')}
+                      >
+                        {removingChannel === ch.id ? <Loader2 size={14} className="animate-spin" /> : <Unplug size={14} />}
+                      </button>
+                    </div>
+                  )}
                 </div>
-              </button>
+              </div>
             ))}
           </div>
         </div>
@@ -366,6 +400,34 @@ export default function Channels() {
           </div>
         </div>
       </div>
+
+      {/* Confirm Remove Modal */}
+      {confirmRemove && (() => {
+        const ch = getChannel(confirmRemove);
+        return (
+          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-8">
+            <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-sm p-6 space-y-4">
+              <div className="flex items-center gap-3">
+                {ch && <ChannelIcon channelId={confirmRemove} size={24} />}
+                <h3 className="text-base font-semibold">{t('channels.confirmRemoveTitle', 'Disconnect Channel')}</h3>
+              </div>
+              <p className="text-sm text-slate-400">
+                {t('channels.confirmRemoveMsg', 'This will remove the channel configuration and unbind it from all agents. You can reconnect later.')}
+              </p>
+              <div className="flex justify-end gap-3">
+                <button onClick={() => setConfirmRemove(null)}
+                  className="px-4 py-2 text-sm text-slate-400 hover:text-slate-200 transition-colors">
+                  {t('channels.cancel', 'Cancel')}
+                </button>
+                <button onClick={() => handleRemove(confirmRemove)}
+                  className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg text-sm font-medium transition-colors">
+                  {t('channels.disconnect', 'Disconnect')}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Wizard Modal */}
       {activeWizard && activeChannel && (

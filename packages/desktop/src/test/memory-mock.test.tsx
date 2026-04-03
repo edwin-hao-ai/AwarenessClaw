@@ -41,8 +41,8 @@ describe('Memory page daemon connection states', () => {
 
     await act(async () => { render(<Memory />); });
     // Switch to knowledge tab to see cards
-    await waitFor(() => expect(screen.getByText(/Knowledge Cards/)).toBeInTheDocument());
-    await act(async () => { screen.getByText(/Knowledge Cards/).click(); });
+    await waitFor(() => expect(screen.getAllByText(/Knowledge Cards/).length).toBeGreaterThan(0));
+    await act(async () => { screen.getAllByText(/Knowledge Cards/)[0].click(); });
     await waitFor(() => {
       expect(screen.getByText('Real card')).toBeInTheDocument();
       expect(screen.queryByText('Start Daemon')).not.toBeInTheDocument();

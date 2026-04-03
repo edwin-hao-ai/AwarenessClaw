@@ -176,11 +176,16 @@ export function ChatComposer({
                 <div className="relative" ref={permissionMenuRef}>
                   <button
                     onClick={onTogglePermissionMenu}
-                    className="p-1.5 text-slate-500 hover:text-slate-300 hover:bg-slate-700/50 rounded-lg transition-colors"
+                    className="flex items-center gap-1 p-1.5 text-slate-500 hover:text-slate-300 hover:bg-slate-700/50 rounded-lg transition-colors"
                     title={`${t('chat.permissions.switch', 'Permissions')}: ${selectedPermissionLabel}`}
                     disabled={permissionUpdating}
                   >
                     {permissionUpdating ? <Loader2 size={14} className="animate-spin" /> : <Shield size={14} />}
+                    <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                      selectedPermissionLabel.toLowerCase().includes('safe') ? 'bg-blue-400' :
+                      selectedPermissionLabel.toLowerCase().includes('developer') ? 'bg-purple-400' :
+                      'bg-emerald-400'
+                    }`} />
                   </button>
                   {showPermissionMenu && (
                     <div className="absolute bottom-full left-0 mb-1 w-52 bg-slate-800/95 backdrop-blur-sm border border-slate-700/80 rounded-xl shadow-xl overflow-hidden z-50">

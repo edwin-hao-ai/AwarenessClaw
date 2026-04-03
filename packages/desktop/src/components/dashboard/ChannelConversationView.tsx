@@ -1,4 +1,4 @@
-import { ChevronRight, Loader2, Send } from 'lucide-react';
+import { ChevronRight, Loader2, MessageSquare, Send } from 'lucide-react';
 import ChannelIcon from '../ChannelIcon';
 
 type ChannelSession = {
@@ -11,6 +11,7 @@ type ChannelMessage = {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  timestamp?: number;
 };
 
 export function ChannelConversationView({
@@ -63,21 +64,39 @@ export function ChannelConversationView({
               <span className="text-sm">Loading history...</span>
             </div>
           ) : channelMessages.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-slate-500">
+            <div className="flex flex-col items-center justify-center py-12 text-slate-500 space-y-3">
+              {currentSession && <ChannelIcon channelId={currentSession.channel} size={32} />}
+              <MessageSquare size={24} className="opacity-40" />
               <span className="text-sm">No messages yet</span>
+              <span className="text-xs text-slate-600">Send a message to start the conversation</span>
             </div>
           ) : (
             channelMessages.map((message) => (
               message.role === 'user' ? (
                 <div key={message.id} className="flex justify-end">
-                  <div className="max-w-[75%] px-4 py-3 rounded-2xl rounded-br-md text-sm bg-brand-600 text-white">
-                    {message.content}
+                  <div className="max-w-[75%]">
+                    <div className="px-4 py-3 rounded-2xl rounded-br-md text-sm bg-brand-600 text-white">
+                      {message.content}
+                    </div>
+                    {message.timestamp && (
+                      <div className="text-right mt-1">
+                        <span className="text-[10px] text-slate-600">{new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               ) : (
-                <div key={message.id} className="flex justify-start">
-                  <div className="max-w-[85%] text-sm text-slate-200 whitespace-pre-wrap">
-                    {message.content}
+                <div key={message.id} className="flex justify-start gap-2.5">
+                  {currentSession && <span className="mt-0.5 flex-shrink-0 opacity-70"><ChannelIcon channelId={currentSession.channel} size={20} /></span>}
+                  <div className="max-w-[85%]">
+                    <div className="px-4 py-3 rounded-2xl rounded-bl-md bg-slate-800/50 text-sm text-slate-200 whitespace-pre-wrap">
+                      {message.content}
+                    </div>
+                    {message.timestamp && (
+                      <div className="mt-1">
+                        <span className="text-[10px] text-slate-600">{new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               )

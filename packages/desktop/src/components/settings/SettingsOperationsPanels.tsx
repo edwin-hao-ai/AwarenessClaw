@@ -254,8 +254,10 @@ export function SettingsSystemPanel({
   t,
   autoUpdate,
   autoStart,
+  daemonAutostart,
   onAutoUpdateChange,
   onAutoStartChange,
+  onDaemonAutostartChange,
   onRunDiagnostic,
   onExport,
   onImport,
@@ -264,8 +266,10 @@ export function SettingsSystemPanel({
   t: TFunction;
   autoUpdate: boolean;
   autoStart: boolean;
+  daemonAutostart: boolean;
   onAutoUpdateChange: (value: boolean) => void;
   onAutoStartChange: (value: boolean) => void;
+  onDaemonAutostartChange: (value: boolean) => void;
   onRunDiagnostic: () => void;
   onExport: () => void;
   onImport: () => void;
@@ -278,6 +282,9 @@ export function SettingsSystemPanel({
       </SettingsRow>
       <SettingsRow label={t('settings.bootStart')} desc={t('settings.bootStart.desc')}>
         <SettingsToggle checked={autoStart} onChange={onAutoStartChange} />
+      </SettingsRow>
+      <SettingsRow label={t('settings.daemonAutostart', 'Memory Service at Boot')} desc={t('settings.daemonAutostart.desc', 'Start Awareness memory daemon automatically when you log in')}>
+        <SettingsToggle checked={daemonAutostart} onChange={onDaemonAutostartChange} />
       </SettingsRow>
       <SettingsRow label={t('settings.diagnostic')} desc={t('settings.diagnostic.desc')}>
         <button

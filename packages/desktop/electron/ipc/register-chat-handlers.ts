@@ -125,6 +125,37 @@ export function registerChatHandlers(deps: {
     }
   });
 
+  // Load chat history from Gateway for a given session.
+  // Falls back gracefully — returns empty if Gateway is unavailable.
+  ipcMain.handle('chat:load-history', async (_e: any, sessionId: string) => {
+    const gw = deps.getConnectedGatewayWs();
+    if (!gw?.isConnected || !sessionId) {
+      return { success: false, messages: [], error: 'Gateway not connected' };
+    }
+    try {
+      const raw = await gw.chatHistory(sessionId);
+      if (!raw || raw.length === 0) {
+        return { success: true, messages: [] };
+      }
+      // Transform Gateway message format to desktop Message format
+      const messages = (raw || []).map((msg: any) => {
+        const content = Array.isArray(msg.content)
+          ? msg.content.map((chunk: any) => chunk?.type === 'text' ? (chunk.text || '') : '').join('')
+          : (msg.content || '');
+        return {
+          id: msg.__openclaw?.id || `gw-${msg.timestamp || Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          role: msg.role || 'assistant',
+          content,
+          timestamp: msg.timestamp || Date.now(),
+          model: msg.model,
+        };
+      });
+      return { success: true, messages };
+    } catch (err: any) {
+      return { success: false, messages: [], error: err?.message || String(err) };
+    }
+  });
+
   ipcMain.handle('chat:send', async (_e: any, message: string, sessionId?: string, options?: ChatSendOptions) => {
     const send = (channel: string, payload: any) => {
       deps.sendToRenderer(channel, payload);

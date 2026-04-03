@@ -54,8 +54,8 @@ describe('Memory Page — Daily Summary', () => {
 
     await act(async () => { render(<Memory />); });
     // Switch to knowledge tab to see Daily Summary
-    await waitFor(() => expect(screen.getByText(/Knowledge Cards/)).toBeInTheDocument());
-    await act(async () => { fireEvent.click(screen.getByText(/Knowledge Cards/)); });
+    await waitFor(() => expect(screen.getAllByText(/Knowledge Cards/).length).toBeGreaterThan(0));
+    await act(async () => { fireEvent.click(screen.getAllByText(/Knowledge Cards/)[0]); });
 
     await waitFor(() => {
       expect(screen.getByText('Daily Summary')).toBeInTheDocument();
@@ -82,8 +82,8 @@ describe('Memory Page — Daily Summary', () => {
     });
 
     await act(async () => { render(<Memory />); });
-    await waitFor(() => expect(screen.getByText(/Knowledge Cards/)).toBeInTheDocument());
-    await act(async () => { fireEvent.click(screen.getByText(/Knowledge Cards/)); });
+    await waitFor(() => expect(screen.getAllByText(/Knowledge Cards/).length).toBeGreaterThan(0));
+    await act(async () => { fireEvent.click(screen.getAllByText(/Knowledge Cards/)[0]); });
 
     await waitFor(() => {
       expect(screen.getByText('Daily Summary')).toBeInTheDocument();
@@ -108,8 +108,8 @@ describe('Memory Page — Daily Summary', () => {
     });
 
     await act(async () => { render(<Memory />); });
-    await waitFor(() => expect(screen.getByText(/Knowledge Cards/)).toBeInTheDocument());
-    await act(async () => { fireEvent.click(screen.getByText(/Knowledge Cards/)); });
+    await waitFor(() => expect(screen.getAllByText(/Knowledge Cards/).length).toBeGreaterThan(0));
+    await act(async () => { fireEvent.click(screen.getAllByText(/Knowledge Cards/)[0]); });
 
     await waitFor(() => {
       expect(screen.getByText('Some insight')).toBeInTheDocument();

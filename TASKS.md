@@ -140,9 +140,9 @@
 - [x] **Stop 按钮**：agent 运行时显示 Stop 按钮，kill 子进程 ✅
 - [x] **代码块复制按钮**：已有 CodeBlock 组件 ✅
 - [x] **Gateway 模式**：去掉 `--local` flag，通过 Gateway 运行（更好的会话管理）✅
-- [ ] **WebSocket 直连 Gateway**：认证需要设备身份签名（RSA v3 协议），暂缓。当前 CLI 方式已通过 Gateway 运行，功能上无差距
-- [ ] **chat.abort RPC**：通过 Gateway RPC 优雅中止（当前用 kill 进程，功能可用但不优雅）
-- [ ] **chat.history 同步**：从 Gateway 加载历史替代 localStorage（增强可靠性）
+- [x] **WebSocket 直连 Gateway**：`gateway-ws.ts` 386 行完整 WS 客户端 + Ed25519 v3 签名 + 设备身份认证，已用于聊天和统一收件箱（2026-04-02）
+- [x] **chat.abort RPC**：`register-chat-handlers.ts` 实现双路径：Gateway WS `chatAbort()` RPC 优先 + CLI SIGTERM fallback（2026-04-02）
+- [x] **chat.history 同步**：桌面聊天切换 session 时优先从 Gateway 加载历史 + 与 localStorage 合并去重；`chat:load-history` IPC + preload 暴露；Gateway 不可用时静默 fallback localStorage（2026-04-03）
 
 ### OpenClaw MD 文档管理
 OpenClaw 的 chat 质量依赖 `~/.openclaw/workspace/` 下的 MD 文档：
@@ -230,24 +230,24 @@ OpenClaw 的 chat 质量依赖 `~/.openclaw/workspace/` 下的 MD 文档：
 - [x] **混合搜索**：已实现，向量搜索 + FTS5 全文搜索混合排序（search.mjs），daemon healthz 显示 `search_mode: "hybrid"`（2026-03-30）
 
 ### 超越 QMD 插件的差异化功能
-- [ ] **知识卡片自动提炼**：从对话中自动提取决策、问题解决、工作流等结构化知识（已有后端能力，需要前端展示优化）
-- [ ] **跨会话知识图谱**：关联不同通道/会话中的相关知识，在记忆页可视化展示关联关系
-- [ ] **感知信号面板**：展示项目上下文变化（文件修改模式、活跃时段、技术栈偏好）— 已有 daemon type=perception 能力
-- [ ] **记忆冲突检测**：新知识与已有知识矛盾时自动标记（后端已实现 5 类分类器，前端需展示）
+- [x] **知识卡片自动提炼**：Memory.tsx 完整实现 9 类 category 系统 + 真实 MCP 数据解析 + 每日摘要 + 分类筛选（2026-04-01）
+- [x] **跨会话知识图谱**：Memory 页新增 Graph tab，使用 react-force-graph-2d 力导向图。节点=知识卡片（按 category 着色），边=关键词重叠（≥20%）+ 会话时间窗口关联。支持悬浮详情、缩放平移、类别图例。lazy-load 独立 chunk（194KB）（2026-04-03）
+- [x] **感知信号面板**：Memory.tsx 已实现 4 种信号类型（contradiction/pattern/resonance/staleness），彩色 UI + daemon type=perception 数据接入（2026-04-01）
+- [x] **记忆冲突检测**：Knowledge card 显示 superseded 状态（amber 徽章 + 删除线 + 半透明），后端 5 类分类器已对接（2026-04-01）
 - [x] **隐私控制**：Settings Memory Privacy section — 7 个来源的记忆捕获开关（desktop/telegram/whatsapp/discord/slack/wechat/dev-tools），blockedSources 同步到 openclaw.json 插件配置；一键删除所有知识卡片按钮（调 daemon DELETE /knowledge/cleanup）（2026-04-01）
 
 ### Daemon 健壮性
-- [ ] **npx 缓存损坏自动修复**：Doctor 已有 `fixDaemonStart` 清理 `~/.npm/_npx/` 坏缓存
-- [ ] **开机自动启动 daemon**：macOS LaunchAgent / Windows 计划任务 / Linux systemd
-- [ ] **daemon 崩溃自动重启**：watchdog 机制，检测 37800 端口无响应时自动重拉
-- [ ] **better-sqlite3 编译失败降级**：已有 `NoopIndexer` fallback，但需要在前端提示"搜索功能不可用"
+- [x] **npx 缓存损坏自动修复**：`doctor.ts` `fixDaemonStart()` 主动清理 `~/.npm/_npx/` 坏缓存 + `local-daemon.ts` `clearAwarenessLocalNpxCache()`（2026-04-01）
+- [x] **开机自动启动 daemon**：`daemon-autostart.ts` 三平台实现：macOS LaunchAgent (`com.awareness.local-daemon.plist`) / Windows schtasks (ONLOGON) / Linux systemd user service。Settings 页新增 "Memory Service at Boot" 开关，IPC `app:set/get-daemon-autostart`（2026-04-03）
+- [x] **daemon 崩溃自动重启**：`daemon-watchdog.ts` 每 60s 健康检查 + 自动 spawn 重拉（2026-04-01）
+- [x] **better-sqlite3 编译失败降级**：Memory 页检测 `daemonHealth.search_mode !== 'hybrid'` 时显示 amber 提示条 "Semantic search unavailable"，引导重启 daemon（2026-04-03）
 
 ## P4 — 长尾功能
 
-- [ ] 更多通道（Teams, Twitch, Zalo）
+- [x] 更多通道（Teams, Twitch, Zalo）— 已通过动态通道注册表（Unified Channel Registry）自动覆盖所有 OpenClaw 支持的通道（2026-04-01）
 - [ ] 团队记忆
 - [ ] 自定义技能创建
-- [ ] 多语言 UI
+- [ ] 多语言 UI（当前中英双语基本覆盖）
 
 ---
 
@@ -270,9 +270,9 @@ OpenClaw 的 chat 质量依赖 `~/.openclaw/workspace/` 下的 MD 文档：
 - [x] ~~Plugin 版本检测读错位置~~ — 改为读 `~/.openclaw/extensions/openclaw-memory/package.json`（实际安装位置）（2026-03-30）
 - [x] **通道连接全面修复**：所有通道（Telegram/Discord/LINE/Slack/飞书/Matrix/Google Chat）的 `channel:save` 均已统一修复为三步流程（plugin install → channels add / config write → gateway restart + agent bind）。`channel:test` 凭据检查已覆盖所有字段（token/botToken/appId/appSecret/serviceAccountFile/homeserver 等）。Telegram 手动验证通过（Windows CLI + 桌面端代码审计）。飞书/Matrix/Google Chat 直接写 JSON 的路径同样补齐了 plugin install + gateway restart + agent bind（2026-04-01）
 - [x] **一键通道连接确认优化**：`channel:setup` 改为登录成功后短轮询 `openclaw channels list`，确认超时时返回“仍在确认中”而不是直接失败；`openclaw-shell-output` 新增混合 stderr/JSON 解析测试，减少 agent/channel 列表偶发空白（2026-04-02）
-- [ ] **权限管理 UI 重设计**：Settings 页的 tools.alsoAllow / tools.denied 编辑太技术化，普通用户不知道该填什么。需要改为：预设权限方案（"安全模式"/"标准模式"/"开发者模式"）+ 开关式 UI，而非让用户手写工具名
-- [ ] **新建会话按钮美化**：侧边栏的"+ 新对话"按钮样式粗糙，参考 Claude Desktop 的新建按钮风格（圆角、hover 动画、快捷键提示 ⌘N）
-- [ ] **聊天 UI 细节打磨**：消息气泡间距、代码块样式、工具调用折叠动画、滚动行为、空态页面等细节对齐 Claude Desktop / ChatGPT 水准
+- [x] **权限管理 UI 重设计**：`SettingsPermissionsPanel.tsx` 实现 3 张预设卡片（Safe/Standard/Developer），图标+颜色+一键切换，替代手写工具名（2026-04-01）
+- [x] **新建会话按钮美化**：`SessionSidebar.tsx` Claude Desktop 风格（rounded-xl + hover 动画 + ⌘N 快捷键 badge + brand 色图标）（2026-03-31）
+- [x] **聊天 UI 细节打磨**：`ChatMessagesPane.tsx` 圆角气泡 + 悬浮复制按钮 + 代码块语言标签/copy + 工具折叠 ChevronRight 旋转动画 + streaming 闪烁光标（2026-04-01）
 - [x] **主题切换（Light/Dark/System）真正生效**：Settings 页的 Theme toggle 之前只切换了 HTML class 但没有任何 light mode CSS。修复：在 `index.css` 中通过 `:root:not(.dark)` 选择器覆盖整个 slate 调色板（bg/text/border/divide/ring/scrollbar），`index.html` 加 blocking script 防止白闪。零组件文件修改，纯 CSS 方案（2026-03-31）
 - [x] **Auto Update 开关真正生效**：Settings 页的 autoUpdate toggle 之前只存 localStorage 不起作用。修复：`UpdateBanner.tsx` 读取 `config.autoUpdate`，为 `false` 时跳过 `checkForUpdates()`。新增测试验证（2026-03-31）
 - [ ] Windows / Linux 打包未测试

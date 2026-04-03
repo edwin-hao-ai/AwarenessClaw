@@ -279,8 +279,8 @@ describe('Memory Page (user flows)', () => {
     ]));
     await act(async () => { render(<Memory />); });
     // Switch to Knowledge Cards tab
-    await waitFor(() => expect(screen.getByText(/Knowledge Cards/)).toBeInTheDocument());
-    await act(async () => { fireEvent.click(screen.getByText(/Knowledge Cards/)); });
+    await waitFor(() => expect(screen.getAllByText(/Knowledge Cards/).length).toBeGreaterThan(0));
+    await act(async () => { fireEvent.click(screen.getAllByText(/Knowledge Cards/)[0]); });
     await waitFor(() => expect(screen.getByText('Use async handlers')).toBeInTheDocument(), { timeout: 3000 });
     expect(screen.getByText('Ship fast principle')).toBeInTheDocument();
     // No Start Daemon button
@@ -296,8 +296,8 @@ describe('Memory Page (user flows)', () => {
 
     await act(async () => { render(<Memory />); });
     // Switch to Knowledge Cards tab
-    await waitFor(() => expect(screen.getByText(/Knowledge Cards/)).toBeInTheDocument());
-    await act(async () => { fireEvent.click(screen.getByText(/Knowledge Cards/)); });
+    await waitFor(() => expect(screen.getAllByText(/Knowledge Cards/).length).toBeGreaterThan(0));
+    await act(async () => { fireEvent.click(screen.getAllByText(/Knowledge Cards/)[0]); });
     await waitFor(() => expect(screen.getByText('A card')).toBeInTheDocument(), { timeout: 3000 });
 
     const searchInput = screen.getByPlaceholderText(/Search memories/i);
@@ -318,8 +318,8 @@ describe('Memory Page (user flows)', () => {
     ]));
     await act(async () => { render(<Memory />); });
     // Switch to Knowledge Cards tab
-    await waitFor(() => expect(screen.getByText(/Knowledge Cards/)).toBeInTheDocument());
-    await act(async () => { fireEvent.click(screen.getByText(/Knowledge Cards/)); });
+    await waitFor(() => expect(screen.getAllByText(/Knowledge Cards/).length).toBeGreaterThan(0));
+    await act(async () => { fireEvent.click(screen.getAllByText(/Knowledge Cards/)[0]); });
     await waitFor(() => expect(screen.getByText('Pitfall card')).toBeInTheDocument(), { timeout: 3000 });
 
     // Click the Pitfall category tab
@@ -340,8 +340,8 @@ describe('Memory Page (user flows)', () => {
 
     await act(async () => { render(<Memory />); });
     // Switch to Knowledge Cards tab
-    await waitFor(() => expect(screen.getByText(/Knowledge Cards/)).toBeInTheDocument());
-    await act(async () => { fireEvent.click(screen.getByText(/Knowledge Cards/)); });
+    await waitFor(() => expect(screen.getAllByText(/Knowledge Cards/).length).toBeGreaterThan(0));
+    await act(async () => { fireEvent.click(screen.getAllByText(/Knowledge Cards/)[0]); });
     await waitFor(() => expect(screen.getByText('Only insight')).toBeInTheDocument(), { timeout: 3000 });
 
     const insightTab = screen.getAllByRole('button').find(b => b.textContent?.includes('Insight'));
@@ -370,8 +370,8 @@ describe('Memory Page (user flows)', () => {
     ]));
     await act(async () => { render(<Memory />); });
     // Switch to Knowledge Cards tab
-    await waitFor(() => expect(screen.getByText(/Knowledge Cards/)).toBeInTheDocument());
-    await act(async () => { fireEvent.click(screen.getByText(/Knowledge Cards/)); });
+    await waitFor(() => expect(screen.getAllByText(/Knowledge Cards/).length).toBeGreaterThan(0));
+    await act(async () => { fireEvent.click(screen.getAllByText(/Knowledge Cards/)[0]); });
     await waitFor(() => expect(screen.getByText('Pitfall one')).toBeInTheDocument(), { timeout: 3000 });
 
     // Filter to pitfall
@@ -550,7 +550,7 @@ describe('Memory Page — Timeline & Daemon (E2E)', () => {
     expect(screen.queryByText('My Decision')).not.toBeInTheDocument();
 
     // Switch to Knowledge Cards
-    await act(async () => { fireEvent.click(screen.getByText(/Knowledge Cards/)); });
+    await act(async () => { fireEvent.click(screen.getAllByText(/Knowledge Cards/)[0]); });
     await waitFor(() => expect(screen.getByText('My Decision')).toBeInTheDocument());
     expect(screen.queryAllByText('Timeline Event').length).toBe(0);
 

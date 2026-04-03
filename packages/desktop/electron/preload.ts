@@ -40,6 +40,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Chat
   chatSend: (message: string, sessionId?: string, options?: { thinkingLevel?: string; model?: string; files?: string[]; workspacePath?: string; agentId?: string }) => ipcRenderer.invoke('chat:send', message, sessionId, options),
   chatAbort: () => ipcRenderer.invoke('chat:abort'),
+  chatLoadHistory: (sessionId: string) => ipcRenderer.invoke('chat:load-history', sessionId),
   chatApprove: (sessionId: string, approvalRequestId: string) => ipcRenderer.invoke('chat:approve', sessionId, approvalRequestId, 'allow-once'),
   onChatStream: (callback: (chunk: string) => void) => {
     ipcRenderer.on('chat:stream', (_e: any, chunk: string) => callback(chunk));
@@ -62,6 +63,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   channelTest: (channelId: string) => ipcRenderer.invoke('channel:test', channelId),
   channelReadConfig: (channelId: string) => ipcRenderer.invoke('channel:read-config', channelId),
   channelSetup: (channelId: string) => ipcRenderer.invoke('channel:setup', channelId),
+  channelRemove: (channelId: string) => ipcRenderer.invoke('channel:remove', channelId),
   channelListConfigured: () => ipcRenderer.invoke('channel:list-configured'),
   channelListSupported: () => ipcRenderer.invoke('channel:list-supported'),
   channelGetRegistry: () => ipcRenderer.invoke('channel:get-registry'),
@@ -193,6 +195,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Launch at Login
   setLoginItem: (enabled: boolean) => ipcRenderer.invoke('app:set-login-item', enabled),
   getLoginItem: () => ipcRenderer.invoke('app:get-login-item'),
+
+  // Daemon auto-start on boot
+  setDaemonAutostart: (enabled: boolean) => ipcRenderer.invoke('app:set-daemon-autostart', enabled),
+  getDaemonAutostart: () => ipcRenderer.invoke('app:get-daemon-autostart'),
 
   // Memory warning (fire-and-forget from main process)
   onMemoryWarning: (callback: (payload: { type: string; message: string }) => void) => {

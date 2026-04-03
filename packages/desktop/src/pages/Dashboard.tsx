@@ -776,6 +776,44 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
     if (activeSessionId) localStorage.setItem(ACTIVE_SESSION_KEY, activeSessionId);
   }, [activeSessionId]);
 
+  // Sync session messages from Gateway when switching sessions.
+  // Gateway is source of truth if available; localStorage is fallback.
+  useEffect(() => {
+    if (!activeSessionId) return;
+    const api = window.electronAPI as any;
+    if (!api?.chatLoadHistory) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const result = await api.chatLoadHistory(activeSessionId);
+        if (cancelled || !result?.success || !result.messages?.length) return;
+
+        // Only merge if Gateway has messages that localStorage might be missing
+        setSessions(prev => prev.map(s => {
+          if (s.id !== activeSessionId) return s;
+          const localIds = new Set(s.messages.map((m: any) => m.id));
+          const gwMessages = result.messages
+            .filter((m: any) => !localIds.has(m.id))
+            .map((m: any) => ({
+              id: m.id,
+              role: m.role as 'user' | 'assistant',
+              content: m.content,
+              timestamp: m.timestamp,
+              model: m.model,
+            }));
+          if (gwMessages.length === 0) return s;
+          // Merge and sort by timestamp
+          const merged = [...s.messages, ...gwMessages].sort((a, b) => a.timestamp - b.timestamp);
+          return { ...s, messages: merged };
+        }));
+      } catch {
+        // Gateway unavailable — silently use localStorage
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [activeSessionId]);
+
   useEffect(() => {
     if (projectRoot) localStorage.setItem(PROJECT_ROOT_KEY, projectRoot);
     else localStorage.removeItem(PROJECT_ROOT_KEY);

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Moon, Sun, Monitor, Check, Loader2, Trash2, ExternalLink, Cloud, Lock, Shield, Code2 } from 'lucide-react';
+import { Check, Loader2, Lock, Shield, Code2 } from 'lucide-react';
 import { useAppConfig, useDynamicProviders } from '../lib/store';
 import { getUsageStats, clearUsage, type UsageStats } from '../lib/usage';
 import { useI18n } from '../lib/i18n';
@@ -8,8 +8,7 @@ import OpenClawConfigSectionForm from '../components/OpenClawConfigSectionForm';
 import { SettingsSection, SettingsToggle } from '../components/settings/SettingsPrimitives';
 import { SettingsPermissionsPanel } from '../components/settings/SettingsPermissionsPanel';
 import { SettingsUsagePanel, SettingsVersionPanel } from '../components/settings/SettingsStatsPanels';
-import { SettingsCloudAuthModal } from '../components/settings/SettingsCloudAuthModal';
-import { SettingsAppearancePanel, SettingsMemoryPanel, SettingsMemoryPrivacyPanel, SettingsTokenPanel } from '../components/settings/SettingsCorePanels';
+import { SettingsAppearancePanel, SettingsTokenPanel } from '../components/settings/SettingsCorePanels';
 import { SettingsExtensionsPanel, SettingsGatewayPanel, SettingsHealthPanel, SettingsLogsModal, SettingsSecurityAuditPanel, SettingsSystemPanel } from '../components/settings/SettingsOperationsPanels';
 import { buildDynamicSectionsFromSchema, getValueAtPath, setValueAtPath, type DynamicConfigSection } from '../lib/openclaw-capabilities';
 import pkg from '../../package.json';
@@ -90,6 +89,7 @@ export default function Settings() {
   const DEVELOPER_EXTRA_TOOLS = ['awareness_perception'] as const;
   const [gatewayStatus, setGatewayStatus] = useState<'checking' | 'running' | 'stopped'>('checking');
   const [gatewayLoading, setGatewayLoading] = useState(false);
+  const [daemonAutostart, setDaemonAutostart] = useState(false);
   const [logs, setLogs] = useState('');
   const [showLogs, setShowLogs] = useState(false);
   const [webSections, setWebSections] = useState<DynamicConfigSection[]>([]);
@@ -107,16 +107,6 @@ export default function Settings() {
   const [showAdvancedPerms, setShowAdvancedPerms] = useState(false);
 
   // Cloud auth state
-  const [showCloudAuth, setShowCloudAuth] = useState(false);
-  const [cloudAuthStep, setCloudAuthStep] = useState<'init' | 'loading' | 'waiting' | 'select' | 'done' | 'error'>('init');
-  const [cloudDeviceCode, setCloudDeviceCode] = useState('');
-  const [cloudUserCode, setCloudUserCode] = useState('');
-  const [cloudVerifyUrl, setCloudVerifyUrl] = useState('');
-  const [cloudApiKey, setCloudApiKey] = useState('');
-  const [cloudMemories, setCloudMemories] = useState<Array<{ id: string; name: string }>>([]);
-  const [cloudMode, setCloudMode] = useState<string>('local');
-  const cloudPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
   // Permission presets
   const PERMISSION_PRESETS = {
     safe: {
@@ -317,6 +307,16 @@ export default function Settings() {
     await (window.electronAPI as any).permissionsUpdate(changes);
   };
 
+  // Load daemon autostart state on mount
+  useEffect(() => {
+    (async () => {
+      const api = window.electronAPI as any;
+      if (!api?.getDaemonAutostart) return;
+      const result = await api.getDaemonAutostart();
+      setDaemonAutostart(!!result?.enabled);
+    })();
+  }, []);
+
   // Check gateway status — only poll when page is visible, reduced frequency
   useEffect(() => {
     checkGateway();
@@ -364,16 +364,6 @@ export default function Settings() {
     const result = await (window.electronAPI as any).getRecentLogs();
     setLogs(result.logs || t('settings.gateway.noLogs', 'No logs'));
     setShowLogs(true);
-  };
-
-  const handleToggle = (key: keyof typeof config, value: boolean) => {
-    updateConfig({ [key]: value } as any);
-    syncConfig(allProviders);
-  };
-
-  const handleRecallLimit = (value: number) => {
-    updateConfig({ recallLimit: value });
-    syncConfig(allProviders);
   };
 
   const handleWebFieldChange = (path: string, nextValue: any) => {
@@ -448,100 +438,6 @@ export default function Settings() {
     }
     setWebSaved(true);
     setTimeout(() => setWebSaved(false), 2500);
-  };
-
-  // Check cloud status on mount
-  useEffect(() => {
-    const api = window.electronAPI as any;
-    api?.cloudStatus?.().then((res: any) => {
-      if (res?.success) setCloudMode(res.mode || 'local');
-    }).catch(() => {});
-  }, []);
-
-  // Cleanup cloud auth polling on unmount
-  useEffect(() => {
-    return () => { if (cloudPollRef.current) clearTimeout(cloudPollRef.current); };
-  }, []);
-
-  const startCloudAuth = async () => {
-    const api = window.electronAPI as any;
-    if (!api) return;
-    setCloudAuthStep('loading');
-    const res = await api.cloudAuthStart();
-    if (!res?.success || !res.device_code) {
-      setCloudAuthStep('error');
-      return;
-    }
-    setCloudDeviceCode(res.device_code);
-    setCloudUserCode(res.user_code);
-    setCloudVerifyUrl(`${res.verification_uri}?code=${res.user_code}`);
-    setCloudAuthStep('waiting');
-
-    // Open browser automatically
-    void openExternal(res.verification_uri + '?code=' + res.user_code, 'settings-cloud-auth');
-
-    // Sequential polling — daemon holds each request up to 30s (long poll),
-    // so we use recursive setTimeout to avoid request pileup.
-    if (cloudPollRef.current) clearTimeout(cloudPollRef.current);
-    const expiresIn = (res.expires_in || 600) * 1000;
-    const startTime = Date.now();
-    const deviceCode = res.device_code;
-
-    const doPoll = async () => {
-      if (Date.now() - startTime > expiresIn) {
-        // Don't jump to error — stay on waiting screen so user can click refresh
-        return;
-      }
-      try {
-        const poll = await api.cloudAuthPoll(deviceCode);
-        // Direct awareness.market response: { status: "approved", api_key: "..." }
-        // or { status: "pending" } or { status: "expired" }
-        if (poll?.api_key) {
-          setCloudApiKey(poll.api_key);
-          const memRes = await api.cloudListMemories(poll.api_key);
-          const mems = memRes?.memories || [];
-          if (mems.length <= 1) {
-            const memId = mems[0]?.id || '';
-            await api.cloudConnect(poll.api_key, memId);
-            setCloudMode('hybrid');
-            updateConfig({ memoryMode: 'cloud' });
-            syncConfig(allProviders);
-            setCloudAuthStep('done');
-          } else {
-            setCloudMemories(mems);
-            setCloudAuthStep('select');
-          }
-          return; // Stop polling
-        }
-        if (poll?.status === 'expired' || poll?.status === 'denied') {
-          setCloudAuthStep('error');
-          return;
-        }
-      } catch { /* network error, retry */ }
-      // Poll every 5s (direct API call, no daemon long-poll)
-      cloudPollRef.current = setTimeout(doPoll, 5000);
-    };
-    // Start first poll after 1s (daemon does its own 30s long-poll internally)
-    cloudPollRef.current = setTimeout(doPoll, 1000);
-  };
-
-  const selectCloudMemory = async (memoryId: string) => {
-    const api = window.electronAPI as any;
-    if (!api) return;
-    await api.cloudConnect(cloudApiKey, memoryId);
-    setCloudMode('hybrid');
-    updateConfig({ memoryMode: 'cloud' });
-    syncConfig(allProviders);
-    setCloudAuthStep('done');
-  };
-
-  const handleCloudDisconnect = async () => {
-    const api = window.electronAPI as any;
-    if (!api) return;
-    await api.cloudDisconnect();
-    setCloudMode('local');
-    updateConfig({ memoryMode: 'local' });
-    syncConfig(allProviders);
   };
 
   const addCustomAllowedTool = () => {
@@ -643,62 +539,12 @@ export default function Settings() {
           </div>
         </SettingsSection>
 
-        <SettingsMemoryPanel
-          t={t}
-          config={config}
-          cloudMode={cloudMode}
-          onToggle={handleToggle}
-          onRecallLimitChange={handleRecallLimit}
-          onSelectMode={(mode) => {
-            updateConfig({ memoryMode: mode });
-            if (mode === 'cloud' && cloudMode !== 'hybrid' && cloudMode !== 'cloud') {
-              setShowCloudAuth(true);
-              setCloudAuthStep('init');
-              setTimeout(() => startCloudAuth(), 100);
-            }
-          }}
-          onCloudDisconnect={handleCloudDisconnect}
-          onCloudConnect={() => {
-            setShowCloudAuth(true);
-            setCloudAuthStep('init');
-            setTimeout(() => startCloudAuth(), 100);
-          }}
-        />
-
-        <SettingsMemoryPrivacyPanel
-          t={t}
-          blockedSources={config.memoryBlockedSources || []}
-          onToggleSource={(id, nextAllowed) => {
-            const blocked = config.memoryBlockedSources || [];
-            const next = nextAllowed ? blocked.filter((source: string) => source !== id) : [...blocked, id];
-            updateConfig({ memoryBlockedSources: next });
-            syncConfig(allProviders);
-          }}
-          onClearAll={async () => {
-            if (!confirm(t('settings.privacy.clearConfirm', 'Delete ALL local memories? This cannot be undone.'))) return;
-            try {
-              const response = await fetch('http://127.0.0.1:37800/api/v1/knowledge/cleanup', {
-                method: 'DELETE',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ patterns: ['.*'] }),
-              });
-              if (response.ok) alert(t('settings.privacy.cleared', 'All knowledge cards deleted.'));
-              else alert(t('settings.privacy.clearFailed', 'Failed to clear memories.'));
-            } catch {
-              alert(t('settings.privacy.clearFailed', 'Failed to clear memories. Is the daemon running?'));
-            }
-          }}
-        />
-
         <SettingsTokenPanel
           t={t}
           thinkingLevel={config.thinkingLevel || 'low'}
           reasoningDisplay={config.reasoningDisplay || 'on'}
-          recallLimit={config.recallLimit}
-          autoRecall={config.autoRecall}
           onThinkingLevelChange={(value) => updateConfig({ thinkingLevel: value as any })}
           onReasoningDisplayChange={(value) => updateConfig({ reasoningDisplay: value as any })}
-          onRecallLimitChange={handleRecallLimit}
         />
 
         <SettingsAppearancePanel
@@ -784,11 +630,22 @@ export default function Settings() {
           t={t}
           autoUpdate={config.autoUpdate}
           autoStart={config.autoStart}
+          daemonAutostart={daemonAutostart}
           onAutoUpdateChange={(value) => updateConfig({ autoUpdate: value })}
           onAutoStartChange={async (value) => {
             updateConfig({ autoStart: value });
             if (window.electronAPI) {
               await (window.electronAPI as any).setLoginItem(value);
+            }
+          }}
+          onDaemonAutostartChange={async (value) => {
+            const api = window.electronAPI as any;
+            if (!api?.setDaemonAutostart) return;
+            const result = await api.setDaemonAutostart(value);
+            if (result?.success) {
+              setDaemonAutostart(value);
+            } else {
+              alert(result?.error || 'Failed to update daemon autostart');
             }
           }}
           onRunDiagnostic={async () => {
@@ -851,27 +708,6 @@ export default function Settings() {
           githubOpening={isOpening('settings-github')}
         />
       </div>
-
-      <SettingsCloudAuthModal
-        t={t}
-        open={showCloudAuth}
-        step={cloudAuthStep}
-        userCode={cloudUserCode}
-        verifyUrl={cloudVerifyUrl}
-        memories={cloudMemories}
-        onClose={() => {
-          setShowCloudAuth(false);
-          if (cloudPollRef.current) clearTimeout(cloudPollRef.current);
-        }}
-        onOpenBrowser={() => { void openExternal(cloudVerifyUrl, 'settings-cloud-auth'); }}
-        browserOpening={isOpening('settings-cloud-auth')}
-        onRefreshCode={() => {
-          if (cloudPollRef.current) clearTimeout(cloudPollRef.current);
-          startCloudAuth();
-        }}
-        onSelectMemory={selectCloudMemory}
-        onRetry={() => { setCloudAuthStep('init'); }}
-      />
     </div>
   );
 }

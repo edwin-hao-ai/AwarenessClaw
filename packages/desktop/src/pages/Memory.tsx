@@ -1,7 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Search, RefreshCw, Loader2, AlertCircle, Zap, HardDrive, Cloud, ChevronDown, ChevronRight, Calendar, Play, Clock, MessageSquare, FileText } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
+import { Search, RefreshCw, Loader2, AlertCircle, Zap, HardDrive, Cloud, ChevronDown, ChevronRight, Calendar, Play, Clock, MessageSquare, FileText, Share2 } from 'lucide-react';
 import { useI18n } from '../lib/i18n';
 import { parseMemoryContextResponse, type MemoryKnowledgeCard } from '../lib/memory-context';
+import { useExternalNavigator } from '../lib/useExternalNavigator';
+import { useMemorySettings } from '../hooks/useMemorySettings';
+import { MemorySettingsPanel } from '../components/memory/MemorySettingsPanel';
+import { SettingsCloudAuthModal } from '../components/settings/SettingsCloudAuthModal';
 
 interface PerceptionSignal {
   type: string;
@@ -165,7 +169,9 @@ function MemoryLayerInfo() {
   );
 }
 
-type TabView = 'timeline' | 'knowledge';
+const KnowledgeGraph = lazy(() => import('../components/memory/KnowledgeGraph'));
+
+type TabView = 'timeline' | 'knowledge' | 'graph';
 
 /** Highlight matching search terms in text */
 function HighlightText({ text, query }: { text: string; query: string }) {
@@ -185,6 +191,27 @@ function HighlightText({ text, query }: { text: string; query: string }) {
 
 export default function Memory() {
   const { t } = useI18n();
+  const { openExternal, isOpening } = useExternalNavigator();
+  const {
+    config,
+    cloudMode,
+    showCloudAuth,
+    cloudAuthStep,
+    cloudUserCode,
+    cloudVerifyUrl,
+    cloudMemories,
+    setCloudAuthStep,
+    openCloudAuth,
+    closeCloudAuth,
+    startCloudAuth,
+    selectCloudMemory,
+    disconnectCloud,
+    selectMemoryMode,
+    toggleMemoryOption,
+    setRecallLimit,
+    setBlockedSourceAllowed,
+    clearAllMemories,
+  } = useMemorySettings();
   const [activeTab, setActiveTab] = useState<TabView>('timeline');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -203,6 +230,22 @@ export default function Memory() {
   const [selectedEventType, setSelectedEventType] = useState<string>('all');
   // Source filter: 'chat' = OpenClaw conversations only (default), 'dev' = Claude Code, 'all' = everything
   const [sourceView, setSourceView] = useState<'chat' | 'dev' | 'all'>('chat');
+  const graphContainerRef = useRef<HTMLDivElement>(null);
+  const [graphSize, setGraphSize] = useState({ width: 600, height: 400 });
+
+  // Measure graph container for responsive sizing
+  useEffect(() => {
+    const el = graphContainerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const { width, height } = entry.contentRect;
+        if (width > 0 && height > 0) setGraphSize({ width, height });
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   // Daemon connection state
   const [daemonHealth, setDaemonHealth] = useState<DaemonHealth | null>(null);
@@ -539,6 +582,19 @@ export default function Memory() {
             {t('memory.knowledgeCards')}
             {cards.length > 0 && <span className="text-[10px] opacity-70">({cards.length})</span>}
           </button>
+          <button
+            onClick={() => {
+              setActiveTab('graph');
+              setSearchQuery('');
+              setSearchResults(null);
+            }}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md transition-colors ${
+              activeTab === 'graph' ? 'bg-brand-600 text-white' : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Share2 size={12} />
+            {t('memory.graph', 'Graph')}
+          </button>
         </div>
 
         {/* Search */}
@@ -620,6 +676,19 @@ export default function Memory() {
         {/* Connected content */}
         {!loading && daemonConnected && (
           <>
+            {/* Search degradation notice — shown when vector search is unavailable */}
+            {daemonHealth?.search_mode && daemonHealth.search_mode !== 'hybrid' && (
+              <div className="flex items-start gap-2.5 p-3 rounded-xl border border-amber-500/30 bg-amber-500/5 mb-3">
+                <AlertCircle size={14} className="text-amber-400 mt-0.5 flex-shrink-0" />
+                <div>
+                  <p className="text-xs font-medium text-amber-400">{t('memory.searchDegraded', 'Semantic search unavailable')}</p>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    {t('memory.searchDegraded.hint', 'Text search is active, but vector similarity is disabled. This usually means the embedding model failed to load. Restart the daemon to retry.')}
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* Daily Summary */}
             {dailySummary && activeTab === 'knowledge' && (
               <div className="p-4 bg-brand-500/5 border border-brand-500/20 rounded-xl">
@@ -646,6 +715,25 @@ export default function Memory() {
 
             {/* Memory Architecture Info */}
             <MemoryLayerInfo />
+
+            <MemorySettingsPanel
+              t={t}
+              config={config}
+              cloudMode={cloudMode}
+              onToggle={toggleMemoryOption}
+              onRecallLimitChange={setRecallLimit}
+              onSelectMode={selectMemoryMode}
+              onCloudConnect={openCloudAuth}
+              onCloudDisconnect={disconnectCloud}
+              onToggleSource={setBlockedSourceAllowed}
+              onClearAll={() => {
+                void clearAllMemories(
+                  t('settings.privacy.clearConfirm', 'Delete ALL local memories? This cannot be undone.'),
+                  t('settings.privacy.cleared', 'All knowledge cards deleted.'),
+                  t('settings.privacy.clearFailed', 'Failed to clear memories. Is the daemon running?'),
+                );
+              }}
+            />
 
             {/* Perception Signals */}
             {signals.length > 0 && activeTab === 'knowledge' && (
@@ -916,9 +1004,48 @@ export default function Memory() {
                 })}
               </>
             )}
+
+            {/* === KNOWLEDGE GRAPH TAB === */}
+            {activeTab === 'graph' && (
+              <div ref={graphContainerRef} className="flex-1 -mx-6 -mb-3 min-h-[400px]" style={{ height: 'calc(100vh - 280px)' }}>
+                <Suspense fallback={
+                  <div className="flex items-center justify-center h-full">
+                    <Loader2 size={24} className="animate-spin text-brand-500" />
+                  </div>
+                }>
+                  <KnowledgeGraph
+                    cards={cards}
+                    events={fullEvents}
+                    width={graphSize.width}
+                    height={graphSize.height}
+                  />
+                </Suspense>
+              </div>
+            )}
           </>
         )}
       </div>
+
+      <SettingsCloudAuthModal
+        t={t}
+        open={showCloudAuth}
+        step={cloudAuthStep}
+        userCode={cloudUserCode}
+        verifyUrl={cloudVerifyUrl}
+        memories={cloudMemories}
+        onClose={closeCloudAuth}
+        onOpenBrowser={() => { void openExternal(cloudVerifyUrl, 'memory-cloud-auth'); }}
+        browserOpening={isOpening('memory-cloud-auth')}
+        onRefreshCode={() => {
+          closeCloudAuth();
+          openCloudAuth();
+        }}
+        onSelectMemory={selectCloudMemory}
+        onRetry={() => {
+          setCloudAuthStep('init');
+          void startCloudAuth();
+        }}
+      />
     </div>
   );
 }

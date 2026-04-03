@@ -135,6 +135,89 @@
 :root:not(.dark) .bg-black\/60 { background-color: rgb(0 0 0 / 0.3); }
 :root:not(.dark) .bg-black\/50 { background-color: rgb(0 0 0 / 0.25); }
 
+/* ── Colored text (light mode: deeper shades for white-bg readability) ── */
+
+/* Emerald — permissions "Already Allowed", trace success icons */
+:root:not(.dark) .text-emerald-300            { color: #059669; }
+:root:not(.dark) .text-emerald-400            { color: #059669; }
+:root:not(.dark) .text-emerald-400\/80        { color: rgb(5 150 105 / 0.85); }
+:root:not(.dark) .text-emerald-500\/70        { color: rgb(5 150 105 / 0.75); }
+:root:not(.dark) .hover\:text-emerald-300:hover { color: #047857; }
+
+/* Sky — permissions "Can Be Enabled", trace debug icons */
+:root:not(.dark) .text-sky-300                { color: #0284c7; }
+:root:not(.dark) .text-sky-300\/80            { color: rgb(2 132 199 / 0.85); }
+:root:not(.dark) .text-sky-400                { color: #0284c7; }
+:root:not(.dark) .text-sky-400\/80            { color: rgb(2 132 199 / 0.85); }
+:root:not(.dark) .hover\:text-sky-200:hover   { color: #0369a1; }
+
+/* Rose — permissions "Blocked Right Now" */
+:root:not(.dark) .text-rose-300               { color: #e11d48; }
+:root:not(.dark) .text-rose-400               { color: #e11d48; }
+:root:not(.dark) .text-rose-400\/80           { color: rgb(225 29 72 / 0.85); }
+
+/* Amber — warning boxes, error icons */
+:root:not(.dark) .text-amber-100\/90          { color: rgb(146 64 14 / 0.9); }
+:root:not(.dark) .text-amber-300              { color: #b45309; }
+:root:not(.dark) .text-amber-400\/80          { color: rgb(180 83 9 / 0.85); }
+:root:not(.dark) .text-amber-500              { color: #b45309; }
+:root:not(.dark) .text-amber-500\/80          { color: rgb(180 83 9 / 0.85); }
+
+/* Blue — Safe preset button */
+:root:not(.dark) .text-blue-300               { color: #2563eb; }
+:root:not(.dark) .hover\:text-blue-300:hover  { color: #1d4ed8; }
+
+/* Purple — Developer preset button, thinking icons */
+:root:not(.dark) .text-purple-300             { color: #7c3aed; }
+:root:not(.dark) .text-purple-300\/90         { color: rgb(124 58 237 / 0.9); }
+:root:not(.dark) .hover\:text-purple-300:hover { color: #6d28d9; }
+
+/* Red — remove/delete actions */
+:root:not(.dark) .text-red-400                { color: #dc2626; }
+:root:not(.dark) .hover\:text-red-400:hover   { color: #b91c1c; }
+:root:not(.dark) .hover\:text-red-300:hover   { color: #dc2626; }
+
+/* Green — channel status indicator */
+:root:not(.dark) .bg-green-400                { background-color: #22c55e; }
+
+/* ── Colored backgrounds (light mode: slightly adjusted for visibility) ── */
+:root:not(.dark) .bg-emerald-600\/5   { background-color: rgb(5 150 105 / 0.06); }
+:root:not(.dark) .bg-emerald-600\/10  { background-color: rgb(5 150 105 / 0.08); }
+:root:not(.dark) .bg-sky-600\/5       { background-color: rgb(2 132 199 / 0.06); }
+:root:not(.dark) .bg-rose-600\/5      { background-color: rgb(225 29 72 / 0.06); }
+:root:not(.dark) .bg-amber-500\/10    { background-color: rgb(245 158 11 / 0.08); }
+:root:not(.dark) .bg-amber-900\/30    { background-color: rgb(120 53 15 / 0.08); }
+:root:not(.dark) .bg-sky-500\/10      { background-color: rgb(14 165 233 / 0.08); }
+:root:not(.dark) .bg-purple-600\/10   { background-color: rgb(124 58 237 / 0.06); }
+:root:not(.dark) .bg-blue-600\/10     { background-color: rgb(37 99 235 / 0.06); }
+:root:not(.dark) .bg-red-600\/10      { background-color: rgb(220 38 38 / 0.06); }
+:root:not(.dark) .bg-brand-600\/15    { background-color: rgb(12 135 242 / 0.1); }
+
+/* ── Colored borders (light mode) ──────────────────────────── */
+:root:not(.dark) .border-emerald-600\/20 { border-color: rgb(5 150 105 / 0.2); }
+:root:not(.dark) .border-emerald-600\/30 { border-color: rgb(5 150 105 / 0.25); }
+:root:not(.dark) .border-emerald-500\/40 { border-color: rgb(16 185 129 / 0.3); }
+:root:not(.dark) .border-sky-600\/20     { border-color: rgb(2 132 199 / 0.2); }
+:root:not(.dark) .border-sky-500\/40     { border-color: rgb(14 165 233 / 0.3); }
+:root:not(.dark) .border-rose-600\/20    { border-color: rgb(225 29 72 / 0.2); }
+:root:not(.dark) .border-rose-500\/40    { border-color: rgb(225 29 72 / 0.3); }
+:root:not(.dark) .border-amber-500\/20   { border-color: rgb(245 158 11 / 0.2); }
+:root:not(.dark) .border-amber-700\/40   { border-color: rgb(180 83 9 / 0.3); }
+:root:not(.dark) .border-blue-500\/60    { border-color: rgb(59 130 246 / 0.4); }
+:root:not(.dark) .border-blue-500\/40    { border-color: rgb(59 130 246 / 0.3); }
+:root:not(.dark) .border-emerald-500\/60 { border-color: rgb(16 185 129 / 0.4); }
+:root:not(.dark) .border-purple-500\/60  { border-color: rgb(168 85 247 / 0.4); }
+:root:not(.dark) .border-purple-500\/40  { border-color: rgb(168 85 247 / 0.3); }
+:root:not(.dark) .border-red-600\/30     { border-color: rgb(220 38 38 / 0.25); }
+:root:not(.dark) .border-red-500\/30     { border-color: rgb(239 68 68 / 0.25); }
+:root:not(.dark) .border-brand-500\/30   { border-color: rgb(12 135 242 / 0.25); }
+
+/* Hover colored borders */
+:root:not(.dark) .hover\:border-emerald-500\/40:hover { border-color: rgb(16 185 129 / 0.3); }
+:root:not(.dark) .hover\:border-sky-500\/40:hover     { border-color: rgb(14 165 233 / 0.3); }
+:root:not(.dark) .hover\:border-rose-500\/40:hover    { border-color: rgb(225 29 72 / 0.3); }
+:root:not(.dark) .hover\:border-red-500\/30:hover     { border-color: rgb(239 68 68 / 0.25); }
+
 /* ── Focus ring ────────────────────────────────────────────────── */
 :root:not(.dark) .focus\:ring-brand-500\/50:focus { --tw-ring-color: rgb(12 135 242 / 0.3); }
 

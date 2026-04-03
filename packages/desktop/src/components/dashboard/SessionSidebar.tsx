@@ -90,7 +90,7 @@ export function SessionSidebar({
               >
                 <ChannelIcon channelId={channelSession.channel} size={16} />
                 <span className="truncate flex-1 text-xs">{channelSession.displayName || channelSession.channel}</span>
-                <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${channelSession.status === 'running' ? 'bg-green-400 animate-pulse' : 'bg-slate-600'}`} />
+                <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${channelSession.status === 'running' ? 'bg-green-400 animate-pulse' : 'bg-slate-400'}`} />
               </div>
             ))}
             <div className="px-3 pt-2.5 pb-1">

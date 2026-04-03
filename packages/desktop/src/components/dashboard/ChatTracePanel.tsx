@@ -103,7 +103,7 @@ export function ChatTracePanel({
       </button>
 
       <div className="overflow-hidden transition-all duration-200" style={{ maxHeight: expanded ? '720px' : '0px' }}>
-        <div className="mt-1.5 ml-4 space-y-3 border-l border-slate-700/50 pl-3">
+        <div className="mt-1.5 ml-4 space-y-3 border-l border-slate-700/50 pl-3 max-h-[700px] overflow-y-auto">
           {hasThinking && (
             <div>
               <div className="flex items-center gap-1.5 text-[11px] text-purple-300/90">

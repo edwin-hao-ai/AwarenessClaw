@@ -200,6 +200,58 @@ export function registerChannelConfigHandlers(deps: {
     }
   });
 
+  ipcMain.handle('channel:remove', async (_e, channelId: string) => {
+    try {
+      const channelDef = deps.getChannel(channelId);
+      const openclawId = channelDef?.openclawId || channelId;
+
+      // 1. Unbind from all agents (best-effort — ignore errors)
+      try {
+        const listOutput = await deps.readShellOutputAsync('openclaw agents list --json 2>&1', 15000);
+        if (listOutput) {
+          const agents = JSON.parse(listOutput);
+          for (const agent of agents) {
+            if (agent.bindings?.some((b: string) => b === openclawId || b.startsWith(openclawId + ':'))) {
+              try {
+                await deps.runAsync(`openclaw agents unbind --agent ${agent.id} --bind ${openclawId} 2>&1`, 30000);
+              } catch { /* best-effort */ }
+            }
+          }
+        }
+      } catch { /* agent list failed — continue with removal */ }
+
+      // 2. Remove channel via CLI (--delete = purge config, not just disable)
+      try {
+        await deps.runAsync(`openclaw channels remove --channel ${openclawId} --delete 2>&1`, 15000);
+      } catch { /* may fail if channel was json-direct only */ }
+
+      // 3. Also clean from openclaw.json directly (handles json-direct channels + leftovers)
+      try {
+        const configPath = path.join(deps.home, '.openclaw', 'openclaw.json');
+        const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        let changed = false;
+        if (existing.channels?.[openclawId]) {
+          delete existing.channels[openclawId];
+          changed = true;
+        }
+        if (existing.channels?.[channelId] && channelId !== openclawId) {
+          delete existing.channels[channelId];
+          changed = true;
+        }
+        if (changed) {
+          fs.writeFileSync(configPath, JSON.stringify(existing, null, 2));
+        }
+      } catch { /* config file may not exist */ }
+
+      // 4. Restart gateway so channel stops receiving messages
+      try { await deps.runAsync('openclaw gateway restart 2>&1', 20000); } catch { /* best-effort */ }
+
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: (err.message || String(err)).slice(0, 300) };
+    }
+  });
+
   ipcMain.handle('channel:test', async (_e, channelId: string) => {
     try {
       const configPath = path.join(deps.home, '.openclaw', 'openclaw.json');

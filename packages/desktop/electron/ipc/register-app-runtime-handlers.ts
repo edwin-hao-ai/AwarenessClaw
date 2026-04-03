@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { app, ipcMain, shell } from 'electron';
+import { enableDaemonAutostart, disableDaemonAutostart, isDaemonAutostartEnabled } from '../daemon-autostart';
 
 const OPENCLAW_INSTALL_TIMEOUT_MS = 300000;
 
@@ -70,6 +71,15 @@ export function registerAppRuntimeHandlers(deps: {
     } catch {
       return { openAtLogin: false };
     }
+  });
+
+  // Daemon auto-start on boot (system-level service registration)
+  ipcMain.handle('app:set-daemon-autostart', async (_e: any, enabled: boolean) => {
+    return enabled ? enableDaemonAutostart() : disableDaemonAutostart();
+  });
+
+  ipcMain.handle('app:get-daemon-autostart', async () => {
+    return { enabled: await isDaemonAutostartEnabled() };
   });
 
   ipcMain.handle('app:check-updates', async () => {

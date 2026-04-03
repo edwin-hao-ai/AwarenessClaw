@@ -19,10 +19,10 @@ describe('Settings Page', () => {
     expect(screen.queryByText(/Current Model/)).not.toBeInTheDocument();
   });
 
-  it('renders memory settings', async () => {
+  it('does not render memory settings anymore', async () => {
     await act(async () => { render(<Settings />); });
-    expect(screen.getByText(/Auto Capture/)).toBeInTheDocument();
-    expect(screen.getByText(/Auto Recall/)).toBeInTheDocument();
+    expect(screen.queryByText(/Auto Capture/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Auto Recall/)).not.toBeInTheDocument();
   });
 
   it('renders gateway management', async () => {
@@ -130,10 +130,9 @@ describe('Settings Page', () => {
     expect(config.thinkingLevel).toBe('high');
   });
 
-  it('renders Recall Limit in Token Optimization section', async () => {
+  it('does not render Recall Limit in Token Optimization section', async () => {
     await act(async () => { render(<Settings />); });
-    const labels = screen.getAllByText('Recall Limit');
-    expect(labels.length).toBeGreaterThan(0);
+    expect(screen.queryByText('Recall Limit')).not.toBeInTheDocument();
   });
 
   it('does not render model restart hint on settings page', async () => {

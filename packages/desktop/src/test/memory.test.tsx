@@ -61,9 +61,18 @@ describe('Memory Page', () => {
     mockDaemonConnected();
     await act(async () => { render(<Memory />); });
     // Switch to knowledge tab
-    await waitFor(() => expect(screen.getByText(/Knowledge Cards/)).toBeInTheDocument());
-    await act(async () => { fireEvent.click(screen.getByText(/Knowledge Cards/)); });
-    expect(screen.getByText(/All/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Knowledge Cards/ })).toBeInTheDocument());
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /^Knowledge Cards/ })); });
+    expect(screen.getByRole('button', { name: /^All/ })).toBeInTheDocument();
+  });
+
+  it('renders moved memory settings on memory page when connected', async () => {
+    mockDaemonConnected();
+    await act(async () => { render(<Memory />); });
+    await waitFor(() => expect(screen.getByText('Memory Settings')).toBeInTheDocument());
+    expect(screen.getByText('Auto Capture')).toBeInTheDocument();
+    expect(screen.getByText('Auto Recall')).toBeInTheDocument();
+    expect(screen.getByText('Recall Count')).toBeInTheDocument();
   });
 
   it('renders Memory Architecture info toggle when connected', async () => {
