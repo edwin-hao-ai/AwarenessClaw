@@ -43,6 +43,10 @@ export default function SetupWizard({ onComplete }: SetupProps) {
   const [customBaseUrl, setCustomBaseUrl] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
 
+  // API Key validation
+  const [validating, setValidating] = useState(false);
+  const [validationError, setValidationError] = useState('');
+
   // Memory config
   const [memoryMode, setMemoryMode] = useState<'local' | 'cloud'>('local');
 
@@ -206,6 +210,29 @@ export default function SetupWizard({ onComplete }: SetupProps) {
     if (!selectedProvider) return;
 
     const provider = PROVIDERS.find((item) => item.key === selectedProvider);
+    const api = window.electronAPI;
+
+    // Validate API key for providers that require one
+    if (provider?.needsKey && apiKey && api?.modelsDiscover) {
+      setValidating(true);
+      setValidationError('');
+      try {
+        const baseUrl = customBaseUrl || provider.baseUrl;
+        const result = await api.modelsDiscover({ providerKey: selectedProvider, baseUrl, apiKey });
+        if (!result.success) {
+          setValidating(false);
+          setValidationError(result.error || t('setup.model.validationFailed', 'Could not connect. Please check your API key.'));
+          return;
+        }
+      } catch {
+        setValidating(false);
+        setValidationError(t('setup.model.validationFailed', 'Could not connect. Please check your API key.'));
+        return;
+      }
+      setValidating(false);
+      setValidationError('');
+    }
+
     saveProviderConfig({
       providerKey: selectedProvider,
       modelId: selectedModel,
@@ -399,6 +426,7 @@ export default function SetupWizard({ onComplete }: SetupProps) {
                       setApiKey(profile.apiKey);
                       setCustomBaseUrl(profile.baseUrl);
                       setShowAdvanced(false);
+                      setValidationError('');
                     }}
                     className={`p-4 rounded-xl text-left transition-all border ${
                       selectedProvider === p.key
@@ -439,6 +467,39 @@ export default function SetupWizard({ onComplete }: SetupProps) {
                             {t('setup.apiKey.tutorial')}
                           </button>
                         </p>
+                        {validationError && (
+                          <div className="flex items-start gap-2 p-2.5 bg-red-900/20 border border-red-600/30 rounded-lg">
+                            <AlertTriangle size={14} className="text-red-400 mt-0.5 flex-shrink-0" />
+                            <div className="flex-1">
+                              <p className="text-xs text-red-300">{validationError}</p>
+                              <button
+                                onClick={() => {
+                                  setValidationError('');
+                                  const prov = PROVIDERS.find((p) => p.key === selectedProvider);
+                                  saveProviderConfig({
+                                    providerKey: selectedProvider!,
+                                    modelId: selectedModel,
+                                    apiKey,
+                                    baseUrl: customBaseUrl,
+                                    apiType: prov?.apiType,
+                                    name: prov?.name,
+                                    needsKey: prov?.needsKey,
+                                    models: (prov?.models || []).map((model) => ({
+                                      id: model.id,
+                                      label: model.label,
+                                      name: model.label,
+                                    })),
+                                  }, PROVIDERS);
+                                  syncConfig(PROVIDERS);
+                                  setStep('memory');
+                                }}
+                                className="text-xs text-slate-400 hover:text-slate-200 underline mt-1"
+                              >
+                                {t('setup.model.skipValidation', 'Continue anyway')}
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </>
                     )}
 
@@ -513,11 +574,20 @@ export default function SetupWizard({ onComplete }: SetupProps) {
                 </button>
                 <button
                   onClick={handleModelNext}
-                  disabled={!selectedProvider || (PROVIDERS.find((p) => p.key === selectedProvider)?.needsKey === true && !apiKey)}
+                  disabled={validating || !selectedProvider || (PROVIDERS.find((p) => p.key === selectedProvider)?.needsKey === true && !apiKey)}
                   className="px-6 py-2.5 bg-brand-600 hover:bg-brand-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded-xl font-medium transition-colors flex items-center gap-2"
                 >
-                  {t('setup.next')}
-                  <ChevronRight size={16} />
+                  {validating ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" />
+                      {t('setup.model.validating', 'Verifying...')}
+                    </>
+                  ) : (
+                    <>
+                      {t('setup.next')}
+                      <ChevronRight size={16} />
+                    </>
+                  )}
                 </button>
               </div>
             </div>

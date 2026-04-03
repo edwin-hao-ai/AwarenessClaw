@@ -44,6 +44,10 @@ export interface ElectronAPI {
   agentsListFiles?: (id: string) => Promise<{ success: boolean; files?: string[]; error?: string }>;
   agentsReadFile?: (id: string, fileName: string) => Promise<{ success: boolean; content?: string; path?: string; error?: string }>;
   agentsWriteFile?: (id: string, fileName: string, content: string) => Promise<{ success: boolean; error?: string }>;
+  readExistingConfig?: () => Promise<{ exists: boolean; hasProviders: boolean; providers: string[]; primaryModel: string; hasApiKey: boolean }>;
+  bootstrap?: () => Promise<{ success: boolean; output?: string | null }>;
+  modelsReadProviders?: () => Promise<{ success: boolean; providers: Array<{ key: string; baseUrl: string; apiType?: string; hasApiKey: boolean; models: Array<{ id: string; name: string }> }>; primaryModel: string }>;
+  modelsDiscover?: (input: { providerKey: string; baseUrl: string; apiKey?: string }) => Promise<{ success: boolean; models: Array<{ id: string; name: string }>; error?: string }>;
 }
 
 export interface EnvironmentInfo {
