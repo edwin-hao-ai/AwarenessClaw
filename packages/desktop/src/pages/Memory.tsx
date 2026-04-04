@@ -425,16 +425,23 @@ export default function Memory() {
             const category = headerMatch?.[1] || 'key_point';
             const meta = headerMatch?.[3] || '';
 
+            // Parse meta: "85%, 2d ago, ~120tok"
+            const scoreMatch = meta.match(/(\d+)%/);
+            const daysMatch = meta.match(/(\d+)d\s*ago/);
+            const todayMatch = meta.match(/\btoday\b/);
+            const tokensMatch = meta.match(/~(\d+)tok/);
+
             searchCards.push({
               id: ids[i] || `search-${i}`,
               category,
               title,
               summary: summaryLines.join(' ') || title,
               status: 'active',
-              confidence: meta.includes('%') ? parseInt(meta) / 100 : undefined,
-              created_at: undefined,
+              confidence: scoreMatch ? parseInt(scoreMatch[1]) / 100 : undefined,
+              days_ago: todayMatch ? 0 : daysMatch ? parseInt(daysMatch[1]) : undefined,
+              tokens_est: tokensMatch ? parseInt(tokensMatch[1]) : undefined,
               tags: '',
-            } as KnowledgeCard);
+            });
           }
 
           setSearchResults(searchCards.length > 0 ? searchCards : []);
@@ -962,8 +969,16 @@ export default function Memory() {
                             <span className="text-xs text-slate-500">{new Date(card.created_at).toLocaleDateString()}</span>
                           </>
                         )}
-                        {card.confidence && (
-                          <span className="text-xs text-slate-500">{Math.round(card.confidence * 100)}%</span>
+                        {card.confidence != null && card.confidence > 0 && (
+                          <span className="text-xs text-sky-400/70 font-medium">{Math.round(card.confidence * 100)}%</span>
+                        )}
+                        {card.days_ago != null && (
+                          <span className="text-xs text-slate-500">
+                            {card.days_ago === 0 ? t('memory.today', 'today') : `${card.days_ago}d ago`}
+                          </span>
+                        )}
+                        {card.tokens_est != null && card.tokens_est > 0 && (
+                          <span className="text-[10px] text-slate-600">~{card.tokens_est}tok</span>
                         )}
                         {card.status === 'superseded' && (
                           <span className="text-xs px-1.5 py-0.5 bg-amber-600/20 rounded text-amber-500 border border-amber-600/30">

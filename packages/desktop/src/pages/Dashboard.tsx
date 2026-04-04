@@ -1066,36 +1066,28 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
   }, [activeSession, handleNewSession]);
 
   // --- Send message — Gateway handles queuing via its Command Queue (collect mode) ---
+  // Users can send messages at any time; queued messages are processed sequentially.
 
   const sendingRef = useRef(false);
   const [isSending, setIsSending] = useState(false);
+  const messageQueueRef = useRef<Array<{ text: string; userText?: string; files?: AttachedFile[] }>>([]);
+  const [queuedCount, setQueuedCount] = useState(0);
+  const lastSentTextRef = useRef<string>('');
+  const lastSentTimeRef = useRef<number>(0);
 
   const canSendMessage = useCallback((text: string) => {
     const trimmed = text.trim();
-    return trimmed.length > 0 && !sendingRef.current && !isSending && agentStatus === 'idle';
-  }, [agentStatus, isSending]);
+    return trimmed.length > 0;
+  }, []);
 
-  const runChatRequest = useCallback(async (
-    text: string,
-    options?: { userText?: string; files?: AttachedFile[]; clearComposer?: boolean }
-  ) => {
-    const trimmed = text.trim();
-    if (!canSendMessage(trimmed)) return;
-    sendingRef.current = true;
-    setIsSending(true);
-    activeRunRef.current = true;
-
-    const pendingFiles = options?.files ?? attachedFiles;
-    const userText = options?.userText ?? trimmed;
-    const filePaths = pendingFiles.length > 0 ? pendingFiles.map(f => f.path) : undefined;
-
-    // Add user message to session immediately (visible in chat)
+  // Add user message to chat UI immediately (before sending to Gateway)
+  const addUserMessageToSession = useCallback((userText: string, files?: AttachedFile[]) => {
     const userMsg: Message = {
       id: `msg-${Date.now()}`,
       role: 'user',
       content: userText,
       timestamp: Date.now(),
-      files: pendingFiles.length > 0 ? [...pendingFiles] : undefined,
+      files: files && files.length > 0 ? [...files] : undefined,
     };
     updateSession(activeSessionId, s => ({
       ...s,
@@ -1103,13 +1095,21 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
       title: s.messages.length === 0 ? userText.slice(0, 30) : s.title,
       updatedAt: Date.now(),
     }));
-    if (options?.clearComposer !== false) {
-      setInput('');
-      setAttachedFiles([]);
-      if (textareaRef.current) {
-        textareaRef.current.style.height = '52px';
-      }
-    }
+  }, [activeSessionId, updateSession]);
+
+  // Execute a single chat request (the actual send-and-wait logic)
+  const executeChatRequest = useCallback(async (
+    text: string,
+    options?: { userText?: string; files?: AttachedFile[] }
+  ) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    sendingRef.current = true;
+    setIsSending(true);
+    activeRunRef.current = true;
+
+    const pendingFiles = options?.files ?? [];
+    const filePaths = pendingFiles.length > 0 ? pendingFiles.map(f => f.path) : undefined;
 
     // Reset streaming state
     setAgentStatus('thinking');
@@ -1184,7 +1184,61 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
         setIsSending(false);
       }
     }
-  }, [activeSessionId, attachedFiles, canSendMessage, config.modelId, config.providerKey, config.selectedAgentId, config.thinkingLevel, projectRoot, t, updateSession]);
+  }, [activeSessionId, config.modelId, config.providerKey, config.selectedAgentId, config.thinkingLevel, projectRoot, t, updateSession]);
+
+  // Process the next queued message (called after a run completes)
+  const processNextQueued = useCallback(async () => {
+    if (messageQueueRef.current.length === 0) return;
+    const next = messageQueueRef.current.shift()!;
+    setQueuedCount(messageQueueRef.current.length);
+    await executeChatRequest(next.text, { userText: next.userText, files: next.files });
+    // Recursively process remaining queued messages
+    await processNextQueued();
+  }, [executeChatRequest]);
+
+  // Main entry point for sending a message — queues if agent is busy
+  const runChatRequest = useCallback(async (
+    text: string,
+    options?: { userText?: string; files?: AttachedFile[]; clearComposer?: boolean }
+  ) => {
+    const trimmed = text.trim();
+    if (!canSendMessage(trimmed)) return;
+
+    // Dedup: skip if identical text was just sent within 500ms (prevents rapid Enter double-send)
+    const now = Date.now();
+    if (trimmed === lastSentTextRef.current && now - lastSentTimeRef.current < 500) return;
+    lastSentTextRef.current = trimmed;
+    lastSentTimeRef.current = now;
+
+    const pendingFiles = options?.files ?? attachedFiles;
+    const userText = options?.userText ?? trimmed;
+
+    // Always show user message in chat immediately
+    addUserMessageToSession(userText, pendingFiles);
+    if (options?.clearComposer !== false) {
+      setInput('');
+      setAttachedFiles([]);
+      if (textareaRef.current) {
+        textareaRef.current.style.height = '52px';
+      }
+    }
+
+    // If agent is busy, queue the message for later processing
+    const isAgentBusy = sendingRef.current || activeRunRef.current;
+    if (isAgentBusy) {
+      messageQueueRef.current.push({ text: trimmed, userText, files: pendingFiles });
+      setQueuedCount(messageQueueRef.current.length);
+      return;
+    }
+
+    // Mark as sending synchronously to prevent duplicate sends from rapid Enter presses
+    sendingRef.current = true;
+
+    // Agent is idle — execute immediately
+    await executeChatRequest(trimmed, { userText, files: pendingFiles });
+    // After this run completes, drain any messages that were queued during execution
+    await processNextQueued();
+  }, [addUserMessageToSession, attachedFiles, canSendMessage, executeChatRequest, processNextQueued]);
 
   const canSendCurrentMessage = canSendMessage(input);
 
@@ -1241,6 +1295,11 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
   const handleStopActiveRequest = useCallback(async () => {
     await (window.electronAPI as any)?.chatAbort?.(activeSessionId);
     activeRunRef.current = false;
+    // Clear queued messages — user explicitly stopped, so don't process pending queue
+    messageQueueRef.current = [];
+    setQueuedCount(0);
+    sendingRef.current = false;
+    setIsSending(false);
     if (streamTimeoutRef.current) clearTimeout(streamTimeoutRef.current);
     traceEventsRef.current = [];
     setTraceEvents([]);
@@ -1533,6 +1592,7 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
           onManageAgents={onNavigate ? () => { setShowAgentMenu(false); onNavigate('agents'); } : undefined}
           onManagePermissions={onNavigate ? () => { setShowPermissionMenu(false); onNavigate('settings'); } : undefined}
           onDismissMemoryWarning={() => setMemoryWarning(null)}
+          queuedCount={queuedCount}
           onSend={() => { void handleSend(); }}
           onStop={() => { void handleStopActiveRequest(); }}
         />

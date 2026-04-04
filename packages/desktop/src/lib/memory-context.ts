@@ -5,6 +5,10 @@ export interface MemoryKnowledgeCard {
   summary: string;
   created_at?: string;
   status?: string;
+  confidence?: number;
+  tokens_est?: number;
+  days_ago?: number;
+  tags?: string;
 }
 
 export interface ParsedMemoryContext {

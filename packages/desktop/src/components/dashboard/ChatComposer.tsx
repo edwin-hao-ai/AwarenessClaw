@@ -54,6 +54,7 @@ export function ChatComposer({
   onManageAgents,
   onManagePermissions,
   onDismissMemoryWarning,
+  queuedCount,
   onSend,
   onStop,
 }: {
@@ -86,6 +87,7 @@ export function ChatComposer({
   onManageAgents?: () => void;
   onManagePermissions?: () => void;
   onDismissMemoryWarning: () => void;
+  queuedCount?: number;
   onSend: () => void;
   onStop?: () => void;
 }) {
@@ -264,8 +266,8 @@ export function ChatComposer({
                 )}
               </div>
 
-              {/* Send / Stop button */}
-              {isRunning && onStop ? (
+              {/* Send + Stop buttons — both visible when running so user can queue messages */}
+              {isRunning && onStop && (
                 <button
                   onClick={onStop}
                   className="p-1.5 bg-red-600 hover:bg-red-500 text-white rounded-lg transition-colors"
@@ -273,17 +275,23 @@ export function ChatComposer({
                 >
                   <Square size={14} fill="currentColor" />
                 </button>
-              ) : (
+              )}
+              <div className="relative">
                 <button
                   onClick={onSend}
                   disabled={!canSendCurrentMessage}
-                  title={t('chat.send', 'Send')}
-                  aria-label={t('chat.send', 'Send')}
+                  title={isRunning ? t('chat.queue', 'Queue message') : t('chat.send', 'Send')}
+                  aria-label={isRunning ? t('chat.queue', 'Queue message') : t('chat.send', 'Send')}
                   className="p-1.5 bg-brand-600 hover:bg-brand-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded-lg transition-colors"
                 >
                   <Send size={14} />
                 </button>
-              )}
+                {(queuedCount ?? 0) > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 flex items-center justify-center min-w-[16px] h-4 px-1 text-[9px] font-bold text-white bg-amber-500 rounded-full">
+                    {queuedCount}
+                  </span>
+                )}
+              </div>
             </div>
           </div>
         </div>
