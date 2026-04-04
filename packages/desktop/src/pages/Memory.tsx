@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { Search, RefreshCw, Loader2, AlertCircle, Zap, HardDrive, Cloud, ChevronDown, ChevronRight, Calendar, Play, Clock, FileText, Share2, SlidersHorizontal } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { useI18n } from '../lib/i18n';
 import { parseMemoryContextResponse, type MemoryKnowledgeCard } from '../lib/memory-context';
 import { useExternalNavigator } from '../lib/useExternalNavigator';
@@ -170,6 +172,25 @@ function MemoryLayerInfo({ className = '' }: { className?: string }) {
 }
 
 const KnowledgeGraph = lazy(() => import('../components/memory/KnowledgeGraph'));
+
+/** Shared markdown components for memory content rendering */
+const memoryMarkdownComponents = {
+  p({ children }: any) { return <p className="mb-1.5 last:mb-0 leading-relaxed">{children}</p>; },
+  strong({ children }: any) { return <strong className="text-slate-200 font-semibold">{children}</strong>; },
+  em({ children }: any) { return <em className="text-slate-300">{children}</em>; },
+  code({ children, className }: any) {
+    const isInline = !className;
+    if (isInline) return <code className="px-1 py-0.5 bg-slate-700/80 rounded text-brand-300 text-xs">{children}</code>;
+    return <pre className="bg-slate-800/80 rounded p-2 my-1.5 overflow-x-auto text-xs"><code>{children}</code></pre>;
+  },
+  h1({ children }: any) { return <h3 className="text-sm font-bold text-slate-300 mb-1 mt-2">{children}</h3>; },
+  h2({ children }: any) { return <h4 className="text-sm font-bold text-slate-300 mb-1 mt-1.5">{children}</h4>; },
+  h3({ children }: any) { return <h5 className="text-sm font-semibold text-slate-300 mb-1 mt-1">{children}</h5>; },
+  ul({ children }: any) { return <ul className="list-disc list-inside mb-1.5 space-y-0.5 pl-1">{children}</ul>; },
+  ol({ children }: any) { return <ol className="list-decimal list-inside mb-1.5 space-y-0.5 pl-1">{children}</ol>; },
+  blockquote({ children }: any) { return <blockquote className="border-l-2 border-brand-500/40 pl-2 text-slate-500 italic my-1">{children}</blockquote>; },
+  a({ children, href }: any) { return <a href={href} className="text-brand-400 hover:text-brand-300 underline" target="_blank" rel="noopener noreferrer">{children}</a>; },
+};
 
 type TabView = 'timeline' | 'knowledge' | 'graph' | 'settings';
 
@@ -916,9 +937,15 @@ export default function Memory() {
                         )
                       ) : contentPreview ? (
                         <div className="text-sm text-slate-400 leading-relaxed">
-                          <p className={isExpanded ? '' : 'line-clamp-3'}>
-                            <HighlightText text={contentPreview} query={searchQuery} />
-                          </p>
+                          <div className={isExpanded ? '' : 'line-clamp-3'}>
+                            {searchQuery ? (
+                              <p><HighlightText text={contentPreview} query={searchQuery} /></p>
+                            ) : (
+                              <ReactMarkdown remarkPlugins={[remarkGfm]} components={memoryMarkdownComponents}>
+                                {contentPreview}
+                              </ReactMarkdown>
+                            )}
+                          </div>
                           {hasLongContent && (
                             <button
                               onClick={() => setExpandedEvent(isExpanded ? null : event.id)}
@@ -1014,9 +1041,15 @@ export default function Memory() {
                       <h4 className={`font-medium text-sm mb-1 ${card.status === 'superseded' ? 'line-through text-slate-500' : ''}`}>
                         <HighlightText text={card.title} query={searchQuery} />
                       </h4>
-                      <p className="text-sm text-slate-400 leading-relaxed">
-                        <HighlightText text={card.summary} query={searchQuery} />
-                      </p>
+                      <div className="text-sm text-slate-400 leading-relaxed">
+                        {searchQuery ? (
+                          <p><HighlightText text={card.summary} query={searchQuery} /></p>
+                        ) : (
+                          <ReactMarkdown remarkPlugins={[remarkGfm]} components={memoryMarkdownComponents}>
+                            {card.summary}
+                          </ReactMarkdown>
+                        )}
+                      </div>
                     </div>
                   );
                 })}
