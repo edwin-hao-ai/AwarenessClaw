@@ -128,12 +128,309 @@ type SkillInstallSpec = {
   command?: string;
 };
 
+type InstallCommandPlan = {
+  command: string;
+  binary: string;
+  manager: string;
+  packageName?: string;
+  source: 'declared' | 'alias' | 'search';
+  note?: string;
+};
+
+type PackageAlias = {
+  manager: string;
+  packageName: string;
+  note?: string;
+};
+
+const INSTALL_PACKAGE_ALIASES: Record<string, Partial<Record<'all' | NodeJS.Platform, PackageAlias[]>>> = {
+  op: {
+    win32: [{ manager: 'winget', packageName: 'AgileBits.1Password.CLI', note: 'Matched op to 1Password CLI on winget.' }],
+    darwin: [{ manager: 'brew', packageName: '1password-cli', note: 'Matched op to the Homebrew 1password-cli formula.' }],
+  },
+  ffmpeg: {
+    win32: [{ manager: 'winget', packageName: 'BtbN.FFmpeg.GPL', note: 'Matched ffmpeg to a Windows winget package.' }],
+    all: [{ manager: 'choco', packageName: 'ffmpeg' }, { manager: 'scoop', packageName: 'ffmpeg' }],
+  },
+  camsnap: {
+    darwin: [{ manager: 'brew', packageName: 'steipete/tap/camsnap', note: 'Matched camsnap to the published Homebrew tap formula.' }],
+  },
+};
+
 function sanitizePackageName(input?: string) {
   if (!input) return null;
   const trimmed = input.trim();
   if (!trimmed) return null;
   if (!/^[A-Za-z0-9@._/:+-]+$/.test(trimmed)) return null;
   return trimmed;
+}
+
+function buildInstallCommandsForManager(manager: string, packageName?: string) {
+  const safePackageName = sanitizePackageName(packageName);
+  if (!safePackageName) return [];
+
+  switch ((manager || '').toLowerCase()) {
+    case 'brew':
+      return [`brew install ${safePackageName}`];
+    case 'winget':
+      return [
+        `winget install --id ${safePackageName} -e --accept-source-agreements --accept-package-agreements --disable-interactivity`,
+        `winget install ${safePackageName} --accept-source-agreements --accept-package-agreements --disable-interactivity`,
+      ];
+    case 'choco':
+    case 'chocolatey':
+      return [`choco install ${safePackageName} -y`];
+    case 'scoop':
+      return [`scoop install ${safePackageName}`];
+    case 'npm':
+    case 'node':
+      return [`npm install -g --ignore-scripts ${safePackageName}`];
+    case 'pnpm':
+      return [`pnpm add -g ${safePackageName}`];
+    case 'yarn':
+      return [`yarn global add ${safePackageName}`];
+    case 'pip':
+      return [`pip install ${safePackageName}`, `pip3 install ${safePackageName}`];
+    case 'cargo':
+      return [`cargo install ${safePackageName}`];
+    case 'uv':
+      return [`uv tool install ${safePackageName}`];
+    case 'apt':
+    case 'apt-get':
+      return [
+        `sudo -n apt-get update && sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y ${safePackageName}`,
+        `apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y ${safePackageName}`,
+      ];
+    case 'dnf':
+      return [`sudo -n dnf install -y ${safePackageName}`, `dnf install -y ${safePackageName}`];
+    case 'yum':
+      return [`sudo -n yum install -y ${safePackageName}`, `yum install -y ${safePackageName}`];
+    case 'pacman':
+      return [`sudo -n pacman -S --noconfirm ${safePackageName}`, `pacman -S --noconfirm ${safePackageName}`];
+    case 'zypper':
+      return [`sudo -n zypper install -y ${safePackageName}`, `zypper install -y ${safePackageName}`];
+    default:
+      return [];
+  }
+}
+
+function createInstallPlans(
+  commands: string[],
+  source: InstallCommandPlan['source'],
+  manager?: string,
+  packageName?: string,
+  note?: string,
+) {
+  return commands.map((command) => ({
+    command,
+    binary: extractPrimaryBinary(command),
+    manager: manager || extractPrimaryBinary(command),
+    packageName,
+    source,
+    note,
+  } satisfies InstallCommandPlan));
+}
+
+function dedupeInstallPlans(plans: InstallCommandPlan[]) {
+  const seen = new Set<string>();
+  return plans.filter((plan) => {
+    const key = `${plan.binary}::${plan.command}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function collectInstallSearchTerms(spec: SkillInstallSpec) {
+  const terms = new Set<string>();
+  for (const bin of spec.bins || []) {
+    const safeBin = sanitizePackageName(bin);
+    if (safeBin && !safeBin.includes('/') && !safeBin.includes('@')) terms.add(safeBin);
+  }
+  for (const candidate of [spec.package, spec.id]) {
+    const safeCandidate = sanitizePackageName(candidate);
+    if (safeCandidate && !safeCandidate.includes('/') && !safeCandidate.includes('@')) terms.add(safeCandidate);
+  }
+  return [...terms];
+}
+
+function getPackageAliases(term: string) {
+  const entry = INSTALL_PACKAGE_ALIASES[term.toLowerCase()];
+  if (!entry) return [];
+  return [...(entry.all || []), ...(entry[process.platform] || [])];
+}
+
+export function parseWingetSearchIds(output: string) {
+  const lines = stripAnsi(output).split(/\r?\n/);
+  const ids: string[] = [];
+  let inTable = false;
+
+  for (const rawLine of lines) {
+    const line = rawLine.trimEnd();
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (trimmed.startsWith('Failed when searching source')) continue;
+    if (/^-{5,}$/.test(trimmed)) {
+      inTable = true;
+      continue;
+    }
+    if (!inTable || /^name\s+/i.test(trimmed)) continue;
+
+    const parts = line.split(/\s{2,}/).map((part) => part.trim()).filter(Boolean);
+    if (parts.length < 4) continue;
+
+    const source = parts[parts.length - 1]?.toLowerCase();
+    const id = parts[1];
+    if (source !== 'winget' && source !== 'msstore') continue;
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id)) continue;
+    ids.push(id);
+  }
+
+  return [...new Set(ids)];
+}
+
+function rankWingetPackageIds(ids: string[], term: string) {
+  const loweredTerm = term.toLowerCase();
+  const score = (id: string) => {
+    const loweredId = id.toLowerCase();
+    let value = 0;
+    if (loweredId === loweredTerm) value += 20;
+    if (loweredId.endsWith(`.${loweredTerm}`)) value += 16;
+    if (loweredId.includes(loweredTerm)) value += 8;
+    if (!loweredId.includes('.shared')) value += 2;
+    if (!/\.\d/.test(loweredId)) value += 1;
+    return value - (id.length / 100);
+  };
+  return [...ids].sort((left, right) => score(right) - score(left));
+}
+
+async function searchWingetPackageIds(
+  term: string,
+  runSpawnAsync: (cmd: string, args: string[], timeoutMs?: number) => Promise<string>,
+) {
+  const searchVariants: string[][] = [
+    ['search', '--command', term, '--accept-source-agreements', '--disable-interactivity'],
+    ['search', '--query', term, '--exact', '--accept-source-agreements', '--disable-interactivity'],
+  ];
+
+  for (const args of searchVariants) {
+    try {
+      const output = await runSpawnAsync('winget', args, 20000);
+      const ids = parseWingetSearchIds(output);
+      if (ids.length > 0) return rankWingetPackageIds(ids, term);
+    } catch {}
+  }
+
+  return [];
+}
+
+async function buildResolvedInstallPlans(
+  spec: SkillInstallSpec,
+  deps: { runSpawnAsync: (cmd: string, args: string[], timeoutMs?: number) => Promise<string> },
+  sendProgress: (stage: string, detail?: string) => void,
+  isCommandAvailable: (binary: string) => Promise<boolean>,
+) {
+  const searchTerms = collectInstallSearchTerms(spec);
+  const plans: InstallCommandPlan[] = [];
+
+  for (const term of searchTerms) {
+    for (const alias of getPackageAliases(term)) {
+      plans.push(
+        ...createInstallPlans(
+          buildInstallCommandsForManager(alias.manager, alias.packageName),
+          'alias',
+          alias.manager,
+          alias.packageName,
+          alias.note,
+        ),
+      );
+    }
+  }
+
+  if (process.platform === 'win32' && searchTerms.length > 0 && await isCommandAvailable('winget')) {
+    for (const term of searchTerms.slice(0, 3)) {
+      sendProgress('matching', `Searching Windows packages for ${term}...`);
+      const ids = await searchWingetPackageIds(term, deps.runSpawnAsync);
+      for (const id of ids.slice(0, 3)) {
+        plans.push(
+          ...createInstallPlans(
+            buildInstallCommandsForManager('winget', id),
+            'search',
+            'winget',
+            id,
+            `Matched ${term} to ${id}.`,
+          ),
+        );
+      }
+    }
+  }
+
+  plans.push(...createInstallPlans(buildInstallCommands(spec), 'declared'));
+  return dedupeInstallPlans(plans);
+}
+
+export function buildAutoInstallSpecsFromMissingBins(
+  missingBins: string[] | undefined,
+  attemptedBins: Iterable<string> = [],
+) {
+  const attempted = new Set([...attemptedBins].map((bin) => bin.trim()));
+  return (missingBins || [])
+    .filter((bin) => typeof bin === 'string')
+    .map((bin) => bin.trim())
+    .filter((bin) => bin && !attempted.has(bin))
+    .map((bin, index) => ({
+      id: `auto-${bin}-${index}`,
+      kind: 'auto',
+      label: `Install ${bin}`,
+      bins: [bin],
+      package: bin,
+    } satisfies SkillInstallSpec));
+}
+
+function buildNoInstallerMessage(spec: SkillInstallSpec, plans: InstallCommandPlan[]) {
+  const target = spec.bins?.[0] || spec.package || spec.formula || spec.id || 'dependency';
+  const checkedManagers = [...new Set(plans.map((plan) => plan.manager).filter(Boolean))];
+
+  if (process.platform === 'win32') {
+    if ((spec.kind || '').toLowerCase() === 'brew') {
+      return `No Windows package matched ${target}. This skill only declares a Homebrew install, and automatic matching did not find a winget, Chocolatey, Scoop, or npm package.`;
+    }
+    return `No Windows package matched ${target}. Checked ${checkedManagers.length > 0 ? checkedManagers.join(', ') : 'winget, Chocolatey, Scoop, npm'}.`;
+  }
+  if (process.platform === 'linux') {
+    return `No Linux package matched ${target}. Checked ${checkedManagers.length > 0 ? checkedManagers.join(', ') : 'apt, dnf, yum, pacman, zypper, npm'}.`;
+  }
+  return `No compatible installer matched ${target}. Try the Install Guide for manual setup.`;
+}
+
+async function loadLocalSkillInfo(
+  name: string,
+  deps: { readShellOutputAsync: (cmd: string, timeoutMs?: number) => Promise<string | null> },
+) {
+  const raw = await deps.readShellOutputAsync(`openclaw skills info ${name} --json`, 30000);
+  if (!raw) throw new Error('No output from openclaw skills info');
+  const parsed = JSON.parse(extractJsonPayload(raw));
+
+  if (parsed.filePath && Array.isArray(parsed.install) && parsed.install.length > 0) {
+    try {
+      const skillMd = fs.readFileSync(parsed.filePath, 'utf8');
+      const fullSpecs = parseInstallSpecsFromSkillMd(skillMd);
+      console.log(`[skill:local-info] ${name}: parsed ${fullSpecs.length} install specs from SKILL.md`);
+      if (fullSpecs.length > 0) {
+        parsed.install = parsed.install.map((cliSpec: any) => {
+          const full = fullSpecs.find((item: any) => item.id === cliSpec.id && item.kind === cliSpec.kind);
+          if (full) {
+            console.log(`[skill:local-info] ${name}: merged spec id=${cliSpec.id} kind=${cliSpec.kind} formula=${full.formula || '-'} module=${full.module || '-'}`);
+          }
+          return full ? { ...cliSpec, ...full } : cliSpec;
+        });
+      }
+    } catch (mergeErr) {
+      console.warn(`[skill:local-info] ${name}: SKILL.md merge failed:`, mergeErr);
+    }
+  }
+
+  return parsed;
 }
 
 function extractPrimaryBinary(command: string) {
@@ -506,33 +803,7 @@ export function registerSkillHandlers(deps: {
   // CRITICAL: use readShellOutputAsync — OpenClaw outputs JSON to stderr, not stdout.
   ipcMain.handle('skill:local-info', async (_e, name: string) => {
     try {
-      const raw = await deps.readShellOutputAsync(`openclaw skills info ${name} --json`, 30000);
-      if (!raw) throw new Error('No output from openclaw skills info');
-      const parsed = JSON.parse(extractJsonPayload(raw));
-
-      // OpenClaw CLI strips formula/module/package from install specs (only keeps id/kind/label/bins).
-      // Read the actual SKILL.md to recover the full install spec with correct package names.
-      // Without this, `brew install op` runs instead of `brew install 1password-cli`.
-      if (parsed.filePath && Array.isArray(parsed.install) && parsed.install.length > 0) {
-        try {
-          const skillMd = fs.readFileSync(parsed.filePath, 'utf8');
-          const fullSpecs = parseInstallSpecsFromSkillMd(skillMd);
-          console.log(`[skill:local-info] ${name}: parsed ${fullSpecs.length} install specs from SKILL.md`);
-          if (fullSpecs.length > 0) {
-            // Merge full specs back by matching id+kind
-            parsed.install = parsed.install.map((cliSpec: any) => {
-              const full = fullSpecs.find((f: any) => f.id === cliSpec.id && f.kind === cliSpec.kind);
-              if (full) {
-                console.log(`[skill:local-info] ${name}: merged spec id=${cliSpec.id} kind=${cliSpec.kind} formula=${full.formula || '-'} module=${full.module || '-'}`);
-              }
-              return full ? { ...cliSpec, ...full } : cliSpec;
-            });
-          }
-        } catch (mergeErr) {
-          console.warn(`[skill:local-info] ${name}: SKILL.md merge failed:`, mergeErr);
-        }
-      }
-
+      const parsed = await loadLocalSkillInfo(name, deps);
       return { success: true, info: parsed };
     } catch (err: any) {
       return { success: false, error: err.message?.slice(0, 300) };
@@ -584,6 +855,7 @@ export function registerSkillHandlers(deps: {
   // Install skill dependencies (brew/go/uv/node).
   // Second arg is optional skillName (slug) — used to read SKILL.md for correct install specs.
   ipcMain.handle('skill:install-deps', async (_e, installSpecs: unknown, skillName?: string) => {
+    sendProgress('matching', 'Checking install instructions...');
     const frontendSpecs = Array.isArray(installSpecs) ? installSpecs as SkillInstallSpec[] : [];
     let specs: SkillInstallSpec[] = [];
 
@@ -592,16 +864,10 @@ export function registerSkillHandlers(deps: {
     // and runAsync only captures stdout on exit code 0 → empty string → parse fails.
     if (skillName && typeof skillName === 'string') {
       try {
-        const raw = await deps.readShellOutputAsync(`openclaw skills info ${skillName} --json`, 30000);
-        if (raw) {
-          const parsed = JSON.parse(extractJsonPayload(raw));
-          if (parsed.filePath && fs.existsSync(parsed.filePath)) {
-            const fullSpecs = parseInstallSpecsFromSkillMd(fs.readFileSync(parsed.filePath, 'utf8'));
-            if (fullSpecs.length > 0) {
-              specs = fullSpecs as SkillInstallSpec[];
-              console.log(`[skill:install-deps] using SKILL.md specs for ${skillName}:`, specs.map((s: any) => `${s.kind}:${s.formula || s.module || s.package || '?'}`).join(', '));
-            }
-          }
+        const parsed = await loadLocalSkillInfo(skillName, deps);
+        if (Array.isArray(parsed.install) && parsed.install.length > 0) {
+          specs = parsed.install as SkillInstallSpec[];
+          console.log(`[skill:install-deps] using SKILL.md specs for ${skillName}:`, specs.map((s: any) => `${s.kind}:${s.formula || s.module || s.package || '?'}`).join(', '));
         }
       } catch (err) {
         console.warn(`[skill:install-deps] SKILL.md lookup failed for ${skillName}:`, err);
@@ -624,6 +890,7 @@ export function registerSkillHandlers(deps: {
 
     const failures: Array<{ id: string; label: string; error: string }> = [];
     const installed: Array<{ id: string; label: string; command: string }> = [];
+    const trackedBins = new Set<string>();
 
     const isCommandAvailable = async (binary: string) => {
       if (!binary) return false;
@@ -667,13 +934,51 @@ export function registerSkillHandlers(deps: {
       }
     }
 
-    for (const spec of specs) {
-      const commands = buildInstallCommands(spec);
-      if (commands.length === 0) {
+    const pendingSpecs = [...specs];
+    const attemptedSpecKeys = new Set<string>();
+    let followupRounds = 0;
+
+    const queueRemainingMissingBins = async () => {
+      if (!skillName || followupRounds >= 2 || failures.length > 0) return false;
+      try {
+        const latestInfo = await loadLocalSkillInfo(skillName, deps);
+        const extraSpecs = buildAutoInstallSpecsFromMissingBins(latestInfo?.missing?.bins, trackedBins);
+        if (extraSpecs.length === 0) return false;
+        followupRounds += 1;
+        sendProgress('matching', `Checking remaining requirements: ${extraSpecs.map((spec) => spec.bins?.[0] || spec.id).join(', ')}`);
+        for (const extraSpec of extraSpecs) {
+          pendingSpecs.push(extraSpec);
+        }
+        return true;
+      } catch (err) {
+        console.warn(`[skill:install-deps] follow-up missing bin check failed for ${skillName}:`, err);
+        return false;
+      }
+    };
+
+    while (true) {
+      if (pendingSpecs.length === 0) {
+        const queuedMore = await queueRemainingMissingBins();
+        if (!queuedMore) break;
+      }
+
+      const spec = pendingSpecs.shift();
+      if (!spec) continue;
+
+      const specKey = `${spec.kind}:${spec.formula || spec.module || spec.package || (spec.bins || []).join(',') || spec.id}`;
+      if (attemptedSpecKeys.has(specKey)) continue;
+      attemptedSpecKeys.add(specKey);
+
+      for (const bin of spec.bins || []) {
+        trackedBins.add(bin);
+      }
+
+      const plans = await buildResolvedInstallPlans(spec, deps, sendProgress, isCommandAvailable);
+      if (plans.length === 0) {
         failures.push({
           id: spec.id || 'unknown',
           label: spec.label || spec.id || 'unknown',
-          error: 'No safe install command generated',
+          error: buildNoInstallerMessage(spec, plans),
         });
         continue;
       }
@@ -681,12 +986,13 @@ export function registerSkillHandlers(deps: {
       let ok = false;
       let lastError = '';
 
-      for (const command of commands) {
-        const binary = extractPrimaryBinary(command);
+      for (const plan of plans) {
+        const binary = plan.binary;
         if (!(await isCommandAvailable(binary))) {
           continue;
         }
-        sendProgress('installing', spec.label || spec.id || binary);
+
+        sendProgress('installing', (plan.note || spec.label || spec.id || plan.packageName || binary).slice(0, 120));
 
         // Prepend env vars to speed up and clean output:
         // - HOMEBREW_NO_AUTO_UPDATE=1: skip brew auto-update (saves 30-60s)
@@ -695,26 +1001,29 @@ export function registerSkillHandlers(deps: {
         const envPrefix = binary === 'brew'
           ? 'HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ENV_HINTS=1 HOMEBREW_NO_INSTALL_CLEANUP=1 '
           : '';
-        const fullCommand = envPrefix + command;
+        const fullCommand = envPrefix + plan.command;
 
         try {
-          // Use runAsyncWithProgress for real-time progress to frontend
           let lastProgressLine = '';
           await deps.runAsyncWithProgress(fullCommand, 300000, (line: string) => {
-            // Throttle: only send meaningful progress lines
             const trimmed = line.trim();
             if (trimmed && trimmed !== lastProgressLine) {
               lastProgressLine = trimmed;
-              // Extract key brew/npm progress indicators
               if (trimmed.startsWith('==>') || trimmed.startsWith('✔') || trimmed.startsWith('🍺')
                   || trimmed.includes('Downloading') || trimmed.includes('Installing')
                   || trimmed.includes('Linking') || trimmed.includes('added')
-                  || trimmed.includes('npm warn') || trimmed.includes('go: downloading')) {
+                  || trimmed.includes('npm warn') || trimmed.includes('go: downloading')
+                  || trimmed.includes('Found ') || trimmed.includes('Successfully installed')
+                  || trimmed.includes('Installer hash verified')) {
                 sendProgress('installing', trimmed.slice(0, 120));
               }
             }
           });
-          installed.push({ id: spec.id || binary, label: spec.label || spec.id || binary, command: fullCommand });
+          installed.push({
+            id: spec.id || binary,
+            label: plan.packageName ? `${spec.label || spec.id || binary} -> ${plan.packageName}` : (spec.label || spec.id || binary),
+            command: fullCommand,
+          });
           ok = true;
           break;
         } catch (err: any) {
@@ -723,18 +1032,13 @@ export function registerSkillHandlers(deps: {
       }
 
       if (!ok) {
-        // Extract the real error from brew/npm stderr noise.
-        // brew stderr contains ✔ progress lines mixed with Error: lines.
-        let friendlyError = lastError;
-
-        // Try to extract just the Error: lines from brew output
-        const errorLines = lastError.split('\n').filter((l: string) =>
-          l.trim().startsWith('Error:') || l.trim().startsWith('fatal:') || l.trim().startsWith('npm ERR!'));
+        let friendlyError = lastError || buildNoInstallerMessage(spec, plans);
+        const errorLines = lastError.split('\n').filter((line: string) =>
+          line.trim().startsWith('Error:') || line.trim().startsWith('fatal:') || line.trim().startsWith('npm ERR!'));
         if (errorLines.length > 0) {
           friendlyError = errorLines.join(' ').slice(0, 300);
         }
 
-        // Map known errors to actionable user-friendly messages
         if (friendlyError.includes('Command Line Tools') || friendlyError.includes('xcode-select')) {
           friendlyError = process.platform === 'darwin'
             ? 'Xcode Command Line Tools need updating. Open Terminal and run: xcode-select --install'
@@ -747,15 +1051,8 @@ export function registerSkillHandlers(deps: {
           friendlyError = 'Installation timed out. Your network may be slow — try again or install manually.';
         } else if (friendlyError.includes('No available formula') || friendlyError.includes('not found')) {
           friendlyError = 'Package not found in package manager. Try the Install Guide for manual instructions.';
-        } else if (friendlyError.includes('No available installer') || friendlyError === lastError) {
-          // No package manager available for this kind on this platform
-          if (process.platform === 'win32') {
-            friendlyError = 'No compatible installer found. Try installing winget (built into Windows 11) or Chocolatey, then retry.';
-          } else if (process.platform === 'linux') {
-            friendlyError = 'No compatible installer found. Ensure apt, dnf, or another package manager is available.';
-          } else {
-            friendlyError = 'No compatible installer found. Try the Install Guide for manual instructions.';
-          }
+        } else if (friendlyError.includes('No available installer') || friendlyError === lastError || !lastError) {
+          friendlyError = buildNoInstallerMessage(spec, plans);
         }
 
         failures.push({
@@ -782,33 +1079,30 @@ export function registerSkillHandlers(deps: {
     // installs Grafana's `grr`, not Bear Notes' `grizzly`). We must verify the actual binary.
     sendProgress('verifying', 'dependencies installed');
     const verifiedBins = loadVerifiedBins(deps.home);
-    const verifiedList: string[] = [];
-    const unverifiedList: string[] = [];
-    for (const spec of specs) {
-      const targetBins = spec.bins || [];
-      for (const bin of targetBins) {
-        if (await isCommandAvailable(bin)) {
-          let binPath: string | undefined;
-          try {
-            const probe = process.platform === 'win32' ? 'where' : 'which';
-            binPath = (await deps.runSpawnAsync(probe, [bin], 5000)).split(/\r?\n/)[0]?.trim();
-          } catch {}
-          verifiedBins[bin] = { verifiedAt: Date.now(), path: binPath };
-          verifiedList.push(bin);
-        } else {
-          unverifiedList.push(bin);
-        }
+    const verifiedList = new Set<string>();
+    const unverifiedList = new Set<string>();
+    for (const bin of trackedBins) {
+      if (await isCommandAvailable(bin)) {
+        let binPath: string | undefined;
+        try {
+          const probe = process.platform === 'win32' ? 'where' : 'which';
+          binPath = (await deps.runSpawnAsync(probe, [bin], 5000)).split(/\r?\n/)[0]?.trim();
+        } catch {}
+        verifiedBins[bin] = { verifiedAt: Date.now(), path: binPath };
+        verifiedList.add(bin);
+      } else {
+        unverifiedList.add(bin);
       }
     }
-    if (verifiedList.length > 0) {
+    if (verifiedList.size > 0) {
       saveVerifiedBins(deps.home, verifiedBins);
     }
 
     return {
       success: true,
       installed,
-      verified: verifiedList,
-      unverified: unverifiedList,
+      verified: [...verifiedList],
+      unverified: [...unverifiedList],
     };
   });
 

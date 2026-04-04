@@ -200,6 +200,7 @@ export default function Skills() {
 
   useEffect(() => {
     const progressLabels: Record<string, string> = {
+      matching: t('skills.progress.matching', 'Matching packages...'),
       downloading: t('skills.progress.downloading', 'Downloading from ClawHub...'),
       installing: t('skills.progress.installing', 'Installing...'),
       verifying: t('skills.progress.verifying', 'Verifying installation...'),
@@ -821,7 +822,7 @@ export default function Skills() {
                   </div>
                 </div>
               )}
-              <button onClick={() => setDetailSkill(null)} className="text-slate-500 hover:text-slate-300 flex-shrink-0">
+              <button onClick={() => setDetailSkill(null)} aria-label={t('common.close', 'Close')} title={t('common.close', 'Close')} className="text-slate-500 hover:text-slate-300 flex-shrink-0">
                 <X size={20} />
               </button>
             </div>
@@ -911,10 +912,14 @@ export default function Skills() {
                           <input
                             value={val}
                             onChange={e => { setSkillConfig(prev => ({ ...prev, [key]: e.target.value })); setConfigDirty(true); }}
+                            aria-label={key}
+                            title={key}
                             className="flex-1 px-2 py-1 bg-slate-900 border border-slate-600 rounded text-xs font-mono focus:outline-none focus:border-brand-500"
                           />
                           <button
                             onClick={() => { const next = { ...skillConfig }; delete next[key]; setSkillConfig(next); setConfigDirty(true); }}
+                            aria-label={t('common.remove', 'Remove')}
+                            title={t('common.remove', 'Remove')}
                             className="text-slate-600 hover:text-red-400"
                           >
                             <Trash2 size={12} />

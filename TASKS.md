@@ -191,6 +191,7 @@ OpenClaw 的 chat 质量依赖 `~/.openclaw/workspace/` 下的 MD 文档：
 - [x] **技能安装/卸载**：`runAsync('npx clawhub install/uninstall')` + 进度反馈 + 错误提示（2026-03-30）
 - [x] **技能详情页**：点击技能卡片弹出详情模态，显示 SKILL.md 内容、版本、作者、安装/卸载按钮（2026-03-30）
 - [x] **技能配置编辑**：读/写 `openclaw.json → skills.<slug>.config`，支持增删改键值对，dirty tracking + Save 按钮（2026-03-30）
+- [x] **技能依赖自动匹配安装**：依赖安装支持 Windows `winget search --command` 自动匹配包 ID、已知别名回退、安装后补查剩余缺失 bin，并实时推送进度到前端（2026-04-04）
 - [x] **内置能力展示**：新增 Built-in tab，展示 OpenClaw 内置的 8 大能力（浏览器/Shell/文件/图片/记忆/消息/自动化/搜索），让用户知道开箱即用的能力（2026-04-01）
 - [x] **推荐安装板块**：Explore tab 顶部显示 4 个精选推荐 skill（tavily-search/capability-evolver/github/obsidian），带推荐理由和一键安装（2026-04-01）
 - [x] **前端分页**：Load More 按钮，每次加载 20 条，避免一次性渲染全部技能（2026-04-01）
