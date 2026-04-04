@@ -400,7 +400,12 @@ function normalizeAgentGatewayEvent(eventName: string, payload: any): Normalized
     }
   }
 
-  return null;
+}
+
+function getHostOsLabel(platform: NodeJS.Platform): string {
+  if (platform === 'win32') return 'Windows';
+  if (platform === 'darwin') return 'macOS';
+  return 'Linux';
 }
 
 export function registerChatHandlers(deps: {
@@ -412,6 +417,7 @@ export function registerChatHandlers(deps: {
   getConnectedGatewayWs: () => GatewayClient | null;
   callMcpStrict: (toolName: string, args: Record<string, any>) => Promise<any>;
   getEnhancedPath: () => string;
+  runSpawn?: (cmd: string, args: string[], opts?: Record<string, unknown>) => ReturnType<typeof spawn>;
   wrapWindowsCommand: (command: string) => string;
   stripAnsi: (output: string) => string;
   spawnChatProcess?: typeof spawn;
@@ -520,8 +526,9 @@ export function registerChatHandlers(deps: {
     const desktopDir = path.join(homeDir, 'Desktop');
     const documentsDir = path.join(homeDir, 'Documents');
     const downloadsDir = path.join(homeDir, 'Downloads');
+    const hostOsLabel = getHostOsLabel(process.platform);
     const hostApprovals = getExecApprovalSettings(homeDir, options?.agentId || 'main');
-    fullMessage = `[Local machine context] You are running inside the AwarenessClaw Desktop app on the user's own computer. When the user asks about local files or folders on this machine, do not answer with a generic safety/privacy refusal. Use the available tools (especially exec/read/write/edit when appropriate) to inspect or modify the local filesystem if the request is allowed by the current host approval policy. Common macOS folders for this user are: home=${homeDir}, desktop=${desktopDir}, documents=${documentsDir}, downloads=${downloadsDir}. If the user says "桌面", "desktop", or "我的桌面", resolve that to ${desktopDir}. If the user asks what files are there, inspect the directory first and report the actual result.
+    fullMessage = `[Local machine context] You are running inside the AwarenessClaw Desktop app on the user's own computer. When the user asks about local files or folders on this machine, do not answer with a generic safety/privacy refusal. Use the available tools (especially exec/read/write/edit when appropriate) to inspect or modify the local filesystem if the request is allowed by the current host approval policy. Common ${hostOsLabel} folders for this user are: home=${homeDir}, desktop=${desktopDir}, documents=${documentsDir}, downloads=${downloadsDir}. If the user says "桌面", "desktop", or "我的桌面", resolve that to ${desktopDir}. If the user asks what files are there, inspect the directory first and report the actual result. For any local filesystem claim, do not guess. Never claim a file or folder change succeeded unless a tool result confirms it. After creating, editing, renaming, or deleting files/folders, run a follow-up verification step (for example list the directory, read the file, or stat the target) and include that verification in your reply. If a tool call is blocked, denied, or fails, say that plainly instead of pretending the action finished.
 
   [Current host exec approvals] security=${hostApprovals.security}, ask=${hostApprovals.ask}, askFallback=${hostApprovals.askFallback}, autoAllowSkills=${hostApprovals.autoAllowSkills ? 'on' : 'off'}. This current host approval state is authoritative for this turn. If earlier conversation turns claimed local filesystem access was blocked by allowlist/privacy rules, do not blindly repeat that claim. Re-evaluate the request against the current approval state above and use tools when allowed.
 
@@ -537,7 +544,7 @@ export function registerChatHandlers(deps: {
       const parts: string[] = [];
       if (images.length > 0) parts.push(`[Images to analyze: ${images.join(', ')}] (use exec tool to read or describe these image files)`);
       if (others.length > 0) parts.push(`[Attached files: ${others.join(', ')}]`);
-      fullMessage = `${parts.join('\n')}\n\n${message}`;
+      fullMessage = `${parts.join('\n')}\n\n${fullMessage}`;
     }
 
     const requestedWorkspace = options?.workspacePath?.trim();
@@ -1033,6 +1040,7 @@ async function chatSendViaCli(
   send: (channel: string, payload: any) => void,
   deps: {
     getEnhancedPath: () => string;
+    runSpawn?: (cmd: string, args: string[], opts?: Record<string, unknown>) => ReturnType<typeof spawn>;
     wrapWindowsCommand: (command: string) => string;
     stripAnsi: (output: string) => string;
     spawnChatProcess?: typeof spawn;
@@ -1049,11 +1057,23 @@ async function chatSendViaCli(
     // Note: openclaw CLI does not support --reasoning flag; reasoning is controlled via
     // openclaw.json agents.defaults.reasoningDefault (set in syncToOpenClaw)
     const command = `openclaw agent --session-id "${sid}" -m "${escapedMsg}" --verbose full${thinkingFlag}${agentFlag}`;
-    const enhancedPath = deps.getEnhancedPath();
+    const openclawArgs = ['agent', '--session-id', sid, '-m', requestMessage, '--verbose', 'full'];
+    if (options?.thinkingLevel && options.thinkingLevel !== 'off') {
+      openclawArgs.push('--thinking', options.thinkingLevel);
+    }
+    if (options?.agentId && options.agentId !== 'main') {
+      openclawArgs.push('--agent', options.agentId);
+    }
+    const cwd = options?.workspacePath || os.homedir();
     const spawnChatProcess = deps.spawnChatProcess || spawn;
-    const child = process.platform === 'win32'
-      ? spawnChatProcess(deps.wrapWindowsCommand(command), [], { cwd: options?.workspacePath || os.homedir(), shell: 'cmd.exe', env: { ...process.env, PATH: enhancedPath, NO_COLOR: '1', FORCE_COLOR: '0' } })
-      : spawnChatProcess('/bin/bash', ['--norc', '--noprofile', '-c', `export PATH="${enhancedPath}"; ${command}`], { cwd: options?.workspacePath || os.homedir(), env: { ...process.env, PATH: enhancedPath } });
+    const child = deps.runSpawn
+      ? deps.runSpawn('openclaw', openclawArgs, { cwd, stdio: 'pipe', windowsHide: true })
+      : (() => {
+          const enhancedPath = deps.getEnhancedPath();
+          return process.platform === 'win32'
+            ? spawnChatProcess(deps.wrapWindowsCommand(command), [], { cwd, shell: 'cmd.exe', env: { ...process.env, PATH: enhancedPath, NO_COLOR: '1', FORCE_COLOR: '0' } })
+            : spawnChatProcess('/bin/bash', ['--norc', '--noprofile', '-c', `export PATH="${enhancedPath}"; ${command}`], { cwd, env: { ...process.env, PATH: enhancedPath } });
+        })();
 
     const isNoiseLine = (line: string) => {
       const trimmed = line.trim();

@@ -40,19 +40,37 @@ import { registerRuntimeHealthHandlers } from './ipc/register-runtime-health-han
 import { registerSetupHandlers } from './ipc/register-setup-handlers';
 import { registerSkillHandlers } from './ipc/register-skill-handlers';
 import { ensureInternalHook } from './internal-hook';
-import { readRuntimePreferences, writeRuntimePreferences } from './runtime-preferences';
+import {
+  hasCompletedRuntimeMigration,
+  markRuntimeMigrationCompleted,
+  readRuntimePreferences,
+  writeRuntimePreferences,
+} from './runtime-preferences';
 import { createShellUtils } from './shell-utils';
 import { isGatewayRunningOutput } from './openclaw-config';
 import { getAgentWorkspaceDir } from './openclaw-config';
+import { hasExplicitExecApprovalConfig, writeExecApprovalSettings } from './openclaw-config';
 import { resolveDashboardUrl } from './openclaw-dashboard';
 import {
   applyDesktopAwarenessPluginConfig,
+  DESKTOP_LEGACY_BROWSER_WEB_MIGRATION_ID,
+  forceEnableDesktopBrowserAndWebCapabilities,
   mergeDesktopOpenClawConfig,
+  needsDesktopLegacyBrowserWebMigration,
   persistDesktopAwarenessPluginConfig,
   redactSensitiveValues,
   sanitizeDesktopAwarenessPluginConfig,
   stripRedactedValues,
 } from './desktop-openclaw-config';
+import { readJsonFileWithBom } from './json-file';
+
+const DESKTOP_LEGACY_HOST_EXEC_MIGRATION_ID = 'desktop-legacy-host-exec-defaults-2026-04-04';
+const DESKTOP_ONBOARDING_HOST_EXEC_DEFAULTS = {
+  security: 'full' as const,
+  ask: 'off' as const,
+  askFallback: 'full' as const,
+  autoAllowSkills: true,
+};
 
 let mainWindow: typeof BrowserWindow.prototype | null = null;
 let tray: typeof Tray.prototype | null = null;
@@ -217,9 +235,45 @@ function repairOpenClawConfigFile() {
 
   try {
     if (!fs.existsSync(configPath)) return;
-    const current = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    const current = readJsonFileWithBom<Record<string, any>>(configPath);
+    const runtimePreferences = readRuntimePreferences();
+    let nextRuntimePreferences = runtimePreferences;
+
+    const shouldMarkLegacyMigration = !hasCompletedRuntimeMigration(
+      runtimePreferences,
+      DESKTOP_LEGACY_BROWSER_WEB_MIGRATION_ID,
+    );
+    const shouldMarkLegacyHostExecMigration = !hasCompletedRuntimeMigration(
+      runtimePreferences,
+      DESKTOP_LEGACY_HOST_EXEC_MIGRATION_ID,
+    );
+
+    if (shouldMarkLegacyMigration && needsDesktopLegacyBrowserWebMigration(current)) {
+      forceEnableDesktopBrowserAndWebCapabilities(current);
+    }
+
+    if (shouldMarkLegacyHostExecMigration && !hasExplicitExecApprovalConfig(HOME)) {
+      writeExecApprovalSettings(HOME, DESKTOP_ONBOARDING_HOST_EXEC_DEFAULTS);
+    }
+
     sanitizeAwarenessPluginConfig(current);
     fs.writeFileSync(configPath, JSON.stringify(current, null, 2));
+
+    if (shouldMarkLegacyMigration) {
+      nextRuntimePreferences = markRuntimeMigrationCompleted(
+        nextRuntimePreferences,
+        DESKTOP_LEGACY_BROWSER_WEB_MIGRATION_ID,
+      );
+    }
+    if (shouldMarkLegacyHostExecMigration) {
+      nextRuntimePreferences = markRuntimeMigrationCompleted(
+        nextRuntimePreferences,
+        DESKTOP_LEGACY_HOST_EXEC_MIGRATION_ID,
+      );
+    }
+    if (nextRuntimePreferences !== runtimePreferences) {
+      writeRuntimePreferences(nextRuntimePreferences);
+    }
   } catch {
     // Best-effort config repair only.
   }
@@ -809,6 +863,7 @@ registerChatHandlers({
   getConnectedGatewayWs: () => (gatewayWsClient?.isConnected ? gatewayWsClient : null),
   callMcpStrict,
   getEnhancedPath,
+  runSpawn,
   wrapWindowsCommand,
   stripAnsi,
 });

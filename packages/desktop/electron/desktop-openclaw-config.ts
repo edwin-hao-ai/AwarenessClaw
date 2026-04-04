@@ -8,6 +8,7 @@ import {
 } from './openclaw-config';
 
 const REDACTED_VALUE = '__REDACTED__';
+export const DESKTOP_LEGACY_BROWSER_WEB_MIGRATION_ID = 'desktop-legacy-browser-web-defaults-v3-2026-04-04';
 
 const DESKTOP_DEFAULT_ALLOWED_TOOLS = [
   'exec',
@@ -17,6 +18,11 @@ const DESKTOP_DEFAULT_ALLOWED_TOOLS = [
   'awareness_record',
   'awareness_get_agent_prompt',
 ];
+const DESKTOP_BROWSER_WEB_ALLOWED_TOOLS = ['browser', 'web_search', 'web_fetch'];
+
+const DESKTOP_REQUIRED_PLUGINS = ['openclaw-memory', 'browser'];
+const DESKTOP_DEFAULT_WEB_SEARCH_PROVIDER = 'duckduckgo';
+const DESKTOP_LEGACY_INVALID_WEB_SEARCH_PROVIDER = 'browser';
 
 function isPlainObject(value: unknown): value is Record<string, any> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -53,6 +59,102 @@ export function ensureDesktopDefaultToolPermissions(config: Record<string, any>)
   config.tools.alsoAllow = [...existingAllow];
 }
 
+function ensureDesktopPluginAllowlist(config: Record<string, any>) {
+  if (!config.plugins) return;
+
+  const normalizedAllow = normalizePluginAllow(config.plugins.allow);
+  if (!normalizedAllow) return;
+
+  const allow = new Set<string>(normalizedAllow);
+  for (const pluginId of DESKTOP_REQUIRED_PLUGINS) {
+    allow.add(pluginId);
+  }
+  config.plugins.allow = [...allow];
+}
+
+export function needsDesktopLegacyBrowserWebMigration(config: Record<string, any>) {
+  const normalizedAllow = normalizePluginAllow(config.plugins?.allow);
+  if (normalizedAllow && !normalizedAllow.includes('browser')) {
+    return true;
+  }
+
+  const allowedTools = new Set<string>(config.tools?.alsoAllow || []);
+  for (const tool of DESKTOP_BROWSER_WEB_ALLOWED_TOOLS) {
+    if (!allowedTools.has(tool)) {
+      return true;
+    }
+  }
+
+  return config.browser?.enabled === false
+    || config.tools?.web?.search?.enabled === false
+    || config.tools?.web?.search?.provider === DESKTOP_LEGACY_INVALID_WEB_SEARCH_PROVIDER
+    || config.tools?.web?.fetch?.enabled === false;
+}
+
+export function forceEnableDesktopBrowserAndWebCapabilities(config: Record<string, any>) {
+  config.browser = {
+    ...(config.browser || {}),
+    enabled: true,
+  };
+
+  config.tools = {
+    ...(config.tools || {}),
+  };
+
+  const web = isPlainObject(config.tools.web) ? { ...config.tools.web } : {};
+  const search = isPlainObject(web.search) ? { ...web.search } : {};
+  const fetch = isPlainObject(web.fetch) ? { ...web.fetch } : {};
+
+  search.enabled = true;
+  search.provider = DESKTOP_DEFAULT_WEB_SEARCH_PROVIDER;
+  fetch.enabled = true;
+
+  web.search = search;
+  web.fetch = fetch;
+  config.tools.web = web;
+
+  const alsoAllow = new Set<string>(config.tools.alsoAllow || []);
+  for (const tool of DESKTOP_BROWSER_WEB_ALLOWED_TOOLS) {
+    alsoAllow.add(tool);
+  }
+  config.tools.alsoAllow = [...alsoAllow];
+
+  ensureDesktopPluginAllowlist(config);
+}
+
+export function ensureDesktopBrowserAndWebDefaults(config: Record<string, any>) {
+  config.browser = {
+    ...(config.browser || {}),
+  };
+  if (config.browser.enabled === undefined) {
+    config.browser.enabled = true;
+  }
+
+  config.tools = {
+    ...(config.tools || {}),
+  };
+
+  const web = isPlainObject(config.tools.web) ? { ...config.tools.web } : {};
+  const search = isPlainObject(web.search) ? { ...web.search } : {};
+  const fetch = isPlainObject(web.fetch) ? { ...web.fetch } : {};
+
+  if (search.enabled === undefined) {
+    search.enabled = true;
+  }
+  if (typeof search.provider !== 'string' || !search.provider.trim()) {
+    search.provider = DESKTOP_DEFAULT_WEB_SEARCH_PROVIDER;
+  }
+  if (fetch.enabled === undefined) {
+    fetch.enabled = true;
+  }
+
+  web.search = search;
+  web.fetch = fetch;
+  config.tools.web = web;
+
+  ensureDesktopPluginAllowlist(config);
+}
+
 export function applyDesktopAwarenessPluginConfig(
   config: Record<string, any>,
   options?: { enableSlot?: boolean },
@@ -61,6 +163,7 @@ export function applyDesktopAwarenessPluginConfig(
   if (!config.plugins.entries) config.plugins.entries = {};
 
   ensureDesktopDefaultToolPermissions(config);
+  ensureDesktopBrowserAndWebDefaults(config);
 
   config.plugins.entries['openclaw-memory'] = {
     ...(config.plugins.entries['openclaw-memory'] || {}),
@@ -77,13 +180,14 @@ export function applyDesktopAwarenessPluginConfig(
   };
 
   if (options?.enableSlot) {
-    config.plugins.allow = Array.from(new Set([...(normalizePluginAllow(config.plugins.allow) || []), 'openclaw-memory']));
+    config.plugins.allow = Array.from(new Set([...(normalizePluginAllow(config.plugins.allow) || []), ...DESKTOP_REQUIRED_PLUGINS]));
     config.plugins.slots = { ...(config.plugins.slots || {}), memory: 'openclaw-memory' };
   }
 }
 
 export function sanitizeDesktopAwarenessPluginConfig(config: Record<string, any>, homedir: string) {
   ensureDesktopDefaultToolPermissions(config);
+  ensureDesktopBrowserAndWebDefaults(config);
   migrateLegacyChannelConfig(config);
 
   config.gateway = {
@@ -207,7 +311,11 @@ export function mergeDesktopOpenClawConfig(
       merged.plugins = JSON.parse(JSON.stringify(merged.plugins || {}));
       const incomingPlugins = value as any;
       const normalizedAllow = normalizePluginAllow(incomingPlugins.allow);
-      if (normalizedAllow) merged.plugins.allow = normalizedAllow;
+      if (normalizedAllow) {
+        const allow = new Set<string>(normalizePluginAllow(merged.plugins.allow) || []);
+        for (const pluginId of normalizedAllow) allow.add(pluginId);
+        merged.plugins.allow = [...allow];
+      }
       if (incomingPlugins.slots) merged.plugins.slots = { ...(merged.plugins.slots || {}), ...incomingPlugins.slots };
       if (incomingPlugins.entries) {
         if (!merged.plugins.entries) merged.plugins.entries = {};

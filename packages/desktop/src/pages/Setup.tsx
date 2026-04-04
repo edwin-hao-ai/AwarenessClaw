@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { ChevronRight, ChevronLeft, Loader2, Check, Globe, AlertTriangle, RefreshCw } from 'lucide-react';
 import { useAppConfig, MODEL_PROVIDERS, type ModelProviderDef, getProviderProfile } from '../lib/store';
 import { useI18n } from '../lib/i18n';
+import { DEFAULT_ONBOARDING_PERMISSION_PRESET, PERMISSION_PRESET_VALUES } from '../lib/permission-presets';
 import PasswordInput from '../components/PasswordInput';
 import logoUrl from '../assets/logo.png';
 
@@ -35,6 +36,7 @@ export default function SetupWizard({ onComplete }: SetupProps) {
   const [installError, setInstallError] = useState<{ key: string; message: string } | null>(null);
   // Track skipped model step so back button in memory goes to right place
   const [skippedModelStep, setSkippedModelStep] = useState(false);
+  const [shouldApplyFirstRunDefaults, setShouldApplyFirstRunDefaults] = useState(false);
 
   // Model config
   const [selectedProvider, setSelectedProvider] = useState<string | null>(null);
@@ -119,6 +121,7 @@ export default function SetupWizard({ onComplete }: SetupProps) {
       } else {
         env = await api!.detectEnvironment();
       }
+      setShouldApplyFirstRunDefaults(!env.hasExistingConfig);
       updateInstallStep('detect', 'done');
 
       // Step 2: Ensure Node.js is available
@@ -273,10 +276,15 @@ export default function SetupWizard({ onComplete }: SetupProps) {
     setStep('memory');
   };
 
-  const handleFinish = () => {
+  const handleFinish = async () => {
     // Persist the memory mode selection before completing setup
     updateConfig({ memoryMode });
-    syncConfig(PROVIDERS);
+    await syncConfig(PROVIDERS);
+    if (shouldApplyFirstRunDefaults && window.electronAPI?.permissionsUpdate) {
+      await window.electronAPI.permissionsUpdate({
+        ...PERMISSION_PRESET_VALUES[DEFAULT_ONBOARDING_PERMISSION_PRESET],
+      });
+    }
     onComplete();
   };
 

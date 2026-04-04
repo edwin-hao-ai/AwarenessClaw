@@ -201,6 +201,10 @@ OpenClaw 的 chat 质量依赖 `~/.openclaw/workspace/` 下的 MD 文档：
 - [x] **权限概览面板**：Settings 页显示 tools profile、alsoAllow 标签列表（可增删）、denied 命令标签列表（可增删）（2026-03-30）
 - [x] **安全审计提示**：Settings 页新增 Security Audit section — 检测 openclaw.json 文件权限（非 600 时警告 + 修复命令）、tools.alsoAllow 过多时警告、第三方 extensions 检测（2026-03-30）
 - [x] **权限预设方案 UI**：3 张卡片（安全/标准/开发者模式），一键应用，自动检测当前是哪个预设，高级设置折叠（2026-03-31）
+- [x] **首次安装默认启用文件改写 + Web Search / Web Fetch**：首装完成时自动应用可直接工作的权限 preset，并在 openclaw.json 缺省时补齐 browser-backed web 默认值，用户无需进 Settings 手工打开（2026-04-04）
+- [x] **旧用户 browser/web 启动自迁移**：应用启动时一次性修复历史 openclaw.json，把缺失的 browser allowlist、被旧默认关掉的 browser/web search/web fetch 自动拉回可用态，后续不再反复覆盖用户新选择（2026-04-04）
+- [x] **旧用户 host exec 缺省自迁移**：若历史机器没有显式 exec-approvals 配置，启动时一次性补齐桌面首装同级 host exec 默认，避免旧用户缺权限却要手动进 Settings 修复（2026-04-04）
+- [x] **修正无效 browser 搜索默认值**：Windows smoke 发现 OpenClaw 2026.4.2 不接受 `tools.web.search.provider = browser`；桌面默认值和旧用户迁移已改为 keyless `duckduckgo`，并同步修正文案与 provider 选项（2026-04-04）
 
 ### 工作区设置
 - [x] **工作区文件编辑器**：Settings 页 Workspace section，编辑 SOUL.md / USER.md / IDENTITY.md / TOOLS.md（模态框 + 保存）（2026-03-30）

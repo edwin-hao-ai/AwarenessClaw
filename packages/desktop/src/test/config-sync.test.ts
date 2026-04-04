@@ -135,6 +135,7 @@ describe('Config sync (useAppConfig)', () => {
 
     expect(saveConfigMock).toHaveBeenCalledTimes(1);
     const payload = saveConfigMock.mock.calls[0][0];
+    expect(payload.plugins.allow).toEqual(expect.arrayContaining(['openclaw-memory', 'browser']));
     expect(payload.models.providers['qwen-portal']).toBeDefined();
     expect(payload.models.providers.openai).toBeDefined();
     expect(payload.models.providers.openai.apiKey).toBe('openai-key');

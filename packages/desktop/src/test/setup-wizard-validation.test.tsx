@@ -71,6 +71,30 @@ function fillApiKey(key: string) {
   fireEvent.change(input, { target: { value: key } });
 }
 
+async function advanceToDoneStep(overrides?: Partial<Record<string, Mock>>) {
+  const context = await advanceToModelStep(overrides);
+
+  selectProvider(/Ollama/i);
+
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: /next/i }));
+  });
+
+  await waitFor(() => {
+    expect(screen.getByText(/cross-device memory/i)).toBeInTheDocument();
+  });
+
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: /next/i }));
+  });
+
+  await waitFor(() => {
+    expect(screen.getByText(/your ai assistant is ready/i)).toBeInTheDocument();
+  });
+
+  return context;
+}
+
 describe('Setup Wizard — API Key Validation', () => {
   beforeEach(() => {
     localStorage.clear();
@@ -295,5 +319,79 @@ describe('Setup Wizard — API Key Validation', () => {
 
     // modelsDiscover should NOT have been called
     expect(api.modelsDiscover).not.toHaveBeenCalled();
+  });
+
+  it('first install applies onboarding permission defaults when setup completes', async () => {
+    const permissionsUpdate = vi.fn().mockResolvedValue({ success: true });
+    const { api, onComplete } = await advanceToDoneStep({ permissionsUpdate });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /get started/i }));
+    });
+
+    await waitFor(() => {
+      expect(api.permissionsUpdate).toHaveBeenCalledWith(expect.objectContaining({
+        execSecurity: 'full',
+        execAsk: 'off',
+        execAskFallback: 'full',
+        execAutoAllowSkills: true,
+        alsoAllow: expect.arrayContaining(['exec', 'awareness_perception']),
+      }));
+    });
+
+    await waitFor(() => {
+      expect(onComplete).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('existing OpenClaw config keeps current permissions on setup completion', async () => {
+    const api = window.electronAPI as any;
+    const permissionsUpdate = vi.fn().mockResolvedValue({ success: true });
+
+    api.detectEnvironment = vi.fn().mockResolvedValue({
+      platform: 'darwin', arch: 'arm64', home: '/Users/test',
+      systemNodeInstalled: true, systemNodeVersion: 'v22.0.0',
+      npmInstalled: true, openclawInstalled: true, openclawVersion: '2026.3.23',
+      hasExistingConfig: true,
+    });
+    api.readExistingConfig = vi.fn().mockResolvedValue({
+      exists: true, hasProviders: true, providers: ['openai'], primaryModel: 'gpt-4o', hasApiKey: true,
+    });
+    api.installNodeJs = vi.fn().mockResolvedValue({ success: true, alreadyInstalled: true });
+    api.installOpenClaw = vi.fn().mockResolvedValue({ success: true, alreadyInstalled: true });
+    api.installPlugin = vi.fn().mockResolvedValue({ success: true });
+    api.startDaemon = vi.fn().mockResolvedValue({ success: true });
+    api.bootstrap = vi.fn().mockResolvedValue({ success: true });
+    api.permissionsUpdate = permissionsUpdate;
+
+    const onComplete = vi.fn();
+    await act(async () => {
+      render(<SetupWizard onComplete={onComplete} />);
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /start/i }));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/cross-device memory/i)).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /next/i }));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/your ai assistant is ready/i)).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /get started/i }));
+    });
+
+    await waitFor(() => {
+      expect(onComplete).toHaveBeenCalledTimes(1);
+    });
+    expect(permissionsUpdate).not.toHaveBeenCalled();
   });
 });

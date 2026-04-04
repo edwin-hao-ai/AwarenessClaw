@@ -297,7 +297,7 @@ async function syncToOpenClaw(config: AppConfig, providers: ModelProviderDef[]) 
       port: 18789,
     },
     plugins: {
-      allow: ['openclaw-memory'],
+      allow: ['openclaw-memory', 'browser'],
     },
     // Ensure coding profile (includes browser, file ops, exec, web tools) and Awareness tools
     tools: {

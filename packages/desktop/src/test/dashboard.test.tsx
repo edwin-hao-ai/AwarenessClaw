@@ -212,7 +212,7 @@ describe('Dashboard (Chat)', () => {
 
     await waitFor(() => {
       expect(api.permissionsUpdate).toHaveBeenCalledWith(expect.objectContaining({
-        alsoAllow: ['awareness_init', 'awareness_get_agent_prompt', 'exec', 'awareness_recall', 'awareness_record', 'awareness_lookup', 'awareness_perception'],
+        alsoAllow: ['awareness_init', 'awareness_get_agent_prompt', 'exec', 'awareness_recall', 'awareness_record', 'awareness_lookup', 'web_search', 'web_fetch', 'browser', 'awareness_perception'],
         denied: [],
         execSecurity: 'full',
         execAsk: 'off',

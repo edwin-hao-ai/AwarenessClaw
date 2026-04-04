@@ -31,6 +31,8 @@ interface GatewayConfig {
   token: string;
 }
 
+const LOOPBACK_HOST = '127.0.0.1';
+
 interface RpcResponse {
   type: 'res';
   id: string;
@@ -133,9 +135,9 @@ export class GatewayClient extends EventEmitter {
 
     this.config = readGatewayConfig();
     const identity = loadDeviceIdentity();
-    // Prefer localhost for browser secure-context compatibility semantics.
-    const url = `ws://localhost:${this.config.port}`;
-    const origin = `http://localhost:${this.config.port}`;
+    // OpenClaw local auth is stricter about loopback identity than hostname aliases.
+    const url = `ws://${LOOPBACK_HOST}:${this.config.port}`;
+    const origin = `http://${LOOPBACK_HOST}:${this.config.port}`;
 
     return new Promise((resolve, reject) => {
       try {

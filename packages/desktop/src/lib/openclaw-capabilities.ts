@@ -47,8 +47,6 @@ const FIELD_META: Record<string, { label: string; description?: string; order?: 
     label: 'Search provider',
     description: 'Choose the provider OpenClaw uses for web search.',
     order: 2,
-    // No hardcoded options — dynamically populated from OpenClaw config schema enum.
-    // PROVIDER_LABELS below provide friendly display names for known providers.
   },
   'tools.web.search.apiKey': {
     label: 'API key',
@@ -87,7 +85,7 @@ const SKIP_PATHS = new Set([
 /**
  * Maps search provider IDs to the plugin entry key in openclaw.json
  * where their API key is stored: `plugins.entries.<entry>.config.webSearch.apiKey`
- * Providers not listed here (browser, duckduckgo, ollama-web-search) don't need keys.
+ * Providers not listed here (duckduckgo, ollama-web-search, searxng) don't need keys.
  */
 export const PROVIDER_PLUGIN_ENTRY: Record<string, string> = {
   brave: 'brave',
@@ -111,8 +109,8 @@ const PROVIDER_LABELS: Record<string, string> = {
   exa: 'Exa',
   tavily: 'Tavily',
   duckduckgo: 'DuckDuckGo',
+  searxng: 'SearXNG',
   'ollama-web-search': 'Ollama Web Search',
-  browser: 'Browser (built-in)',
 };
 
 function titleize(value: string) {

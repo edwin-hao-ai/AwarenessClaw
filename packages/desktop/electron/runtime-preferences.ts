@@ -4,6 +4,7 @@ import path from 'path';
 
 export type RuntimePreferences = {
   preferUserSessionGateway?: boolean;
+  completedMigrations?: string[];
 };
 
 const HOME = os.homedir();
@@ -20,6 +21,21 @@ export function readRuntimePreferences(): RuntimePreferences {
   } catch {
     return {};
   }
+}
+
+export function hasCompletedRuntimeMigration(preferences: RuntimePreferences, migrationId: string): boolean {
+  return Array.isArray(preferences.completedMigrations)
+    && preferences.completedMigrations.includes(migrationId);
+}
+
+export function markRuntimeMigrationCompleted(
+  preferences: RuntimePreferences,
+  migrationId: string,
+): RuntimePreferences {
+  return {
+    ...preferences,
+    completedMigrations: Array.from(new Set([...(preferences.completedMigrations || []), migrationId])),
+  };
 }
 
 export function writeRuntimePreferences(next: RuntimePreferences) {

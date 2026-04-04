@@ -5,6 +5,11 @@ import remarkGfm from 'remark-gfm';
 import { useAppConfig, useDynamicProviders, getProviderProfile, hasProviderCredentials } from '../lib/store';
 import { trackUsage } from '../lib/usage';
 import { useI18n } from '../lib/i18n';
+import {
+  PERMISSION_PRESET_VALUES,
+  type ExecApprovalAsk,
+  type ExecApprovalSecurity,
+} from '../lib/permission-presets';
 import { useExternalNavigator } from '../lib/useExternalNavigator';
 import BootstrapWizard from '../components/BootstrapWizard';
 import { ChannelConversationView } from '../components/dashboard/ChannelConversationView';
@@ -117,9 +122,6 @@ interface ChannelMessage {
 }
 
 type AgentStatus = 'idle' | 'thinking' | 'generating' | 'error';
-type ExecApprovalSecurity = 'deny' | 'allowlist' | 'full';
-type ExecApprovalAsk = 'off' | 'on-miss' | 'always';
-
 type PermissionState = {
   alsoAllow: string[];
   denied: string[];
@@ -259,46 +261,27 @@ const SESSIONS_KEY = 'awareness-claw-sessions';
 const ACTIVE_SESSION_KEY = 'awareness-claw-active-session';
 const PROJECT_ROOT_KEY = 'awareness-claw-project-root';
 
-const BASE_REQUIRED_TOOLS = ['awareness_init', 'awareness_get_agent_prompt'] as const;
-const STANDARD_ALLOWED_TOOLS = ['exec', 'awareness_recall', 'awareness_record', 'awareness_lookup'] as const;
-const DEVELOPER_EXTRA_TOOLS = ['awareness_perception'] as const;
-
 const CHAT_PERMISSION_PRESETS = {
   safe: {
     labelKey: 'chat.permission.safe',
     labelFallback: 'Safe',
     descKey: 'chat.permission.safe.desc',
     descFallback: 'Minimal tool allowlist. File-changing host exec stays blocked by default.',
-    alsoAllow: [...BASE_REQUIRED_TOOLS] as string[],
-    denied: ['exec', 'bash', 'shell', 'camera.snap', 'screen.record', 'contacts.add', 'calendar.add', 'sms.send'],
-    execSecurity: 'deny' as const,
-    execAsk: 'on-miss' as const,
-    execAskFallback: 'deny' as const,
-    execAutoAllowSkills: false,
+    ...PERMISSION_PRESET_VALUES.safe,
   },
   standard: {
     labelKey: 'chat.permission.standard',
     labelFallback: 'Standard',
     descKey: 'chat.permission.standard.desc',
     descFallback: 'Coding + Awareness tools, with host exec still going through OpenClaw approvals.',
-    alsoAllow: [...BASE_REQUIRED_TOOLS, ...STANDARD_ALLOWED_TOOLS] as string[],
-    denied: ['camera.snap', 'screen.record', 'contacts.add', 'calendar.add', 'sms.send'],
-    execSecurity: 'allowlist' as const,
-    execAsk: 'on-miss' as const,
-    execAskFallback: 'deny' as const,
-    execAutoAllowSkills: false,
+    ...PERMISSION_PRESET_VALUES.standard,
   },
   developer: {
     labelKey: 'chat.permission.developer',
     labelFallback: 'Developer',
     descKey: 'chat.permission.developer.desc',
     descFallback: 'Broad tool access. Host exec is fully opened for trusted local automation.',
-    alsoAllow: [...BASE_REQUIRED_TOOLS, ...STANDARD_ALLOWED_TOOLS, ...DEVELOPER_EXTRA_TOOLS] as string[],
-    denied: [] as string[],
-    execSecurity: 'full' as const,
-    execAsk: 'off' as const,
-    execAskFallback: 'full' as const,
-    execAutoAllowSkills: true,
+    ...PERMISSION_PRESET_VALUES.developer,
   },
 } as const;
 

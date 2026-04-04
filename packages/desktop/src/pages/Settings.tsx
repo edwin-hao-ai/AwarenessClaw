@@ -11,12 +11,20 @@ import { SettingsUsagePanel, SettingsVersionPanel } from '../components/settings
 import { SettingsAppearancePanel, SettingsTokenPanel } from '../components/settings/SettingsCorePanels';
 import { SettingsExtensionsPanel, SettingsGatewayPanel, SettingsHealthPanel, SettingsLogsModal, SettingsSecurityAuditPanel, SettingsSystemPanel } from '../components/settings/SettingsOperationsPanels';
 import { buildDynamicSectionsFromSchema, getValueAtPath, setValueAtPath, PROVIDER_PLUGIN_ENTRY, type DynamicConfigSection } from '../lib/openclaw-capabilities';
+import {
+  PERMISSION_PRESET_VALUES,
+  type ExecApprovalAsk,
+  type ExecApprovalSecurity,
+} from '../lib/permission-presets';
 import pkg from '../../package.json';
 
 const KNOWN_ALLOWED_TOOLS = [
   { id: 'awareness_init', labelKey: 'settings.tool.awarenessInit.label', labelFallback: 'Awareness Init', descKey: 'settings.tool.awarenessInit.desc', descFallback: 'Bootstrap memory instructions automatically', riskKey: 'settings.risk.core', riskFallback: 'Core' },
   { id: 'awareness_get_agent_prompt', labelKey: 'settings.tool.promptPack.label', labelFallback: 'Prompt Pack', descKey: 'settings.tool.promptPack.desc', descFallback: 'Load installed Awareness prompt pack', riskKey: 'settings.risk.core', riskFallback: 'Core' },
   { id: 'exec', labelKey: 'settings.tool.exec.label', labelFallback: 'Shell Commands', descKey: 'settings.tool.exec.desc', descFallback: 'Run coding and terminal commands on your machine', riskKey: 'settings.risk.high', riskFallback: 'High' },
+  { id: 'browser', labelKey: 'settings.tool.browser.label', labelFallback: 'Browser Automation', descKey: 'settings.tool.browser.desc', descFallback: 'Open pages, click, inspect, and read web content through the managed browser tool', riskKey: 'settings.risk.normal', riskFallback: 'Normal' },
+  { id: 'web_search', labelKey: 'settings.tool.webSearch.label', labelFallback: 'Web Search', descKey: 'settings.tool.webSearch.desc', descFallback: 'Search the web directly from OpenClaw without leaving the chat flow', riskKey: 'settings.risk.normal', riskFallback: 'Normal' },
+  { id: 'web_fetch', labelKey: 'settings.tool.webFetch.label', labelFallback: 'Page Fetch', descKey: 'settings.tool.webFetch.desc', descFallback: 'Fetch and read webpage content through the built-in web tool chain', riskKey: 'settings.risk.normal', riskFallback: 'Normal' },
   { id: 'awareness_recall', labelKey: 'settings.tool.recall.label', labelFallback: 'Memory Recall', descKey: 'settings.tool.recall.desc', descFallback: 'Search past decisions and knowledge cards', riskKey: 'settings.risk.normal', riskFallback: 'Normal' },
   { id: 'awareness_record', labelKey: 'settings.tool.record.label', labelFallback: 'Memory Save', descKey: 'settings.tool.record.desc', descFallback: 'Write new knowledge back to Awareness memory', riskKey: 'settings.risk.normal', riskFallback: 'Normal' },
   { id: 'awareness_lookup', labelKey: 'settings.tool.lookup.label', labelFallback: 'Knowledge Lookup', descKey: 'settings.tool.lookup.desc', descFallback: 'Read structured memory cards', riskKey: 'settings.risk.normal', riskFallback: 'Normal' },
@@ -33,6 +41,11 @@ const KNOWN_DENIED_COMMANDS = [
 ];
 
 const WEB_PROVIDER_GUIDANCE: Record<string, { title: string; detail: string; requiresKey: boolean }> = {
+  duckduckgo: {
+    title: 'settings.web.guide.duckduckgo.title',
+    detail: 'settings.web.guide.duckduckgo.detail',
+    requiresKey: false,
+  },
   brave: {
     title: 'settings.web.guide.brave.title',
     detail: 'settings.web.guide.brave.detail',
@@ -73,11 +86,6 @@ const WEB_PROVIDER_GUIDANCE: Record<string, { title: string; detail: string; req
     detail: 'settings.web.guide.tavily.detail',
     requiresKey: true,
   },
-  duckduckgo: {
-    title: 'settings.web.guide.duckduckgo.title',
-    detail: 'settings.web.guide.duckduckgo.detail',
-    requiresKey: false,
-  },
   'ollama-web-search': {
     title: 'settings.web.guide.ollama.title',
     detail: 'settings.web.guide.ollama.detail',
@@ -90,8 +98,6 @@ const WEB_PROVIDER_GUIDANCE: Record<string, { title: string; detail: string; req
   },
 };
 
-type ExecApprovalSecurity = 'deny' | 'allowlist' | 'full';
-type ExecApprovalAsk = 'off' | 'on-miss' | 'always';
 type ExecApprovalAllowlistEntry = {
   id?: string;
   pattern: string;
@@ -119,9 +125,6 @@ export default function Settings() {
   const DEFAULT_EXEC_ASK = 'on-miss' as const;
   const DEFAULT_EXEC_SECURITY = 'deny' as const;
   const DEFAULT_EXEC_ASK_FALLBACK = 'deny' as const;
-  const BASE_REQUIRED_TOOLS = ['awareness_init', 'awareness_get_agent_prompt'] as const;
-  const STANDARD_ALLOWED_TOOLS = ['exec', 'awareness_recall', 'awareness_record', 'awareness_lookup'] as const;
-  const DEVELOPER_EXTRA_TOOLS = ['awareness_perception'] as const;
   const [gatewayStatus, setGatewayStatus] = useState<'checking' | 'running' | 'stopped'>('checking');
   const [gatewayLoading, setGatewayLoading] = useState(false);
   const [daemonAutostart, setDaemonAutostart] = useState(false);
@@ -149,36 +152,21 @@ export default function Settings() {
       desc: t('settings.permissions.safe.desc', 'Minimal tool allowlist. Host exec still follows OpenClaw approval policy.'),
       icon: <Lock size={16} />,
       color: 'blue',
-      alsoAllow: [...BASE_REQUIRED_TOOLS] as string[],
-      denied: ['exec', 'bash', 'shell', 'camera.snap', 'screen.record', 'contacts.add', 'calendar.add', 'sms.send'],
-      execSecurity: 'deny' as const,
-      execAsk: 'on-miss' as const,
-      execAskFallback: 'deny' as const,
-      execAutoAllowSkills: false,
+      ...PERMISSION_PRESET_VALUES.safe,
     },
     standard: {
       label: t('settings.permissions.standard', 'Standard'),
       desc: t('settings.permissions.standard.desc', 'Coding + Awareness tools, while host exec still follows OpenClaw approvals.'),
       icon: <Shield size={16} />,
       color: 'emerald',
-      alsoAllow: [...BASE_REQUIRED_TOOLS, ...STANDARD_ALLOWED_TOOLS] as string[],
-      denied: ['camera.snap', 'screen.record', 'contacts.add', 'calendar.add', 'sms.send'],
-      execSecurity: 'allowlist' as const,
-      execAsk: 'on-miss' as const,
-      execAskFallback: 'deny' as const,
-      execAutoAllowSkills: false,
+      ...PERMISSION_PRESET_VALUES.standard,
     },
     developer: {
       label: t('settings.permissions.developer', 'Developer'),
       desc: t('settings.permissions.developer.desc', 'Broad tool access. This does not bypass OpenClaw host approval/security rules.'),
       icon: <Code2 size={16} />,
       color: 'purple',
-      alsoAllow: [...BASE_REQUIRED_TOOLS, ...STANDARD_ALLOWED_TOOLS, ...DEVELOPER_EXTRA_TOOLS] as string[],
-      denied: [] as string[],
-      execSecurity: 'full' as const,
-      execAsk: 'off' as const,
-      execAskFallback: 'full' as const,
-      execAutoAllowSkills: true,
+      ...PERMISSION_PRESET_VALUES.developer,
     },
   };
 
@@ -553,7 +541,7 @@ export default function Settings() {
         <SettingsSection title={`🌐 ${t('settings.web.title', 'Web & Browser')}`}>
           <div className="p-4 space-y-4">
             <div className="text-xs text-slate-500">
-              {t('settings.web.desc', 'Configure OpenClaw web search and browser-adjacent capabilities directly from Desktop. This form is generated from the OpenClaw config schema, so supported fields track the installed OpenClaw version.')}
+              {t('settings.web.desc', 'Configure OpenClaw web search, page fetch, and browser automation settings directly from Desktop. This form is generated from the OpenClaw config schema, so supported fields track the installed OpenClaw version.')}
             </div>
 
             {webProviderGuide && (
@@ -583,7 +571,7 @@ export default function Settings() {
 
                 <div className="flex items-center justify-between gap-3">
                   <div className="text-xs text-slate-500">
-                    {t('settings.web.hotReloadHint', 'OpenClaw hot-reloads most tools.web changes. Browser or web search fixes should not require a manual restart.')}
+                    {t('settings.web.hotReloadHint', 'OpenClaw hot-reloads most tools.web changes. Search or fetch fixes should not require a manual restart.')}
                   </div>
                   <div className="flex items-center gap-3">
                     {webSaved && <span className="text-xs text-emerald-400">{t('settings.web.saved', 'Saved to OpenClaw')}</span>}

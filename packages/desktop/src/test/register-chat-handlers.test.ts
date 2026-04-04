@@ -387,6 +387,11 @@ describe('registerChatHandlers', () => {
     );
     expect(ws.chatSend).toHaveBeenCalledWith(
       'test-session',
+      expect.stringContaining(`Common ${process.platform === 'win32' ? 'Windows' : process.platform === 'darwin' ? 'macOS' : 'Linux'} folders for this user are:`),
+      expect.any(Object),
+    );
+    expect(ws.chatSend).toHaveBeenCalledWith(
+      'test-session',
       expect.stringContaining(`desktop=${path.join(os.homedir(), 'Desktop')}`),
       expect.any(Object),
     );
@@ -405,6 +410,52 @@ describe('registerChatHandlers', () => {
       expect.stringContaining('If earlier conversation turns claimed local filesystem access was blocked by allowlist/privacy rules'),
       expect.any(Object),
     );
+    expect(ws.chatSend).toHaveBeenCalledWith(
+      'test-session',
+      expect.stringContaining('Never claim a file or folder change succeeded unless a tool result confirms it'),
+      expect.any(Object),
+    );
+    expect(ws.chatSend).toHaveBeenCalledWith(
+      'test-session',
+      expect.stringContaining('run a follow-up verification step'),
+      expect.any(Object),
+    );
+  });
+
+  it('uses direct openclaw spawn args for CLI fallback when runSpawn is available', async () => {
+    const fakeChild = createCliFallbackChild('CLI fallback reply');
+    const runSpawn = vi.fn(() => fakeChild as any);
+    const wrapWindowsCommand = vi.fn((command: string) => command);
+    const workspaceDir = process.cwd();
+
+    registerChatHandlers({
+      sendToRenderer: vi.fn(),
+      ensureGatewayRunning: vi.fn(async () => ({ ok: false, error: 'Gateway failed to start.' })),
+      getGatewayWs: vi.fn(),
+      getConnectedGatewayWs: vi.fn(() => null),
+      callMcpStrict: vi.fn(async () => ({})),
+      getEnhancedPath: vi.fn(() => process.env.PATH || ''),
+      runSpawn,
+      wrapWindowsCommand,
+      stripAnsi: vi.fn((output: string) => output),
+    });
+
+    const handlers = getRegisteredHandlers();
+    const pending = handlers['chat:send']({}, 'create a file and verify it', 'test-session', { workspacePath: workspaceDir });
+    await vi.waitFor(() => expect(runSpawn).toHaveBeenCalledTimes(1));
+
+    const [cmd, args, opts] = runSpawn.mock.calls[0] as [string, string[], Record<string, unknown>];
+    expect(cmd).toBe('openclaw');
+    expect(args).toEqual(expect.arrayContaining(['agent', '--session-id', 'test-session', '-m', '--verbose', 'full']));
+    const messageArgIndex = args.indexOf('-m');
+    expect(messageArgIndex).toBeGreaterThanOrEqual(0);
+    expect(args[messageArgIndex + 1]).toContain(`[Project working directory: ${workspaceDir}]`);
+    expect(args[messageArgIndex + 1]).toContain('Never claim a file or folder change succeeded unless a tool result confirms it');
+    expect(opts).toMatchObject({ cwd: workspaceDir, stdio: 'pipe' });
+    expect(wrapWindowsCommand).not.toHaveBeenCalled();
+
+    fakeChild.emitOutput();
+    await expect(pending).resolves.toMatchObject({ success: true, text: 'CLI fallback reply', sessionId: 'test-session' });
   });
 
   it('forwards gateway agent tool events into chat status updates with tool output detail', async () => {

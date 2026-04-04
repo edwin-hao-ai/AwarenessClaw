@@ -169,7 +169,7 @@ export function writeExecApprovalAsk(homedir: string, ask: ExecApprovalAsk): voi
 }
 
 function normalizeExecApprovalSecurity(value: unknown): ExecApprovalSecurity {
-  return value === 'deny' || value === 'full' ? value : DEFAULT_EXEC_APPROVAL_SECURITY;
+  return value === 'deny' || value === 'allowlist' || value === 'full' ? value : DEFAULT_EXEC_APPROVAL_SECURITY;
 }
 
 function normalizeExecApprovalAsk(value: unknown): ExecApprovalAsk {
@@ -205,6 +205,32 @@ export function getExecApprovalSettings(homedir: string, agentId = 'main'): Exec
       : false,
     allowlist: normalizeAllowlist(agent.allowlist),
   };
+}
+
+export function hasExplicitExecApprovalConfig(homedir: string): boolean {
+  const configPath = getExecApprovalsPath(homedir);
+  if (!fs.existsSync(configPath)) return false;
+
+  const config = readExecApprovalsConfig(homedir);
+  const defaults = config.defaults || {};
+  const defaultsConfigured = [
+    defaults.security,
+    defaults.ask,
+    defaults.askFallback,
+    defaults.autoAllowSkills,
+  ].some((value) => value !== undefined);
+
+  const agentsConfigured = Object.values(config.agents || {}).some((agent) => {
+    if (!agent || typeof agent !== 'object') return false;
+    return [
+      agent.security,
+      agent.ask,
+      agent.askFallback,
+      agent.autoAllowSkills,
+    ].some((value) => value !== undefined) || normalizeAllowlist(agent.allowlist).length > 0;
+  });
+
+  return defaultsConfigured || agentsConfigured;
 }
 
 export function writeExecApprovalSettings(

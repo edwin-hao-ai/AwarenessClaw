@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { buildDynamicSectionsFromSchema, setValueAtPath } from '../lib/openclaw-capabilities';
-import { mergeDesktopOpenClawConfig } from '../../electron/desktop-openclaw-config';
+import {
+  forceEnableDesktopBrowserAndWebCapabilities,
+  mergeDesktopOpenClawConfig,
+  needsDesktopLegacyBrowserWebMigration,
+} from '../../electron/desktop-openclaw-config';
 
 describe('openclaw capability schema helpers', () => {
   it('builds dynamic web-search fields from OpenClaw schema', () => {
@@ -56,6 +60,7 @@ describe('openclaw capability schema helpers', () => {
                   type: 'object',
                   properties: {
                     provider: { type: 'string' }, // no enum
+                    provider: { type: 'string' },
                   },
                 },
               },
@@ -69,11 +74,44 @@ describe('openclaw capability schema helpers', () => {
       search: { provider: 'tavily' },
     });
 
-    const providerField = sections[0].fields.find((f) => f.path === 'tools.web.search.provider');
+    const providerField = sections[0].fields.find((field) => field.path === 'tools.web.search.provider');
     expect(providerField?.type).toBe('select');
     expect(providerField?.options?.length).toBeGreaterThanOrEqual(10);
     expect(providerField?.options?.some((o) => o.value === 'tavily')).toBe(true);
     expect(providerField?.options?.some((o) => o.value === 'duckduckgo')).toBe(true);
+    expect(providerField?.options?.some((option) => option.value === 'browser')).toBe(false);
+  });
+
+  it('prefers schema-provided search provider options over fallback desktop metadata', () => {
+    const schema = {
+      properties: {
+        tools: {
+          properties: {
+            web: {
+              properties: {
+                search: {
+                  type: 'object',
+                  properties: {
+                    provider: {
+                      type: 'string',
+                      enum: ['duckduckgo', 'brave'],
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    };
+
+    const sections = buildDynamicSectionsFromSchema(schema, 'tools.web');
+    const providerField = sections[0].fields.find((field) => field.path === 'tools.web.search.provider');
+
+    expect(providerField?.options).toEqual([
+      { value: 'duckduckgo', label: 'DuckDuckGo' },
+      { value: 'brave', label: 'Brave Search' },
+    ]);
   });
 
   it('writes nested values immutably for schema-driven forms', () => {
@@ -110,8 +148,116 @@ describe('desktop openclaw config merge', () => {
 
     expect(merged.tools.web.search).toEqual({
       provider: 'brave',
+      enabled: true,
       maxResults: 5,
       apiKey: 'secret',
     });
+  });
+
+  it('fills missing keyless web defaults and keeps browser in restrictive plugin allowlists', () => {
+    const merged = mergeDesktopOpenClawConfig(
+      {
+        plugins: {
+          allow: ['openclaw-memory'],
+        },
+      },
+      {},
+      '/tmp',
+    );
+
+    expect(merged.browser.enabled).toBe(true);
+    expect(merged.tools.web.search.enabled).toBe(true);
+    expect(merged.tools.web.search.provider).toBe('duckduckgo');
+    expect(merged.tools.web.fetch.enabled).toBe(true);
+    expect(merged.plugins.allow).toEqual(expect.arrayContaining(['browser']));
+  });
+
+  it('preserves explicit web choices instead of overwriting them with desktop defaults', () => {
+    const merged = mergeDesktopOpenClawConfig(
+      {
+        browser: {
+          enabled: false,
+        },
+        tools: {
+          web: {
+            search: {
+              enabled: false,
+              provider: 'perplexity',
+            },
+            fetch: {
+              enabled: false,
+            },
+          },
+        },
+      },
+      {},
+      '/tmp',
+    );
+
+    expect(merged.browser.enabled).toBe(false);
+    expect(merged.tools.web.search.enabled).toBe(false);
+    expect(merged.tools.web.search.provider).toBe('perplexity');
+    expect(merged.tools.web.fetch.enabled).toBe(false);
+  });
+
+  it('one-time legacy migration force-enables browser and keyless web defaults for old desktop installs', () => {
+    const config = {
+      browser: {
+        enabled: false,
+      },
+      plugins: {
+        allow: ['openclaw-memory'],
+      },
+      tools: {
+        web: {
+          search: {
+            enabled: false,
+            provider: 'perplexity',
+          },
+          fetch: {
+            enabled: false,
+          },
+        },
+      },
+    };
+
+    expect(needsDesktopLegacyBrowserWebMigration(config)).toBe(true);
+
+    forceEnableDesktopBrowserAndWebCapabilities(config);
+
+    expect(config.browser.enabled).toBe(true);
+    expect(config.tools.alsoAllow).toEqual(expect.arrayContaining(['browser', 'web_search', 'web_fetch']));
+    expect(config.tools.web.search.enabled).toBe(true);
+    expect(config.tools.web.search.provider).toBe('duckduckgo');
+    expect(config.tools.web.fetch.enabled).toBe(true);
+    expect(config.plugins.allow).toEqual(expect.arrayContaining(['browser']));
+  });
+
+  it('marks old configs without browser and web tools in alsoAllow as needing migration', () => {
+    expect(needsDesktopLegacyBrowserWebMigration({
+      browser: { enabled: true },
+      plugins: { allow: ['openclaw-memory', 'browser'] },
+      tools: {
+        alsoAllow: ['exec', 'awareness_recall'],
+        web: {
+          search: { enabled: true, provider: 'duckduckgo' },
+          fetch: { enabled: true },
+        },
+      },
+    })).toBe(true);
+  });
+
+  it('marks legacy browser search provider values as needing migration', () => {
+    expect(needsDesktopLegacyBrowserWebMigration({
+      browser: { enabled: true },
+      plugins: { allow: ['openclaw-memory', 'browser'] },
+      tools: {
+        alsoAllow: ['exec', 'browser', 'web_search', 'web_fetch'],
+        web: {
+          search: { enabled: true, provider: 'browser' },
+          fetch: { enabled: true },
+        },
+      },
+    })).toBe(true);
   });
 });
