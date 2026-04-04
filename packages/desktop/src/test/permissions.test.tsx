@@ -155,7 +155,7 @@ describe('Settings Page — Permissions Panel', () => {
     await act(async () => { render(<Settings />); });
 
     await waitFor(() => {
-      expect(screen.getByText('Brave search needs an API key')).toBeInTheDocument();
+      expect(screen.getByText('Brave Search needs an API key')).toBeInTheDocument();
     });
     expect(screen.getByText(/Current status: provider selected, but credential is still missing/i)).toBeInTheDocument();
   });

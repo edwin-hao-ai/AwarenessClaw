@@ -38,15 +38,50 @@ const WEB_PROVIDER_GUIDANCE: Record<string, { title: string; detail: string; req
     detail: 'settings.web.guide.brave.detail',
     requiresKey: true,
   },
-  perplexity: {
-    title: 'settings.web.guide.perplexity.title',
-    detail: 'settings.web.guide.perplexity.detail',
+  gemini: {
+    title: 'settings.web.guide.gemini.title',
+    detail: 'settings.web.guide.gemini.detail',
     requiresKey: true,
   },
   grok: {
     title: 'settings.web.guide.grok.title',
     detail: 'settings.web.guide.grok.detail',
     requiresKey: true,
+  },
+  kimi: {
+    title: 'settings.web.guide.kimi.title',
+    detail: 'settings.web.guide.kimi.detail',
+    requiresKey: true,
+  },
+  perplexity: {
+    title: 'settings.web.guide.perplexity.title',
+    detail: 'settings.web.guide.perplexity.detail',
+    requiresKey: true,
+  },
+  firecrawl: {
+    title: 'settings.web.guide.firecrawl.title',
+    detail: 'settings.web.guide.firecrawl.detail',
+    requiresKey: true,
+  },
+  exa: {
+    title: 'settings.web.guide.exa.title',
+    detail: 'settings.web.guide.exa.detail',
+    requiresKey: true,
+  },
+  tavily: {
+    title: 'settings.web.guide.tavily.title',
+    detail: 'settings.web.guide.tavily.detail',
+    requiresKey: true,
+  },
+  duckduckgo: {
+    title: 'settings.web.guide.duckduckgo.title',
+    detail: 'settings.web.guide.duckduckgo.detail',
+    requiresKey: false,
+  },
+  'ollama-web-search': {
+    title: 'settings.web.guide.ollama.title',
+    detail: 'settings.web.guide.ollama.detail',
+    requiresKey: false,
   },
   browser: {
     title: 'settings.web.guide.browser.title',
@@ -372,7 +407,13 @@ export default function Settings() {
   };
 
   const selectedWebProvider = String(webValues?.search?.provider || '').trim();
-  const webProviderGuide = WEB_PROVIDER_GUIDANCE[selectedWebProvider];
+  const webProviderGuide = selectedWebProvider
+    ? WEB_PROVIDER_GUIDANCE[selectedWebProvider] || {
+        title: `settings.web.guide.generic.title`,
+        detail: `settings.web.guide.generic.detail`,
+        requiresKey: true,
+      }
+    : undefined;
   const webProviderApiKey = webValues?.search?.apiKey;
   const webProviderMissingKey = !!(webProviderGuide?.requiresKey && (!webProviderApiKey || (typeof webProviderApiKey === 'string' && !webProviderApiKey.trim())));
 

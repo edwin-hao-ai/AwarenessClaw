@@ -47,12 +47,8 @@ const FIELD_META: Record<string, { label: string; description?: string; order?: 
     label: 'Search provider',
     description: 'Choose the provider OpenClaw uses for web search.',
     order: 2,
-    options: [
-      { value: 'brave', label: 'Brave' },
-      { value: 'perplexity', label: 'Perplexity' },
-      { value: 'browser', label: 'Browser' },
-      { value: 'grok', label: 'Grok' },
-    ],
+    // No hardcoded options — dynamically populated from OpenClaw config schema enum.
+    // PROVIDER_LABELS below provide friendly display names for known providers.
   },
   'tools.web.search.apiKey': {
     label: 'API key',
@@ -87,6 +83,21 @@ const SKIP_PATHS = new Set([
   'tools.web.search.openaiCodex.allowedDomains',
   'tools.web.search.openaiCodex.userLocation',
 ]);
+
+/** Friendly display labels for known OpenClaw search providers. */
+const PROVIDER_LABELS: Record<string, string> = {
+  brave: 'Brave Search',
+  gemini: 'Gemini (Google)',
+  grok: 'Grok (xAI)',
+  kimi: 'Kimi (Moonshot)',
+  perplexity: 'Perplexity',
+  firecrawl: 'Firecrawl',
+  exa: 'Exa',
+  tavily: 'Tavily',
+  duckduckgo: 'DuckDuckGo',
+  'ollama-web-search': 'Ollama Web Search',
+  browser: 'Browser (built-in)',
+};
 
 function titleize(value: string) {
   return value
@@ -178,9 +189,14 @@ function buildFieldList(
     if (!fieldType) continue;
 
     const meta = FIELD_META[childPath];
-    const enumOptions = getEnumOptions(child as JsonSchemaNode).map((value) => ({ value, label: value }));
+    const enumOptions = getEnumOptions(child as JsonSchemaNode).map((value) => ({
+      value,
+      label: PROVIDER_LABELS[value] || titleize(value),
+    }));
+    // Schema enum takes priority; fall back to meta?.options only when schema has none.
+    const rawOptions = enumOptions.length > 0 ? enumOptions : (meta?.options || []);
     const options = fieldType === 'select'
-      ? appendCurrentOption(meta?.options || enumOptions, currentValue?.[key])
+      ? appendCurrentOption(rawOptions, currentValue?.[key])
       : undefined;
 
     fields.push({

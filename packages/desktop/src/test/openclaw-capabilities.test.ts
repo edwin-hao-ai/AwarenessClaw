@@ -14,7 +14,7 @@ describe('openclaw capability schema helpers', () => {
                   type: 'object',
                   properties: {
                     enabled: { type: 'boolean' },
-                    provider: { type: 'string' },
+                    provider: { type: 'string', enum: ['brave', 'gemini', 'grok', 'kimi', 'perplexity', 'firecrawl', 'exa', 'tavily', 'duckduckgo', 'ollama-web-search', 'browser'] },
                     apiKey: { anyOf: [{ type: 'string' }, { type: 'object' }] },
                     maxResults: { type: 'integer', maximum: 20 },
                   },
