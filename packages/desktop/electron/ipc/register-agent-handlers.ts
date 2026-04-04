@@ -113,14 +113,22 @@ export function registerAgentHandlers(deps: {
       const displayName = name.replace(/["\\\n\r]/g, '').trim();
       if (!displayName) return { success: false, error: 'Invalid agent name' };
       await deps.ensureGatewayRunning();
-      // Slug must be ASCII for filesystem safety
-      const slug = displayName.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || `agent-${Date.now()}`;
+      // Slug must be ASCII for filesystem safety.
+      // Chinese/Japanese/etc names produce empty slug after stripping, so we use oc-<timestamp>.
+      // We also prefix with "oc-" to avoid OpenClaw reserved names like "main".
+      const rawSlug = displayName.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+      const slug = rawSlug || `oc-${Date.now()}`;
       // Use OpenClaw's default workspace path format: ~/.openclaw/workspace-<slug>
       // NOT ~/.openclaw/workspaces/<slug> which is our old convention.
       // --non-interactive requires --workspace, and OpenClaw seeds workspace files
       // (AGENTS.md, BOOTSTRAP.md, SOUL.md, etc.) only when the dir does NOT exist.
+      //
+      // CRITICAL: Pass the ASCII slug as the agent name to `openclaw agents add`, NOT the
+      // Unicode displayName. OpenClaw normalizes non-ASCII names by stripping all non-ASCII
+      // chars, which for pure Chinese names produces "" → fallback to "main" → rejected as
+      // reserved. The display name is set afterwards via `agents set-identity`.
       const wsDir = path.join(deps.home, '.openclaw', `workspace-${slug}`);
-      const spawnArgs = ['agents', 'add', displayName, '--non-interactive', '--workspace', wsDir];
+      const spawnArgs = ['agents', 'add', slug, '--non-interactive', '--workspace', wsDir];
       const safeModel = model ? model.replace(/[^a-zA-Z0-9/_:.-]/g, '') : '';
       if (safeModel) { spawnArgs.push('--model', safeModel); }
       // OpenClaw loads all plugins on every CLI invocation (15-20s), so 45s timeout is needed
