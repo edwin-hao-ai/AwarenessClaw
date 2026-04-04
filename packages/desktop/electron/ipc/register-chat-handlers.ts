@@ -171,6 +171,30 @@ export function registerChatHandlers(deps: {
       : rawSid;
 
     let fullMessage = message;
+
+    // Bootstrap injection: if this agent has a BOOTSTRAP.md, inject its content
+    // into the first message so the agent runs the first-run Q&A ritual.
+    // OpenClaw relies on the LLM reading BOOTSTRAP.md via AGENTS.md instructions,
+    // but smaller models (qwen-turbo etc.) may not follow those instructions reliably.
+    if (agentId !== 'main') {
+      try {
+        const slug = agentId.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+        const flatWs = path.join(os.homedir(), '.openclaw', `workspace-${slug}`);
+        const nestedWs = path.join(os.homedir(), '.openclaw', 'workspaces', slug);
+        const agentWs = path.join(os.homedir(), '.openclaw', 'agents', slug, 'agent');
+        for (const dir of [flatWs, nestedWs, agentWs]) {
+          const bp = path.join(dir, 'BOOTSTRAP.md');
+          if (fs.existsSync(bp)) {
+            const bootstrapContent = fs.readFileSync(bp, 'utf-8').trim();
+            if (bootstrapContent) {
+              fullMessage = `[BOOTSTRAP — First Run Ritual]\nThis agent has never been initialized. Before answering, you MUST follow the bootstrap ritual below. Ask the user the questions described, then update the workspace files as instructed. After completing the ritual, delete BOOTSTRAP.md.\n\n${bootstrapContent}\n\n[User's first message]\n${message}`;
+            }
+            break;
+          }
+        }
+      } catch { /* ignore bootstrap read errors */ }
+    }
+
     const homeDir = os.homedir();
     const desktopDir = path.join(homeDir, 'Desktop');
     const documentsDir = path.join(homeDir, 'Documents');
