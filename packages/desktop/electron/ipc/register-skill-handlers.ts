@@ -438,11 +438,37 @@ export function registerSkillHandlers(deps: {
 
   ipcMain.handle('skill:explore', async () => {
     try {
-      // nonSuspiciousOnly=false: most third-party skills get flagged by VirusTotal Code Insight,
-      // using true would filter out nearly all results
-      const res = await fetchJson(`${clawhubApi}/skills?limit=60&sort=downloads`);
-      const items = Array.isArray(res?.items) ? res.items : [];
-      return { success: true, skills: items.map(mapClawHubListItem), nextCursor: res?.nextCursor || null };
+      // ClawHub /skills listing endpoint returns empty (API change since ~2026-03).
+      // Workaround: use /search with broad queries to discover popular skills.
+      const queries = ['coding', 'memory', 'tool', 'web', 'git', 'docker'];
+      const seen = new Set<string>();
+      const allItems: any[] = [];
+      await Promise.all(queries.map(async (q) => {
+        try {
+          const res = await fetchJson(`${clawhubApi}/search?q=${encodeURIComponent(q)}&limit=10`);
+          for (const item of (res?.results || [])) {
+            if (item.slug && !seen.has(item.slug)) {
+              seen.add(item.slug);
+              allItems.push(item);
+            }
+          }
+        } catch {}
+      }));
+      // Sort by score descending
+      allItems.sort((a, b) => (b.score || 0) - (a.score || 0));
+      return {
+        success: true,
+        skills: allItems.slice(0, 60).map((item: any) => ({
+          slug: item.slug,
+          name: item.displayName || item.slug,
+          displayName: item.displayName || item.slug,
+          description: item.summary || '',
+          summary: item.summary || '',
+          version: item.version,
+          score: item.score,
+        })),
+        nextCursor: null,
+      };
     } catch (err: any) {
       return { success: false, error: err.message, skills: [] };
     }
