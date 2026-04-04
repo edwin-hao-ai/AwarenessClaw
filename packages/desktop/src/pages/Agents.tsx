@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Bot, Plus, Trash2, Link, Loader2, RefreshCw, Edit3, Check, X, AlertCircle, FileText, ChevronDown, ChevronUp, Save } from 'lucide-react';
 import { useI18n } from '../lib/i18n';
+import { useAppConfig } from '../lib/store';
 import AgentWizard from '../components/AgentWizard';
 
 interface AgentInfo {
@@ -24,8 +25,9 @@ const WORKSPACE_FILE_META: Record<string, string> = {
   'HEARTBEAT.md': 'agents.file.heartbeat.desc',
 };
 
-export default function Agents() {
+export default function Agents({ onNavigate }: { onNavigate?: (page: string) => void } = {}) {
   const { t } = useI18n();
+  const { updateConfig } = useAppConfig();
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -262,7 +264,16 @@ export default function Agents() {
         {/* Agent Creation Wizard */}
         {showWizard && (
           <AgentWizard
-            onComplete={() => { setShowWizard(false); loadAgents(); }}
+            onComplete={(agentId) => {
+              setShowWizard(false);
+              loadAgents();
+              // If agentId returned, auto-switch to the new agent and navigate to chat
+              // so the Bootstrap Q&A ritual starts immediately
+              if (agentId && onNavigate) {
+                updateConfig({ selectedAgentId: agentId });
+                onNavigate('chat');
+              }
+            }}
             onCancel={() => setShowWizard(false)}
           />
         )}

@@ -212,7 +212,7 @@ export default function App() {
           {currentPage === 'models' && <div className="h-full overflow-y-auto"><Models /></div>}
           {currentPage === 'skills' && <div className="h-full overflow-y-auto"><Skills /></div>}
           {currentPage === 'automation' && <div className="h-full overflow-y-auto"><Automation /></div>}
-          {currentPage === 'agents' && <div className="h-full overflow-y-auto"><Agents /></div>}
+          {currentPage === 'agents' && <div className="h-full overflow-y-auto"><Agents onNavigate={setCurrentPage} /></div>}
           {currentPage === 'settings' && <div className="h-full overflow-y-auto"><Settings /></div>}
         </main>
       </div>

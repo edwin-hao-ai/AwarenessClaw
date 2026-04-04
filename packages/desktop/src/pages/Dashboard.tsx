@@ -824,6 +824,8 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [sessions, agentStatus]);
 
+  // Track previous agent to detect switches (e.g. after creating a new agent on Agents page)
+  const prevAgentRef = useRef(config.selectedAgentId);
   // When tab becomes active again, restore focus + scroll to bottom + refresh agents
   useEffect(() => {
     if (!isActive) return;
@@ -837,6 +839,13 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
         })));
       }
     }).catch(() => {});
+    // If agent was changed while on another page (e.g. after wizard created a new agent),
+    // create a new session for the new agent
+    const currentAgent = config.selectedAgentId || 'main';
+    if (prevAgentRef.current !== currentAgent) {
+      prevAgentRef.current = currentAgent;
+      handleNewSession();
+    }
     if (agentStatus === 'idle') {
       // Small delay so the hidden→visible transition completes first
       const t = setTimeout(() => textareaRef.current?.focus(), 50);

@@ -44,8 +44,8 @@ describe('Multi-Agent Management (user flows)', () => {
     expect(screen.getByText('telegram')).toBeInTheDocument();
   });
 
-  it('flow: open wizard and create agent via multi-step flow', async () => {
-    const addMock = vi.fn().mockResolvedValue({ success: true });
+  it('flow: open wizard and create agent with bootstrap chat', async () => {
+    const addMock = vi.fn().mockResolvedValue({ success: true, agentId: 'salesbot' });
     const identityMock = vi.fn().mockResolvedValue({ success: true });
     const writeMock = vi.fn().mockResolvedValue({ success: true });
     const listMock = vi.fn().mockResolvedValue({
@@ -65,30 +65,15 @@ describe('Multi-Agent Management (user flows)', () => {
     expect(createBtn).toBeTruthy();
     await act(async () => { fireEvent.click(createBtn!); });
 
-    // Step 1: Enter name
+    // Now it's a single-step wizard: name + emoji → Create & Start Chat
     const nameInput = screen.getByPlaceholderText(/Research/i);
     await act(async () => { fireEvent.change(nameInput, { target: { value: 'SalesBot' } }); });
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /next/i })); });
+    // Click create button
+    const finishBtn = screen.getByTestId('agent-create-btn');
+    await act(async () => { fireEvent.click(finishBtn); });
 
-    // Step 2: Keep default style, next
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /next/i })); });
-
-    // Step 3: Keep default model, next
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /next/i })); });
-
-    // Step 4: Create — the wizard finish button contains a Sparkles icon + "Create Agent" text
-    const finishBtns = screen.getAllByRole('button').filter(b => b.textContent?.includes('Create Agent'));
-    // The wizard finish button is the one inside the fixed overlay (has Sparkles icon)
-    const wizardFinishBtn = finishBtns.find(b => b.querySelector('.lucide-sparkles'));
-    expect(wizardFinishBtn).toBeTruthy();
-    await act(async () => { fireEvent.click(wizardFinishBtn!); });
-
-    // agentsAdd is called with name and SOUL template
-    await waitFor(() => expect(addMock).toHaveBeenCalledWith(
-      'SalesBot',
-      undefined,
-      expect.stringContaining('warm, supportive'),
-    ));
+    // agentsAdd called WITHOUT systemPrompt (BOOTSTRAP.md preserved for chat Q&A)
+    await waitFor(() => expect(addMock).toHaveBeenCalledWith('SalesBot', undefined, undefined));
   });
 
   it('flow: cannot delete main/default agent — delete button absent or disabled', async () => {
