@@ -154,6 +154,56 @@ describe('Channels Page', () => {
     });
   });
 
+  it('shows generic timeout hint for WeChat one-click connection failures', async () => {
+    const api = window.electronAPI as any;
+    api.channelSetup = vi.fn().mockResolvedValue({ success: false, error: 'Command timed out' });
+
+    await act(async () => { render(<Channels />); });
+
+    const wechatBtn = screen.getByText('WeChat').closest('button');
+    expect(wechatBtn).toBeTruthy();
+    await act(async () => { fireEvent.click(wechatBtn as HTMLButtonElement); });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /^Connect$/i }));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Connection timed out while OpenClaw was still loading/i)).toBeInTheDocument();
+      expect(screen.getByText(/This is usually not a credential issue/i)).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/If Telegram sent a pairing code/i)).not.toBeInTheDocument();
+  });
+
+  it('shows Telegram-specific timeout hint when Telegram token flow times out', async () => {
+    const api = window.electronAPI as any;
+    api.channelSave = vi.fn().mockResolvedValue({ success: true });
+    api.channelTest = vi.fn().mockResolvedValue({ success: false, error: 'Command timed out' });
+
+    await act(async () => { render(<Channels />); });
+
+    const telegramBtn = screen.getAllByText('Telegram')[0]?.closest('button');
+    expect(telegramBtn).toBeTruthy();
+    await act(async () => { fireEvent.click(telegramBtn as HTMLButtonElement); });
+
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Next/i })); });
+
+    const tokenInput = document.querySelector('input[type="password"]') as HTMLInputElement | null;
+    expect(tokenInput).toBeTruthy();
+    await act(async () => {
+      fireEvent.change(tokenInput as HTMLInputElement, { target: { value: 'fake-token' } });
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /^Connect$/i }));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Connection timed out while OpenClaw was still loading/i)).toBeInTheDocument();
+      expect(screen.getByText(/If Telegram sent a pairing code, approve it first/i)).toBeInTheDocument();
+    });
+  });
+
   it('shows telegram pairing code input and triggers one-click approve', async () => {
     const api = window.electronAPI as any;
     api.channelPairingApprove = vi.fn().mockResolvedValue({
