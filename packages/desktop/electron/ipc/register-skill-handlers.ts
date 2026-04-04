@@ -203,8 +203,24 @@ function buildInstallCommands(spec: SkillInstallSpec) {
   ] : [];
 
   switch (kind) {
-    case 'brew':
-      return brewFormula ? ['brew install ' + brewFormula] : [];
+    case 'brew': {
+      if (!brewFormula) return [];
+      const brewCmd = ['brew install ' + brewFormula];
+      // On non-macOS, brew likely doesn't exist — add platform-native fallbacks
+      // using the binary name (bins[0]) since brew formula names don't work with winget/apt
+      if (process.platform === 'win32' && fallbackPkg) {
+        return [...brewCmd,
+          `winget install --id ${fallbackPkg} -e --accept-source-agreements --accept-package-agreements --disable-interactivity`,
+          `choco install ${fallbackPkg} -y`,
+          `scoop install ${fallbackPkg}`,
+          `npm install -g --ignore-scripts ${fallbackPkg}`,
+        ];
+      }
+      if (process.platform === 'linux' && fallbackPkg) {
+        return [...brewCmd, ...linuxCommands, `npm install -g --ignore-scripts ${fallbackPkg}`];
+      }
+      return brewCmd;
+    }
     case 'go':
       // go install requires a module path — `go install github.com/.../cmd/foo@latest`
       if (goModule && /^[a-zA-Z0-9][a-zA-Z0-9._/-]*@[a-z0-9v._-]+$/.test(goModule)) {
@@ -698,7 +714,16 @@ export function registerSkillHandlers(deps: {
         } else if (friendlyError.includes('timed out')) {
           friendlyError = 'Installation timed out. Your network may be slow — try again or install manually.';
         } else if (friendlyError.includes('No available formula') || friendlyError.includes('not found')) {
-          friendlyError = `Package not found in package manager. Try the Install Guide for manual instructions.`;
+          friendlyError = 'Package not found in package manager. Try the Install Guide for manual instructions.';
+        } else if (friendlyError.includes('No available installer') || friendlyError === lastError) {
+          // No package manager available for this kind on this platform
+          if (process.platform === 'win32') {
+            friendlyError = 'No compatible installer found. Try installing winget (built into Windows 11) or Chocolatey, then retry.';
+          } else if (process.platform === 'linux') {
+            friendlyError = 'No compatible installer found. Ensure apt, dnf, or another package manager is available.';
+          } else {
+            friendlyError = 'No compatible installer found. Try the Install Guide for manual instructions.';
+          }
         }
 
         failures.push({
