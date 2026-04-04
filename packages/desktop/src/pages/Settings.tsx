@@ -10,7 +10,7 @@ import { SettingsPermissionsPanel } from '../components/settings/SettingsPermiss
 import { SettingsUsagePanel, SettingsVersionPanel } from '../components/settings/SettingsStatsPanels';
 import { SettingsAppearancePanel, SettingsTokenPanel } from '../components/settings/SettingsCorePanels';
 import { SettingsExtensionsPanel, SettingsGatewayPanel, SettingsHealthPanel, SettingsLogsModal, SettingsSecurityAuditPanel, SettingsSystemPanel } from '../components/settings/SettingsOperationsPanels';
-import { buildDynamicSectionsFromSchema, getValueAtPath, setValueAtPath, type DynamicConfigSection } from '../lib/openclaw-capabilities';
+import { buildDynamicSectionsFromSchema, getValueAtPath, setValueAtPath, PROVIDER_PLUGIN_ENTRY, type DynamicConfigSection } from '../lib/openclaw-capabilities';
 import pkg from '../../package.json';
 
 const KNOWN_ALLOWED_TOOLS = [
@@ -299,6 +299,20 @@ export default function Settings() {
 
       const valueResult = await api.openclawConfigRead?.('tools.web');
       const nextValues = (valueResult?.success ? valueResult.value : {}) || {};
+
+      // Back-fill apiKey from plugins.entries.<provider>.config.webSearch.apiKey
+      // because OpenClaw reads per-provider keys, not the unified tools.web.search.apiKey
+      const provider = nextValues?.search?.provider;
+      if (provider && !nextValues?.search?.apiKey) {
+        const pluginEntry = PROVIDER_PLUGIN_ENTRY[provider];
+        if (pluginEntry) {
+          const pluginResult = await api.openclawConfigRead?.(`plugins.entries.${pluginEntry}.config.webSearch.apiKey`);
+          if (pluginResult?.success && pluginResult.value) {
+            nextValues.search = { ...nextValues.search, apiKey: pluginResult.value };
+          }
+        }
+      }
+
       setWebValues(nextValues);
       setWebSections(buildDynamicSectionsFromSchema(schemaResult.schema, 'tools.web', nextValues));
       setWebLoading(false);
@@ -471,12 +485,28 @@ export default function Settings() {
     if (!api?.openclawConfigWrite) return;
     setWebSaving(true);
     setWebError(null);
+
+    // 1. Write tools.web as before
     const result = await api.openclawConfigWrite('tools.web', webValues);
-    setWebSaving(false);
     if (!result?.success) {
+      setWebSaving(false);
       setWebError(result?.error || t('settings.web.saveFailed', 'Failed to save Web settings.'));
       return;
     }
+
+    // 2. Sync apiKey to the provider's plugin entry path
+    //    OpenClaw reads keys from plugins.entries.<entry>.config.webSearch.apiKey
+    const provider = webValues?.search?.provider;
+    const apiKey = webValues?.search?.apiKey;
+    const pluginEntry = provider ? PROVIDER_PLUGIN_ENTRY[provider] : undefined;
+    if (pluginEntry && apiKey) {
+      await api.openclawConfigWrite(
+        `plugins.entries.${pluginEntry}.config.webSearch`,
+        { apiKey },
+      );
+    }
+
+    setWebSaving(false);
     setWebSaved(true);
     setTimeout(() => setWebSaved(false), 2500);
   };

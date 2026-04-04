@@ -141,7 +141,11 @@ Object.defineProperty(window, 'electronAPI', {
     pluginsToggle: () => Promise.resolve({ success: true }),
     hooksList: () => Promise.resolve({ success: true, hooks: {} }),
     hooksToggle: () => Promise.resolve({ success: true }),
-    openclawConfigRead: () => Promise.resolve({ success: true, value: { search: { provider: 'brave' } } }),
+    openclawConfigRead: (dotPath?: string) => {
+      if (dotPath === 'tools.web') return Promise.resolve({ success: true, value: { search: { provider: 'brave' } } });
+      // Plugin entry key lookups return undefined (no key configured) by default
+      return Promise.resolve({ success: true, value: undefined });
+    },
     openclawConfigWrite: () => Promise.resolve({ success: true }),
     openclawConfigSchema: () => Promise.resolve({ success: true, schema: {
       properties: {

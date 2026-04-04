@@ -84,6 +84,22 @@ const SKIP_PATHS = new Set([
   'tools.web.search.openaiCodex.userLocation',
 ]);
 
+/**
+ * Maps search provider IDs to the plugin entry key in openclaw.json
+ * where their API key is stored: `plugins.entries.<entry>.config.webSearch.apiKey`
+ * Providers not listed here (browser, duckduckgo, ollama-web-search) don't need keys.
+ */
+export const PROVIDER_PLUGIN_ENTRY: Record<string, string> = {
+  brave: 'brave',
+  gemini: 'google',
+  grok: 'xai',
+  kimi: 'kimi',
+  perplexity: 'perplexity',
+  firecrawl: 'firecrawl',
+  exa: 'exa',
+  tavily: 'tavily',
+};
+
 /** Friendly display labels for known OpenClaw search providers. */
 const PROVIDER_LABELS: Record<string, string> = {
   brave: 'Brave Search',
