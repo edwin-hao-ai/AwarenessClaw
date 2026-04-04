@@ -7,6 +7,7 @@ import Models from './pages/Models';
 import Skills from './pages/Skills';
 import Automation from './pages/Automation';
 import Agents from './pages/Agents';
+import TaskCenter from './pages/TaskCenter';
 import Settings from './pages/Settings';
 import Sidebar, { type Page } from './components/Sidebar';
 import UpdateBanner from './components/UpdateBanner';
@@ -213,6 +214,7 @@ export default function App() {
           {currentPage === 'skills' && <div className="h-full overflow-y-auto"><Skills /></div>}
           {currentPage === 'automation' && <div className="h-full overflow-y-auto"><Automation /></div>}
           {currentPage === 'agents' && <div className="h-full overflow-y-auto"><Agents onNavigate={setCurrentPage} /></div>}
+          {currentPage === 'taskCenter' && <div className="h-full overflow-y-auto"><TaskCenter onNavigate={setCurrentPage} /></div>}
           {currentPage === 'settings' && <div className="h-full overflow-y-auto"><Settings /></div>}
         </main>
       </div>

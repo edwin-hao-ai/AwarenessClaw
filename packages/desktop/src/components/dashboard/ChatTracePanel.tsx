@@ -1,12 +1,12 @@
-import { useState } from 'react';
-import { AlertTriangle, BookOpen, Brain, CheckCircle2, ChevronRight, Loader2, Save, Search, Terminal, Wrench, Zap } from 'lucide-react';
+import { useState, useCallback } from 'react';
+import { AlertTriangle, BookOpen, Brain, CheckCircle2, ChevronDown, ChevronRight, Copy, Check, Loader2, Save, Search, Terminal, Wrench, Zap } from 'lucide-react';
 
 export interface ChatTraceEvent {
   id: string;
   kind: 'status' | 'debug' | 'thinking' | 'stream';
   label: string;
   detail?: string;
-  raw?: string;
+  raw?: unknown;
   timestamp: number;
   mergeKey?: string;
 }
@@ -17,9 +17,22 @@ type ToolCallInfo = {
   status: 'running' | 'completed' | 'approved' | 'recalling' | 'saving' | 'cached' | 'awaiting_approval' | 'failed';
   timestamp: number;
   detail?: string;
+  args?: unknown;
+  output?: string;
+  rawResult?: unknown;
   approvalRequestId?: string;
   approvalCommand?: string;
 };
+
+function formatValue(value: unknown): string {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
 
 function getToolIcon(name: string) {
   const lower = name.toLowerCase();
@@ -59,6 +72,205 @@ function formatTimestamp(timestamp: number) {
     minute: '2-digit',
     second: '2-digit',
   });
+}
+
+/** Collapsible code block — shows first N lines, click to expand. */
+function CollapsiblePre({ content, maxLines = 6 }: { content: string; maxLines?: number }) {
+  const [collapsed, setCollapsed] = useState(true);
+  const lines = content.split('\n');
+  const needsCollapse = lines.length > maxLines;
+  const displayed = collapsed && needsCollapse ? lines.slice(0, maxLines).join('\n') + '\n...' : content;
+
+  return (
+    <div className="relative">
+      <pre className="ml-[17px] mt-1 overflow-x-auto whitespace-pre-wrap rounded-md bg-slate-950 px-2 py-1 text-[10px] leading-relaxed text-slate-400">
+        {displayed}
+      </pre>
+      {needsCollapse && (
+        <button
+          onClick={() => setCollapsed(!collapsed)}
+          className="ml-[17px] mt-0.5 text-[9px] text-sky-400/70 hover:text-sky-300 transition-colors"
+        >
+          {collapsed ? `Show all ${lines.length} lines` : 'Collapse'}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function TraceEventCard({ event }: { event: ChatTraceEvent }) {
+  const detailText = event.detail || '';
+  const rawText = event.raw != null ? formatValue(event.raw) : '';
+  const hasExpandableContent = detailText.length > 120 || rawText.length > 120 || detailText.includes('\n') || rawText.includes('\n');
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className="rounded-lg border border-slate-800/80 bg-slate-900/40 px-3 py-2">
+      <button
+        onClick={() => hasExpandableContent && setExpanded(!expanded)}
+        className={`flex w-full items-center gap-2 text-left text-[11px] text-slate-300 ${hasExpandableContent ? 'cursor-pointer' : ''}`}
+      >
+        {getTraceIcon(event)}
+        <span className="flex-1 min-w-0 truncate">{event.label}</span>
+        {hasExpandableContent && (
+          <ChevronDown size={10} className={`text-slate-600 transition-transform duration-150 ${expanded ? 'rotate-180' : ''}`} />
+        )}
+        <span className="text-[10px] text-slate-600">{formatTimestamp(event.timestamp)}</span>
+      </button>
+
+      {detailText && (
+        expanded && hasExpandableContent ? (
+          <CollapsiblePre content={detailText} maxLines={8} />
+        ) : (
+          <div className="mt-1 ml-[19px] whitespace-pre-wrap break-words text-[10px] leading-relaxed text-slate-500/90 line-clamp-3">
+            {detailText}
+          </div>
+        )
+      )}
+
+      {rawText && rawText !== detailText && (
+        expanded ? (
+          <div>
+            <div className="ml-[17px] mt-1 text-[9px] text-slate-600 uppercase tracking-wider mb-0.5">raw</div>
+            <CollapsiblePre content={rawText} maxLines={10} />
+          </div>
+        ) : (
+          <pre className="mt-1 ml-[19px] overflow-x-auto whitespace-pre-wrap rounded-md bg-slate-950 px-2 py-1 text-[10px] leading-relaxed text-slate-500 line-clamp-3">
+            {rawText}
+          </pre>
+        )
+      )}
+    </div>
+  );
+}
+
+/** Single tool call card with collapsible args/output sections. */
+function ToolCallCard({
+  tc,
+  t,
+  onApprove,
+  onCopyApproval,
+  onStopRequest,
+}: {
+  tc: ToolCallInfo;
+  t: (key: string, fallback?: string) => string;
+  onApprove?: (tc: ToolCallInfo) => void;
+  onCopyApproval?: (tc: ToolCallInfo) => void;
+  onStopRequest?: () => void;
+}) {
+  // Auto-expand completed tool calls that have short output (historical messages)
+  const isCompleted = tc.status === 'completed' || tc.status === 'failed' || tc.status === 'approved' || tc.status === 'cached';
+  const [detailExpanded, setDetailExpanded] = useState(isCompleted);
+  const [copied, setCopied] = useState(false);
+
+  const argsText = tc.args != null ? formatValue(tc.args) : '';
+  const outputText = tc.output || '';
+  const rawText = tc.rawResult != null ? formatValue(tc.rawResult) : '';
+  // Use rawResult if output is empty but rawResult exists and differs
+  const displayOutput = outputText || (rawText && rawText !== argsText ? rawText : '');
+  const hasExpandableContent = argsText.length > 80 || displayOutput.length > 80;
+  const isActive = tc.status === 'running' || tc.status === 'recalling' || tc.status === 'saving';
+
+  const handleCopyOutput = useCallback(() => {
+    const text = displayOutput || argsText;
+    if (!text) return;
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }, [displayOutput, argsText]);
+
+  return (
+    <div className="rounded-lg border border-slate-800/80 bg-slate-900/40 px-3 py-2 text-[11px] text-slate-400">
+      {/* Header: icon + name + status + expand toggle */}
+      <div
+        className={`flex items-center gap-1.5 ${hasExpandableContent ? 'cursor-pointer' : ''}`}
+        onClick={() => hasExpandableContent && setDetailExpanded(!detailExpanded)}
+      >
+        {tc.status === 'failed' ? (
+          <AlertTriangle size={11} className="text-amber-400/80" />
+        ) : tc.status === 'awaiting_approval' || isActive ? (
+          <Loader2 size={11} className="animate-spin text-brand-400/70" />
+        ) : (
+          <span className="text-emerald-500/70">{getToolIcon(tc.name)}</span>
+        )}
+        <span className="flex-1">{getToolLabel(tc.name, tc.status, t)}</span>
+        {hasExpandableContent && (
+          <ChevronDown
+            size={10}
+            className={`text-slate-600 transition-transform duration-150 ${detailExpanded ? 'rotate-180' : ''}`}
+          />
+        )}
+        {(displayOutput || argsText) && (
+          <button
+            onClick={(e) => { e.stopPropagation(); handleCopyOutput(); }}
+            className="p-0.5 rounded hover:bg-slate-800 text-slate-600 hover:text-slate-400 transition-colors"
+            title="Copy output"
+          >
+            {copied ? <Check size={9} className="text-emerald-400" /> : <Copy size={9} />}
+          </button>
+        )}
+      </div>
+
+      {/* Compact summary when collapsed */}
+      {tc.detail && !detailExpanded && (
+        <div className="ml-[17px] mt-1 text-[10px] text-slate-500/90 line-clamp-2 break-all">{tc.detail}</div>
+      )}
+
+      {/* Always show output for completed tools (not gated by expand) */}
+      {!detailExpanded && displayOutput && displayOutput !== tc.detail && (
+        <pre className="ml-[17px] mt-1 overflow-x-auto whitespace-pre-wrap rounded-md bg-slate-950 px-2 py-1 text-[10px] leading-relaxed text-slate-400 line-clamp-3">
+          {displayOutput}
+        </pre>
+      )}
+
+      {/* Expanded content — full args + output with collapse control */}
+      {detailExpanded && (
+        <div className="mt-1.5 space-y-1.5">
+          {tc.detail && (
+            <div className="ml-[17px] text-[10px] text-slate-500/90 break-all">{tc.detail}</div>
+          )}
+
+          {argsText && argsText !== tc.detail && (
+            <div>
+              <div className="ml-[17px] text-[9px] text-slate-600 uppercase tracking-wider mb-0.5">args</div>
+              <CollapsiblePre content={argsText} maxLines={8} />
+            </div>
+          )}
+
+          {displayOutput && (
+            <div>
+              <div className="ml-[17px] text-[9px] text-slate-600 uppercase tracking-wider mb-0.5">output</div>
+              <CollapsiblePre content={displayOutput} maxLines={12} />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Approval buttons */}
+      {tc.status === 'awaiting_approval' && (
+        <div className="ml-[17px] mt-2 flex flex-wrap gap-2">
+          <button
+            onClick={() => onApprove?.(tc)}
+            className="px-2 py-0.5 rounded-md bg-brand-600/20 hover:bg-brand-600/30 border border-brand-500/30 text-brand-200 text-[10px] transition-colors"
+          >
+            {t('chat.approveOnce', 'Approve once')}
+          </button>
+          <button
+            onClick={() => onCopyApproval?.(tc)}
+            className="px-2 py-0.5 rounded-md bg-slate-800/80 hover:bg-slate-700 border border-slate-700/60 text-slate-300 text-[10px] transition-colors"
+          >
+            {t('chat.copyApprovalCommand', 'Copy approval command')}
+          </button>
+          <button
+            onClick={() => onStopRequest?.()}
+            className="px-2 py-0.5 rounded-md bg-slate-800/80 hover:bg-red-500/10 border border-slate-700/60 hover:border-red-500/30 text-slate-300 hover:text-red-300 text-[10px] transition-colors"
+          >
+            {t('chat.stopRequest', 'Stop request')}
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function ChatTracePanel({
@@ -123,43 +335,14 @@ export function ChatTracePanel({
                 <span>{t('tool.used', '{0} tool(s) used').replace('{0}', String(toolCalls?.length || 0))}</span>
               </div>
               {toolCalls?.map((tc) => (
-                <div key={tc.id} className="rounded-lg border border-slate-800/80 bg-slate-900/40 px-3 py-2 text-[11px] text-slate-400">
-                  <div className="flex items-center gap-1.5">
-                    {tc.status === 'failed' ? (
-                      <AlertTriangle size={11} className="text-amber-400/80" />
-                    ) : tc.status === 'awaiting_approval' || tc.status === 'running' || tc.status === 'recalling' || tc.status === 'saving' ? (
-                      <Loader2 size={11} className="animate-spin text-brand-400/70" />
-                    ) : (
-                      <span className="text-emerald-500/70">{getToolIcon(tc.name)}</span>
-                    )}
-                    <span>{getToolLabel(tc.name, tc.status, t)}</span>
-                  </div>
-                  {tc.detail && (
-                    <div className="ml-[17px] mt-1 text-[10px] text-slate-500/90 whitespace-pre-wrap break-all">{tc.detail}</div>
-                  )}
-                  {tc.status === 'awaiting_approval' && (
-                    <div className="ml-[17px] mt-2 flex flex-wrap gap-2">
-                      <button
-                        onClick={() => onApprove?.(tc)}
-                        className="px-2 py-0.5 rounded-md bg-brand-600/20 hover:bg-brand-600/30 border border-brand-500/30 text-brand-200 text-[10px] transition-colors"
-                      >
-                        {t('chat.approveOnce', 'Approve once')}
-                      </button>
-                      <button
-                        onClick={() => onCopyApproval?.(tc)}
-                        className="px-2 py-0.5 rounded-md bg-slate-800/80 hover:bg-slate-700 border border-slate-700/60 text-slate-300 text-[10px] transition-colors"
-                      >
-                        {t('chat.copyApprovalCommand', 'Copy approval command')}
-                      </button>
-                      <button
-                        onClick={() => onStopRequest?.()}
-                        className="px-2 py-0.5 rounded-md bg-slate-800/80 hover:bg-red-500/10 border border-slate-700/60 hover:border-red-500/30 text-slate-300 hover:text-red-300 text-[10px] transition-colors"
-                      >
-                        {t('chat.stopRequest', 'Stop request')}
-                      </button>
-                    </div>
-                  )}
-                </div>
+                <ToolCallCard
+                  key={tc.id}
+                  tc={tc}
+                  t={t}
+                  onApprove={onApprove}
+                  onCopyApproval={onCopyApproval}
+                  onStopRequest={onStopRequest}
+                />
               ))}
             </div>
           )}
@@ -171,23 +354,7 @@ export function ChatTracePanel({
                 <span>{t('chat.trace.timeline', 'Timeline')}</span>
               </div>
               {traceEvents?.map((event) => (
-                <div key={event.id} className="rounded-lg border border-slate-800/80 bg-slate-900/40 px-3 py-2">
-                  <div className="flex items-center gap-2 text-[11px] text-slate-300">
-                    {getTraceIcon(event)}
-                    <span className="flex-1 min-w-0 truncate">{event.label}</span>
-                    <span className="text-[10px] text-slate-600">{formatTimestamp(event.timestamp)}</span>
-                  </div>
-                  {event.detail && (
-                    <div className="mt-1 ml-[19px] whitespace-pre-wrap break-words text-[10px] leading-relaxed text-slate-500/90">
-                      {event.detail}
-                    </div>
-                  )}
-                  {event.raw && event.raw !== event.detail && (
-                    <pre className="mt-1 ml-[19px] overflow-x-auto whitespace-pre-wrap rounded-md bg-slate-950 px-2 py-1 text-[10px] leading-relaxed text-slate-500">
-                      {event.raw}
-                    </pre>
-                  )}
-                </div>
+                <TraceEventCard key={event.id} event={event} />
               ))}
             </div>
           )}

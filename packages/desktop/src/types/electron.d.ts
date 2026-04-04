@@ -21,11 +21,13 @@ export interface ElectronAPI {
   openAuthUrl: (url: string) => Promise<void>;
   chatSend?: (message: string, sessionId?: string, options?: { thinkingLevel?: string; model?: string; files?: string[]; workspacePath?: string; agentId?: string }) => Promise<{ success: boolean; text?: string; error?: string; sessionId?: string; awaitingApproval?: boolean; approvalRequestId?: string; approvalCommand?: string; approvalDetail?: string }>;
   chatAbort?: (sessionId?: string) => Promise<{ success: boolean; error?: string }>;
+  chatLoadHistory?: (sessionId: string) => Promise<{ success: boolean; messages?: unknown[]; error?: string }>;
   chatApprove?: (sessionId: string, approvalRequestId: string) => Promise<{ success: boolean; command?: string; error?: string }>;
   onChatStream?: (callback: (chunk: string) => void) => void;
   onChatStreamEnd?: (callback: () => void) => void;
   onChatThinking?: (callback: (text: string) => void) => void;
   onChatDebug?: (callback: (msg: string) => void) => void;
+  onChatEvent?: (callback: (event: unknown) => void) => void;
   onChatStatus?: (callback: (status: { type: string; tool?: string; toolStatus?: string; toolId?: string; message?: string; detail?: string; approvalRequestId?: string; approvalCommand?: string }) => void) => void;
   onMemoryWarning?: (callback: (payload: { type: string; message: string }) => void) => void;
   filePreview?: (filePath: string) => Promise<unknown>;
@@ -59,6 +61,21 @@ export interface ElectronAPI {
   bootstrap?: () => Promise<{ success: boolean; output?: string | null }>;
   modelsReadProviders?: () => Promise<{ success: boolean; providers: Array<{ key: string; baseUrl: string; apiType?: string; hasApiKey: boolean; models: Array<{ id: string; name: string }> }>; primaryModel: string }>;
   modelsDiscover?: (input: { providerKey: string; baseUrl: string; apiKey?: string }) => Promise<{ success: boolean; models: Array<{ id: string; name: string }>; error?: string }>;
+
+  // Task Center
+  workflowConfig?: () => Promise<{ maxSpawnDepth: number; maxChildrenPerAgent: number; agentToAgentEnabled: boolean }>;
+  workflowEnableCollaboration?: () => Promise<{ success: boolean; config?: { maxSpawnDepth: number; agentToAgentEnabled: boolean } }>;
+  workflowCheckLobster?: () => Promise<{ installed: boolean; enabled: boolean }>;
+  workflowInstallLobster?: () => Promise<{ success: boolean; error?: string }>;
+  taskCreate?: (params: { title: string; agentId: string; model?: string; thinking?: string; timeoutSeconds?: number; sessionKey?: string }) => Promise<{ success: boolean; runId?: string; sessionKey?: string; error?: string }>;
+  taskCancel?: (sessionKey: string) => Promise<{ success: boolean; error?: string }>;
+  taskDetail?: (sessionKey: string) => Promise<{ success: boolean; messages?: unknown[]; error?: string }>;
+  workflowList?: () => Promise<{ workflows: Array<{ id: string; name: string; description: string; icon: string; yamlPath: string; isBuiltin: boolean }> }>;
+  workflowRun?: (yamlPath: string, args: Record<string, string>) => Promise<{ success: boolean; status?: string; output?: unknown; error?: string }>;
+  workflowApprove?: (resumeToken: string, approve: boolean) => Promise<{ success: boolean; error?: string }>;
+  workflowSave?: (fileName: string, content: string) => Promise<{ success: boolean; path?: string; error?: string }>;
+  workflowDelete?: (yamlPath: string) => Promise<{ success: boolean; error?: string }>;
+  onTaskStatusUpdate?: (callback: (data: { event: string; runId: string; agentId: string; status: string; result: string; sessionKey: string }) => void) => (() => void) | undefined;
 }
 
 export interface EnvironmentInfo {

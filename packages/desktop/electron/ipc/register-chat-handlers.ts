@@ -17,6 +17,16 @@ type ChatSendOptions = {
 
 let activeChatChild: ReturnType<typeof spawn> | null = null;
 
+function normalizeDesktopRole(role: unknown): 'user' | 'assistant' {
+  return role === 'user' ? 'user' : 'assistant';
+}
+
+function normalizeContentBlocks(message: any): any[] {
+  return Array.isArray(message?.content)
+    ? message.content.filter((block: any) => block && typeof block === 'object')
+    : [];
+}
+
 function extractAssistantText(message: any): string {
   if (!message) return '';
   if (Array.isArray(message.content)) {
@@ -30,30 +40,49 @@ function extractAssistantText(message: any): string {
   return '';
 }
 
+function extractAssistantThinking(message: any): string {
+  if (!message) return '';
+  if (Array.isArray(message.content)) {
+    const parts = message.content
+      .map((contentBlock: any) => {
+        if (contentBlock?.type === 'thinking') return contentBlock.thinking || contentBlock.text || '';
+        if (contentBlock?.type === 'reasoning') return contentBlock.reasoning || contentBlock.text || '';
+        return '';
+      })
+      .filter((part: string) => Boolean(part?.trim()));
+    if (parts.length > 0) return parts.join('\n');
+  }
+  if (typeof message.content === 'string' && message.content.startsWith('Reasoning:')) {
+    return message.content.replace(/^Reasoning:\s*/, '').trim();
+  }
+  return '';
+}
+
 function truncateDetail(text: string, maxChars = 600): string {
+  if (!Number.isFinite(maxChars) || maxChars <= 0) return text;
   return text.length > maxChars ? `${text.slice(0, maxChars - 1)}…` : text;
 }
 
-function extractToolDetail(value: unknown): string | undefined {
+function extractToolDetail(value: unknown, maxChars = 10000): string | undefined {
   if (value == null) return undefined;
   if (typeof value === 'string') {
     const trimmed = value.trim();
-    return trimmed ? truncateDetail(trimmed) : undefined;
+    return trimmed ? truncateDetail(trimmed, maxChars) : undefined;
   }
   if (typeof value === 'number' || typeof value === 'boolean') {
     return String(value);
   }
   if (Array.isArray(value)) {
     const parts = value
-      .map((entry) => extractToolDetail(entry))
+      .map((entry) => extractToolDetail(entry, maxChars))
       .filter((entry): entry is string => Boolean(entry));
-    return parts.length > 0 ? truncateDetail(parts.join('\n')) : undefined;
+    return parts.length > 0 ? truncateDetail(parts.join('\n'), maxChars) : undefined;
   }
   if (typeof value === 'object') {
     const record = value as Record<string, unknown>;
     const directKeys = ['text', 'output', 'stdout', 'stderr', 'message', 'detail', 'summary'];
     for (const key of directKeys) {
-      const extracted = extractToolDetail(record[key]);
+      const extracted = extractToolDetail(record[key], maxChars);
       if (extracted) return extracted;
     }
     if (Array.isArray(record.content)) {
@@ -61,20 +90,317 @@ function extractToolDetail(value: unknown): string | undefined {
         .map((entry) => {
           if (entry && typeof entry === 'object') {
             const block = entry as Record<string, unknown>;
-            return extractToolDetail(block.text ?? block.content ?? block.output);
+            return extractToolDetail(block.text ?? block.content ?? block.output, maxChars);
           }
-          return extractToolDetail(entry);
+          return extractToolDetail(entry, maxChars);
         })
         .filter((entry): entry is string => Boolean(entry));
-      if (contentParts.length > 0) return truncateDetail(contentParts.join('\n'));
+      if (contentParts.length > 0) return truncateDetail(contentParts.join('\n'), maxChars);
     }
     try {
-      return truncateDetail(JSON.stringify(record));
+      return truncateDetail(JSON.stringify(record), maxChars);
     } catch {
       return undefined;
     }
   }
   return undefined;
+}
+
+function extractToolArgs(block: Record<string, unknown>): unknown {
+  return block.input ?? block.arguments ?? block.args ?? {};
+}
+
+function extractToolOutput(block: Record<string, unknown>): string | undefined {
+  if (Array.isArray(block.content)) {
+    const contentText = extractToolDetail(block.content, Number.POSITIVE_INFINITY);
+    if (contentText) return contentText;
+  }
+  return extractToolDetail(block.result ?? block.output ?? block.stdout ?? block.stderr ?? block.text ?? block.message, Number.POSITIVE_INFINITY);
+}
+
+function buildToolCallsFromBlocks(contentBlocks: any[]): Array<Record<string, unknown>> {
+  const toolCalls = new Map<string, Record<string, unknown>>();
+  for (const rawBlock of contentBlocks) {
+    const block = rawBlock as Record<string, unknown>;
+    const type = String(block.type || '');
+    if (type === 'tool_use' || type === 'toolcall' || type === 'tool_call') {
+      const toolId = String(block.id || block.toolCallId || `tool-${toolCalls.size + 1}`);
+      const args = extractToolArgs(block);
+      toolCalls.set(toolId, {
+        id: toolId,
+        name: String(block.name || 'tool'),
+        status: 'running',
+        timestamp: Date.now(),
+        detail: extractToolDetail(args, Number.POSITIVE_INFINITY),
+        args,
+      });
+      continue;
+    }
+
+    if (type === 'tool_result' || type === 'toolresult' || type === 'tool_result_block') {
+      const toolId = String(block.tool_use_id || block.toolCallId || block.id || `tool-result-${toolCalls.size + 1}`);
+      const existing = toolCalls.get(toolId);
+      toolCalls.set(toolId, {
+        id: toolId,
+        name: String(block.name || existing?.name || 'tool'),
+        status: block.is_error || block.isError ? 'failed' : 'completed',
+        timestamp: Date.now(),
+        detail: existing?.detail,
+        args: existing?.args,
+        output: extractToolOutput(block),
+      });
+    }
+  }
+
+  return [...toolCalls.values()];
+}
+
+function buildDesktopMessage(msg: any) {
+  const contentBlocks = normalizeContentBlocks(msg);
+  const toolCalls = buildToolCallsFromBlocks(contentBlocks);
+  return {
+    id: msg.__openclaw?.id || `gw-${msg.timestamp || Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    role: normalizeDesktopRole(msg.role),
+    content: extractAssistantText(msg),
+    timestamp: msg.timestamp || Date.now(),
+    model: msg.model,
+    thinking: extractAssistantThinking(msg) || undefined,
+    toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+    contentBlocks: contentBlocks.length > 0 ? contentBlocks : undefined,
+  };
+}
+
+function mergeToolResultIntoAssistantMessage(
+  assistantMessage: Record<string, any>,
+  block: Record<string, unknown>,
+) {
+  const toolId = String(block.tool_use_id || block.toolCallId || block.id || '');
+  if (!toolId) return;
+
+  const existingToolCalls = Array.isArray(assistantMessage.toolCalls) ? assistantMessage.toolCalls : [];
+  const output = extractToolOutput(block);
+  const nextToolCalls = existingToolCalls.map((toolCall: Record<string, unknown>) => (
+    toolCall.id === toolId
+      ? {
+          ...toolCall,
+          status: block.is_error || block.isError ? 'failed' : 'completed',
+          output: output || toolCall.output,
+        }
+      : toolCall
+  ));
+  assistantMessage.toolCalls = nextToolCalls;
+  assistantMessage.contentBlocks = [
+    ...(Array.isArray(assistantMessage.contentBlocks) ? assistantMessage.contentBlocks : []),
+    block,
+  ];
+}
+
+function buildDesktopHistory(rawMessages: any[]): Array<Record<string, any>> {
+  const desktopMessages: Array<Record<string, any>> = [];
+  const assistantMessageByToolId = new Map<string, Record<string, any>>();
+
+  for (const rawMessage of rawMessages || []) {
+    const desktopMessage = buildDesktopMessage(rawMessage);
+    const contentBlocks = normalizeContentBlocks(rawMessage);
+    const toolResultBlocks = contentBlocks.filter((block: any) => {
+      const type = String(block?.type || '');
+      return type === 'tool_result' || type === 'toolresult' || type === 'tool_result_block';
+    });
+
+    if (desktopMessage.role === 'assistant') {
+      desktopMessages.push(desktopMessage);
+      for (const toolCall of desktopMessage.toolCalls || []) {
+        if (toolCall?.id) assistantMessageByToolId.set(String(toolCall.id), desktopMessage);
+      }
+      continue;
+    }
+
+    let mergedToolResultCount = 0;
+    for (const block of toolResultBlocks) {
+      const toolId = String(block.tool_use_id || block.toolCallId || block.id || '');
+      const assistantMessage = assistantMessageByToolId.get(toolId);
+      if (!assistantMessage) continue;
+      mergeToolResultIntoAssistantMessage(assistantMessage, block);
+      mergedToolResultCount += 1;
+    }
+
+    const hasOwnVisibleContent = Boolean(desktopMessage.content?.trim()) || Boolean(desktopMessage.thinking?.trim());
+    const hasUnmergedBlocks = contentBlocks.length > mergedToolResultCount;
+    if (hasOwnVisibleContent || hasUnmergedBlocks) {
+      desktopMessages.push(desktopMessage);
+    }
+  }
+
+  return desktopMessages;
+}
+
+function extractAssistantEventText(data: Record<string, unknown>): string | undefined {
+  return extractToolDetail(
+    data.thinking
+    ?? data.reasoning
+    ?? data.text
+    ?? data.delta
+    ?? data.content,
+    Number.POSITIVE_INFINITY,
+  );
+}
+
+type NormalizedAgentEvent = {
+  stream: 'assistant' | 'tool' | 'lifecycle';
+  phase?: string;
+  runId?: unknown;
+  sessionKey?: string;
+  seq?: unknown;
+  toolCallId?: string;
+  toolName?: string;
+  args?: unknown;
+  partialResult?: unknown;
+  result?: unknown;
+  isError?: boolean;
+  text?: string;
+  thinking?: string;
+  raw?: unknown;
+};
+
+function normalizeAgentGatewayEvent(eventName: string, payload: any): NormalizedAgentEvent | null {
+  if (!payload || typeof payload !== 'object') return null;
+
+  const data = payload?.data && typeof payload.data === 'object' ? payload.data : payload;
+  const sessionKey = typeof payload?.sessionKey === 'string'
+    ? payload.sessionKey
+    : typeof data?.sessionKey === 'string'
+      ? data.sessionKey
+      : '';
+
+  if (typeof payload?.stream === 'string') {
+    if (payload.stream === 'tool') {
+      const toolCallId = typeof data?.toolCallId === 'string' ? data.toolCallId : '';
+      const toolName = typeof data?.name === 'string'
+        ? data.name
+        : typeof data?.tool === 'string'
+          ? data.tool
+          : undefined;
+      return {
+        stream: 'tool',
+        phase: typeof data?.phase === 'string' ? data.phase : '',
+        runId: payload?.runId,
+        sessionKey,
+        seq: payload?.seq,
+        toolCallId,
+        toolName,
+        args: data?.args,
+        partialResult: data?.partialResult,
+        result: data?.result,
+        isError: Boolean(data?.isError),
+        raw: data,
+      };
+    }
+
+    if (payload.stream === 'assistant') {
+      const assistantText = extractAssistantEventText(data);
+      if (!assistantText) return null;
+      const isThinking = Boolean(data?.thinking || data?.reasoning)
+        || (typeof data?.phase === 'string' && data.phase === 'thinking');
+      return {
+        stream: 'assistant',
+        phase: isThinking ? 'thinking' : 'text',
+        runId: payload?.runId,
+        sessionKey,
+        seq: payload?.seq,
+        text: !isThinking && typeof data?.text === 'string' ? data.text : assistantText,
+        thinking: isThinking ? assistantText : undefined,
+        raw: data,
+      };
+    }
+
+    if (payload.stream === 'lifecycle') {
+      return {
+        stream: 'lifecycle',
+        phase: typeof data?.phase === 'string' ? data.phase : '',
+        runId: payload?.runId,
+        sessionKey,
+        seq: payload?.seq,
+        raw: data,
+      };
+    }
+  }
+
+  const nestedEvent = typeof payload?.event === 'string' ? payload.event : '';
+
+  if (eventName === 'agent:assistant') {
+    const assistantText = extractAssistantEventText(data);
+    if (!assistantText) return null;
+    const isThinking = Boolean(data?.thinking || data?.reasoning)
+      || (typeof data?.phase === 'string' && data.phase === 'thinking');
+    return {
+      stream: 'assistant',
+      phase: isThinking ? 'thinking' : 'text',
+      runId: payload?.runId,
+      sessionKey,
+      seq: payload?.seq,
+      text: !isThinking && typeof data?.text === 'string' ? data.text : assistantText,
+      thinking: isThinking ? assistantText : undefined,
+      raw: data,
+    };
+  }
+
+  if (eventName === 'agent:lifecycle') {
+    return {
+      stream: 'lifecycle',
+      phase: nestedEvent || (typeof data?.phase === 'string' ? data.phase : ''),
+      runId: payload?.runId,
+      sessionKey,
+      seq: payload?.seq,
+      raw: payload,
+    };
+  }
+
+  if (eventName === 'agent:tool' || nestedEvent === 'tool.call' || nestedEvent === 'tool.output') {
+    const toolCallId = typeof data?.toolCallId === 'string'
+      ? data.toolCallId
+      : typeof data?.id === 'string'
+        ? data.id
+        : '';
+    const toolName = typeof data?.name === 'string'
+      ? data.name
+      : typeof data?.tool === 'string'
+        ? data.tool
+        : undefined;
+    const phase = nestedEvent === 'tool.call'
+      ? 'start'
+      : data?.partialResult != null || data?.delta != null || data?.chunk != null
+        ? 'update'
+        : 'result';
+    return {
+      stream: 'tool',
+      phase,
+      runId: payload?.runId,
+      sessionKey,
+      seq: payload?.seq,
+      toolCallId,
+      toolName,
+      args: data?.args ?? data?.input ?? data?.arguments,
+      partialResult: data?.partialResult ?? data?.delta ?? data?.chunk,
+      result: data?.result ?? data?.output ?? data?.stdout ?? data?.stderr ?? data?.content,
+      isError: Boolean(data?.isError || data?.error),
+      raw: payload,
+    };
+  }
+
+  if (eventName === 'agent' && nestedEvent) {
+    if (nestedEvent.startsWith('agent.')) {
+      return {
+        stream: 'lifecycle',
+        phase: nestedEvent,
+        runId: payload?.runId,
+        sessionKey,
+        seq: payload?.seq,
+        raw: payload,
+      };
+    }
+  }
+
+  return null;
 }
 
 export function registerChatHandlers(deps: {
@@ -137,19 +463,7 @@ export function registerChatHandlers(deps: {
       if (!raw || raw.length === 0) {
         return { success: true, messages: [] };
       }
-      // Transform Gateway message format to desktop Message format
-      const messages = (raw || []).map((msg: any) => {
-        const content = Array.isArray(msg.content)
-          ? msg.content.map((chunk: any) => chunk?.type === 'text' ? (chunk.text || '') : '').join('')
-          : (msg.content || '');
-        return {
-          id: msg.__openclaw?.id || `gw-${msg.timestamp || Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-          role: msg.role || 'assistant',
-          content,
-          timestamp: msg.timestamp || Date.now(),
-          model: msg.model,
-        };
-      });
+      const messages = buildDesktopHistory(raw || []);
       return { success: true, messages };
     } catch (err: any) {
       return { success: false, messages: [], error: err?.message || String(err) };
@@ -275,6 +589,10 @@ ${message}`;
     let fullResponseText = '';
     let chatEventHandler: ((payload: any) => void) | null = null;
     let allEventsHandler: ((evt: any) => void) | null = null;
+    let agentEventHandler: ((payload: any) => void) | null = null;
+    let agentAssistantEventHandler: ((payload: any) => void) | null = null;
+    let agentLifecycleEventHandler: ((payload: any) => void) | null = null;
+    let agentToolEventHandler: ((payload: any) => void) | null = null;
     let ws: GatewayClient | null = null;
 
     try {
@@ -293,6 +611,7 @@ ${message}`;
 
       const seenToolIds = new Set<string>();
       const completedToolIds = new Set<string>();
+      const toolNamesById = new Map<string, string>();
       let lastThinkingText = '';
       let pendingApprovalRequestId = '';
       let pendingApprovalCommand = '';
@@ -305,6 +624,98 @@ ${message}`;
       let sawFinalState = false;
       let finalAssistantText = '';
       let finalAssistantContentTypes: string[] = [];
+
+      const handleNormalizedAgentEvent = (eventName: string, payload: any) => {
+        const normalizedAgentEvent = normalizeAgentGatewayEvent(eventName, payload);
+        if (!normalizedAgentEvent) return;
+
+        const sessionKey = normalizedAgentEvent.sessionKey || '';
+        if (sessionKey && sessionKey !== sid) return;
+
+        if (normalizedAgentEvent.stream === 'tool') {
+          const toolId = normalizedAgentEvent.toolCallId || '';
+          const toolName = normalizedAgentEvent.toolName || (toolId ? toolNamesById.get(toolId) : undefined) || 'tool';
+          if (toolId) toolNamesById.set(toolId, toolName);
+          send('chat:event', {
+            stream: 'tool',
+            phase: normalizedAgentEvent.phase || '',
+            runId: normalizedAgentEvent.runId,
+            sessionKey,
+            seq: normalizedAgentEvent.seq,
+            toolCallId: toolId,
+            toolName,
+            args: normalizedAgentEvent.args,
+            partialResult: normalizedAgentEvent.partialResult,
+            result: normalizedAgentEvent.result,
+            isError: Boolean(normalizedAgentEvent.isError),
+            raw: normalizedAgentEvent.raw,
+          });
+
+          if (!toolId) return;
+          if (normalizedAgentEvent.phase === 'start') {
+            send('chat:status', {
+              type: 'tool_call',
+              tool: toolName,
+              toolStatus: 'running',
+              toolId,
+              detail: extractToolDetail(normalizedAgentEvent.args),
+            });
+            return;
+          }
+
+          if (normalizedAgentEvent.phase === 'update') {
+            send('chat:status', {
+              type: 'tool_update',
+              toolId,
+              toolStatus: 'running',
+              detail: extractToolDetail(normalizedAgentEvent.partialResult),
+            });
+            return;
+          }
+
+          if (normalizedAgentEvent.phase === 'result') {
+            send('chat:status', {
+              type: 'tool_update',
+              toolId,
+              toolStatus: normalizedAgentEvent.isError ? 'failed' : 'completed',
+              detail: extractToolDetail(normalizedAgentEvent.result),
+            });
+            return;
+          }
+        }
+
+        if (normalizedAgentEvent.stream === 'assistant') {
+          const assistantText = normalizedAgentEvent.thinking || normalizedAgentEvent.text || '';
+          if (!assistantText) return;
+          send('chat:event', {
+            stream: 'assistant',
+            phase: normalizedAgentEvent.phase || 'text',
+            runId: normalizedAgentEvent.runId,
+            sessionKey,
+            seq: normalizedAgentEvent.seq,
+            text: normalizedAgentEvent.text,
+            thinking: normalizedAgentEvent.thinking,
+            raw: normalizedAgentEvent.raw,
+          });
+          if (normalizedAgentEvent.phase === 'thinking' && assistantText !== lastThinkingText) {
+            lastThinkingText = assistantText;
+            send('chat:status', { type: 'thinking' });
+            send('chat:thinking', assistantText);
+          }
+          return;
+        }
+
+        if (normalizedAgentEvent.stream === 'lifecycle') {
+          send('chat:event', {
+            stream: 'lifecycle',
+            phase: normalizedAgentEvent.phase || '',
+            runId: normalizedAgentEvent.runId,
+            sessionKey,
+            seq: normalizedAgentEvent.seq,
+            raw: normalizedAgentEvent.raw,
+          });
+        }
+      };
 
       allEventsHandler = (evt: any) => {
         const eventName = evt?.event || 'unknown';
@@ -333,51 +744,18 @@ ${message}`;
             detail: pendingApprovalDetail,
           });
         }
-
-        if (eventName === 'agent') {
-          const sessionKey = typeof payload?.sessionKey === 'string' ? payload.sessionKey : '';
-          if (sessionKey && sessionKey !== sid) return;
-
-          if (payload?.stream === 'tool') {
-            const data = payload?.data || {};
-            const phase = typeof data.phase === 'string' ? data.phase : '';
-            const toolName = typeof data.name === 'string' ? data.name : 'tool';
-            const toolId = typeof data.toolCallId === 'string' ? data.toolCallId : '';
-            if (!toolId) return;
-
-            if (phase === 'start') {
-              send('chat:status', {
-                type: 'tool_call',
-                tool: toolName,
-                toolStatus: 'running',
-                toolId,
-                detail: extractToolDetail(data.args),
-              });
-              return;
-            }
-
-            if (phase === 'update') {
-              send('chat:status', {
-                type: 'tool_update',
-                toolId,
-                toolStatus: 'running',
-                detail: extractToolDetail(data.partialResult),
-              });
-              return;
-            }
-
-            if (phase === 'result') {
-              send('chat:status', {
-                type: 'tool_update',
-                toolId,
-                toolStatus: data.isError ? 'failed' : 'completed',
-                detail: extractToolDetail(data.result),
-              });
-            }
-          }
-        }
       };
       ws.on('gateway-event', allEventsHandler);
+
+      agentEventHandler = (payload: any) => handleNormalizedAgentEvent('agent', payload);
+      agentAssistantEventHandler = (payload: any) => handleNormalizedAgentEvent('agent:assistant', payload);
+      agentLifecycleEventHandler = (payload: any) => handleNormalizedAgentEvent('agent:lifecycle', payload);
+      agentToolEventHandler = (payload: any) => handleNormalizedAgentEvent('agent:tool', payload);
+
+      ws.on('event:agent', agentEventHandler);
+      ws.on('event:agent:assistant', agentAssistantEventHandler);
+      ws.on('event:agent:lifecycle', agentLifecycleEventHandler);
+      ws.on('event:agent:tool', agentToolEventHandler);
 
       chatEventHandler = (payload: any) => {
         if (!payload) return;
@@ -408,6 +786,15 @@ ${message}`;
               if (block.type === 'tool_use') {
                 sawToolBlocks = true;
                 const toolId = block.id || `tc-${Date.now()}`;
+                toolNamesById.set(toolId, block.name || 'tool');
+                send('chat:event', {
+                  stream: 'tool',
+                  phase: 'start',
+                  toolCallId: toolId,
+                  toolName: block.name || 'tool',
+                  args: extractToolArgs(block),
+                  raw: block,
+                });
                 if (!seenToolIds.has(toolId)) {
                   seenToolIds.add(toolId);
                   send('chat:status', { type: 'tool_call', tool: block.name || 'tool', toolStatus: 'running', toolId });
@@ -415,6 +802,16 @@ ${message}`;
               } else if (block.type === 'tool_result') {
                 sawToolBlocks = true;
                 const toolId = block.tool_use_id || '';
+                const toolName = toolNamesById.get(toolId) || block.name || 'tool';
+                send('chat:event', {
+                  stream: 'tool',
+                  phase: 'result',
+                  toolCallId: toolId,
+                  toolName,
+                  result: block.content ?? block.result ?? block,
+                  isError: Boolean(block.is_error || block.isError),
+                  raw: block,
+                });
                 if (toolId && !completedToolIds.has(toolId)) {
                   completedToolIds.add(toolId);
                   send('chat:status', { type: 'tool_update', toolId, toolStatus: 'completed' });
@@ -424,6 +821,12 @@ ${message}`;
                 const text = block.thinking || block.reasoning || block.text || '';
                 if (text && text !== lastThinkingText) {
                   lastThinkingText = text;
+                  send('chat:event', {
+                    stream: 'assistant',
+                    phase: 'thinking',
+                    thinking: text,
+                    raw: block,
+                  });
                   send('chat:status', { type: 'thinking' });
                   send('chat:thinking', text);
                 }
@@ -472,6 +875,10 @@ ${message}`;
 
       ws.removeListener('event:chat', chatEventHandler);
       ws.removeListener('gateway-event', allEventsHandler);
+      if (agentEventHandler) ws.removeListener('event:agent', agentEventHandler);
+      if (agentAssistantEventHandler) ws.removeListener('event:agent:assistant', agentAssistantEventHandler);
+      if (agentLifecycleEventHandler) ws.removeListener('event:agent:lifecycle', agentLifecycleEventHandler);
+      if (agentToolEventHandler) ws.removeListener('event:agent:tool', agentToolEventHandler);
 
       const text = fullResponseText.trim() || finalAssistantText || '';
       send('chat:stream-end', {});
@@ -571,6 +978,10 @@ ${message}`;
       if (ws) {
         if (chatEventHandler) ws.removeListener('event:chat', chatEventHandler);
         if (allEventsHandler) ws.removeListener('gateway-event', allEventsHandler);
+        if (agentEventHandler) ws.removeListener('event:agent', agentEventHandler);
+        if (agentAssistantEventHandler) ws.removeListener('event:agent:assistant', agentAssistantEventHandler);
+        if (agentLifecycleEventHandler) ws.removeListener('event:agent:lifecycle', agentLifecycleEventHandler);
+        if (agentToolEventHandler) ws.removeListener('event:agent:tool', agentToolEventHandler);
       }
       send('chat:stream-end', {});
       const errorMsg = err?.message || String(err);

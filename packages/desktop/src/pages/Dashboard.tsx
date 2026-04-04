@@ -23,6 +23,9 @@ interface ToolCallInfo {
   status: 'running' | 'completed' | 'approved' | 'recalling' | 'saving' | 'cached' | 'awaiting_approval' | 'failed';
   timestamp: number;
   detail?: string;
+  args?: unknown;
+  output?: string;
+  rawResult?: unknown;
   approvalRequestId?: string;
   approvalCommand?: string;
 }
@@ -53,6 +56,20 @@ interface Message {
   toolCalls?: ToolCallInfo[];
   thinking?: string;
   traceEvents?: ChatTraceEvent[];
+  contentBlocks?: Array<Record<string, unknown>>;
+}
+
+function formatStructuredValue(value: unknown): string | undefined {
+  if (value == null) return undefined;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed || undefined;
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
 }
 
 function finalizeToolCalls(toolCalls: ToolCallInfo[], shouldFinalize: boolean): ToolCallInfo[] | undefined {
@@ -507,6 +524,100 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
     if (!window.electronAPI) return;
     const api = window.electronAPI as any;
 
+    api.onChatEvent?.((event: {
+      stream?: string;
+      phase?: string;
+      toolCallId?: string;
+      toolName?: string;
+      args?: unknown;
+      partialResult?: unknown;
+      result?: unknown;
+      isError?: boolean;
+      text?: string;
+      thinking?: string;
+      raw?: unknown;
+    }) => {
+      if (!activeRunRef.current) return;
+      resetChatActivityTimeout();
+
+      if (event.stream === 'assistant') {
+        const thinkingText = formatStructuredValue(event.thinking);
+        if (thinkingText) {
+          const hadThinking = !!thinkingRef.current;
+          thinkingRef.current = thinkingText;
+          setThinkingContent(thinkingText);
+          if (!hadThinking) setLiveThinkingExpanded(true);
+          recordTraceEvent({
+            kind: 'thinking',
+            label: t('chat.trace.thinkingUpdated', 'Thinking updated'),
+            detail: thinkingText,
+            raw: thinkingText,
+            mergeKey: 'live-thinking',
+          });
+        }
+        return;
+      }
+
+      if (event.stream === 'tool' && event.toolCallId && event.toolName) {
+        const outputText = formatStructuredValue(event.result ?? event.partialResult);
+        const nextToolCall: ToolCallInfo = {
+          id: event.toolCallId,
+          name: event.toolName,
+          status: event.phase === 'result'
+            ? (event.isError ? 'failed' : 'completed')
+            : event.phase === 'start'
+              ? 'running'
+              : 'running',
+          timestamp: Date.now(),
+          detail: formatStructuredValue(event.args) || outputText,
+          args: event.args,
+          output: outputText,
+          rawResult: event.result ?? event.partialResult,
+        };
+
+        const existingIdx = toolCallsRef.current.findIndex((item) => item.id === nextToolCall.id);
+        if (existingIdx >= 0) {
+          toolCallsRef.current = toolCallsRef.current.map((item, index) => (
+            index === existingIdx
+              ? {
+                  ...item,
+                  ...nextToolCall,
+                  detail: nextToolCall.detail || item.detail,
+                  args: nextToolCall.args ?? item.args,
+                  output: nextToolCall.output || item.output,
+                  rawResult: nextToolCall.rawResult ?? item.rawResult,
+                }
+              : item
+          ));
+        } else {
+          toolCallsRef.current = [...toolCallsRef.current, nextToolCall];
+        }
+
+        setActiveToolCalls([...toolCallsRef.current]);
+        recordTraceEvent({
+          kind: 'status',
+          label: event.phase === 'result'
+            ? t('chat.trace.toolUpdated', 'Tool updated')
+            : t('chat.trace.toolStarted', 'Tool started'),
+          detail: [event.toolName, formatStructuredValue(event.args), outputText]
+            .filter(Boolean)
+            .join(' — '),
+          mergeKey: `tool-${event.toolCallId}-${event.phase || 'update'}`,
+        });
+        return;
+      }
+
+      if (event.stream === 'lifecycle') {
+        recordTraceEvent({
+          kind: 'status',
+          label: t('chat.trace.agentStatus', 'Agent status'),
+          detail: formatStructuredValue(event.raw) || t('chat.trace.agentStatus', 'Agent status'),
+          raw: formatStructuredValue(event.raw),
+          mergeKey: `lifecycle-${event.phase || 'update'}`,
+        });
+      }
+    });
+
     // Debug: forward main-process gateway events to DevTools console
     api.onChatDebug?.((msg: string) => {
       if (!activeRunRef.current) return;
@@ -561,6 +672,7 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
           kind: 'status',
           label: t('chat.trace.gatewayStatus', 'Gateway status'),
           detail: status.message || t('chat.trace.gatewayStarting', 'Starting Gateway'),
+          mergeKey: 'gateway-status',
         });
       } else if (status.type === 'thinking' || status.type === 'generating' || status.type === 'error') {
         setAgentStatus(status.type as AgentStatus);
@@ -568,6 +680,7 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
           kind: 'status',
           label: t('chat.trace.agentStatus', 'Agent status'),
           detail: status.message || status.type,
+          mergeKey: `agent-status-${status.type}`,
         });
       } else if ((status.type === 'tool_call' || status.type === 'tool_approval') && status.tool) {
         const tc: ToolCallInfo = {
@@ -594,13 +707,15 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
             ? t('chat.trace.toolApproval', 'Tool approval requested')
             : t('chat.trace.toolStarted', 'Tool started'),
           detail: `${status.tool}${status.detail ? ` — ${status.detail}` : ''}`,
+          mergeKey: `tool-${tc.id}-${status.type === 'tool_approval' ? 'approval' : 'start'}`,
         });
       } else if (status.type === 'tool_update' && status.toolId) {
         toolCallsRef.current = toolCallsRef.current.map(tc =>
           tc.id === status.toolId ? {
             ...tc,
             status: (status.toolStatus as ToolCallInfo['status']) || 'completed',
-            detail: status.detail || tc.detail,
+            detail: tc.detail || status.detail,
+            output: tc.output || status.detail,
           } : tc
         );
         setActiveToolCalls([...toolCallsRef.current]);
@@ -609,6 +724,7 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
           kind: 'status',
           label: t('chat.trace.toolUpdated', 'Tool updated'),
           detail: `${updatedTool?.name || status.toolId}${status.detail ? ` — ${status.detail}` : ''}`,
+          mergeKey: `tool-${status.toolId}-result`,
         });
       }
     });
@@ -789,22 +905,47 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
         const result = await api.chatLoadHistory(activeSessionId);
         if (cancelled || !result?.success || !result.messages?.length) return;
 
-        // Only merge if Gateway has messages that localStorage might be missing
         setSessions(prev => prev.map(s => {
           if (s.id !== activeSessionId) return s;
-          const localIds = new Set(s.messages.map((m: any) => m.id));
-          const gwMessages = result.messages
-            .filter((m: any) => !localIds.has(m.id))
-            .map((m: any) => ({
-              id: m.id,
-              role: m.role as 'user' | 'assistant',
-              content: m.content,
-              timestamp: m.timestamp,
-              model: m.model,
-            }));
-          if (gwMessages.length === 0) return s;
-          // Merge and sort by timestamp
-          const merged = [...s.messages, ...gwMessages].sort((a, b) => a.timestamp - b.timestamp);
+          const localById = new Map(s.messages.map((message) => [message.id, message]));
+          let changed = false;
+
+          for (const gatewayMessage of result.messages as Array<any>) {
+            const nextMessage: Message = {
+              id: gatewayMessage.id,
+              role: gatewayMessage.role as 'user' | 'assistant',
+              content: gatewayMessage.content,
+              timestamp: gatewayMessage.timestamp,
+              model: gatewayMessage.model,
+              thinking: gatewayMessage.thinking,
+              toolCalls: gatewayMessage.toolCalls,
+              contentBlocks: gatewayMessage.contentBlocks,
+            };
+            const existingMessage = localById.get(nextMessage.id);
+            if (!existingMessage) {
+              localById.set(nextMessage.id, nextMessage);
+              changed = true;
+              continue;
+            }
+
+            const mergedMessage: Message = {
+              ...existingMessage,
+              ...nextMessage,
+              content: nextMessage.content || existingMessage.content,
+              thinking: nextMessage.thinking || existingMessage.thinking,
+              toolCalls: nextMessage.toolCalls?.length ? nextMessage.toolCalls : existingMessage.toolCalls,
+              contentBlocks: nextMessage.contentBlocks?.length ? nextMessage.contentBlocks : existingMessage.contentBlocks,
+              traceEvents: existingMessage.traceEvents,
+            };
+
+            if (JSON.stringify(existingMessage) !== JSON.stringify(mergedMessage)) {
+              localById.set(nextMessage.id, mergedMessage);
+              changed = true;
+            }
+          }
+
+          if (!changed) return s;
+          const merged = [...localById.values()].sort((a, b) => a.timestamp - b.timestamp);
           return { ...s, messages: merged };
         }));
       } catch {
@@ -1064,6 +1205,22 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
 
   const handleSend = async () => {
     if (!canSendCurrentMessage) return;
+
+    // Detect @agent mention → translate to /subagents spawn
+    const trimmedInput = input.trim();
+    const mentionMatch = trimmedInput.match(/^@(\S+)\s+([\s\S]+)$/);
+    if (mentionMatch) {
+      const candidateId = mentionMatch[1].toLowerCase();
+      const matchedAgent = agents.find((a) => a.id.toLowerCase() === candidateId);
+      if (matchedAgent && matchedAgent.id !== 'main') {
+        const taskDesc = mentionMatch[2].trim();
+        const escaped = taskDesc.replace(/"/g, '\\"');
+        const spawnCmd = `/subagents spawn ${matchedAgent.id} "${escaped}"`;
+        await runChatRequest(spawnCmd, { userText: trimmedInput });
+        return;
+      }
+    }
+
     await runChatRequest(input);
   };
 

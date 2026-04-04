@@ -21,6 +21,7 @@ class FakeGatewayClient extends EventEmitter {
   isConnected = true;
   chatSend = vi.fn(async () => ({ status: 'started' }));
   chatAbort = vi.fn(async () => undefined);
+  chatHistory = vi.fn(async () => []);
 }
 
 function getRegisteredHandlers() {
@@ -410,32 +411,26 @@ describe('registerChatHandlers', () => {
     const ws = new FakeGatewayClient();
     ws.chatSend = vi.fn(async () => {
       setTimeout(() => {
-        ws.emit('gateway-event', {
-          event: 'agent',
-          payload: {
-            runId: 'run-1',
-            sessionKey: 'test-session',
-            stream: 'tool',
-            data: {
-              phase: 'start',
-              name: 'exec',
-              toolCallId: 'tool-1',
-              args: { command: 'ls -la ~/Desktop' },
-            },
+        ws.emit('event:agent', {
+          runId: 'run-1',
+          sessionKey: 'test-session',
+          stream: 'tool',
+          data: {
+            phase: 'start',
+            name: 'exec',
+            toolCallId: 'tool-1',
+            args: { command: 'ls -la ~/Desktop' },
           },
         });
-        ws.emit('gateway-event', {
-          event: 'agent',
-          payload: {
-            runId: 'run-1',
-            sessionKey: 'test-session',
-            stream: 'tool',
-            data: {
-              phase: 'result',
-              name: 'exec',
-              toolCallId: 'tool-1',
-              result: { stdout: '.DS_Store\ntest.txt' },
-            },
+        ws.emit('event:agent', {
+          runId: 'run-1',
+          sessionKey: 'test-session',
+          stream: 'tool',
+          data: {
+            phase: 'result',
+            name: 'exec',
+            toolCallId: 'tool-1',
+            result: { stdout: '.DS_Store\ntest.txt' },
           },
         });
         ws.emit('event:chat', {
@@ -484,6 +479,428 @@ describe('registerChatHandlers', () => {
         toolId: 'tool-1',
         toolStatus: 'completed',
         detail: expect.stringContaining('.DS_Store'),
+      }),
+    );
+  });
+
+  it('preserves structured thinking and tool blocks when loading chat history', async () => {
+    const ws = new FakeGatewayClient();
+    ws.chatHistory = vi.fn(async () => ([
+      {
+        __openclaw: { id: 'gw-msg-1' },
+        role: 'assistant',
+        timestamp: 1700000000000,
+        model: 'openai/gpt-5.4',
+        content: [
+          { type: 'thinking', thinking: 'inspect files first' },
+          { type: 'tool_use', id: 'tool-1', name: 'read', input: { filePath: '/tmp/demo.txt' } },
+          { type: 'tool_result', tool_use_id: 'tool-1', content: [{ type: 'text', text: 'file contents' }] },
+          { type: 'text', text: 'Done.' },
+        ],
+      },
+    ]));
+
+    registerChatHandlers({
+      sendToRenderer: vi.fn(),
+      ensureGatewayRunning: vi.fn(async () => ({ ok: true })),
+      getGatewayWs: vi.fn(async () => ws as any),
+      getConnectedGatewayWs: vi.fn(() => ws as any),
+      callMcpStrict: vi.fn(async () => ({})),
+      getEnhancedPath: vi.fn(() => process.env.PATH || ''),
+      wrapWindowsCommand: vi.fn((command: string) => command),
+      stripAnsi: vi.fn((output: string) => output),
+      spawnChatProcess: spawnMock as any,
+    });
+
+    const handlers = getRegisteredHandlers();
+    const result = await handlers['chat:load-history']({}, 'test-session');
+
+    expect(result).toMatchObject({ success: true });
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0]).toMatchObject({
+      id: 'gw-msg-1',
+      role: 'assistant',
+      content: 'Done.',
+      thinking: 'inspect files first',
+      toolCalls: [
+        expect.objectContaining({
+          id: 'tool-1',
+          name: 'read',
+          status: 'completed',
+          detail: expect.stringContaining('/tmp/demo.txt'),
+          output: expect.stringContaining('file contents'),
+        }),
+      ],
+    });
+    expect(result.messages[0].contentBlocks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'thinking' }),
+      expect.objectContaining({ type: 'tool_use' }),
+      expect.objectContaining({ type: 'tool_result' }),
+      expect.objectContaining({ type: 'text' }),
+    ]));
+  });
+
+  it('merges tool results from later non-assistant history turns back into the originating assistant trace', async () => {
+    const ws = new FakeGatewayClient();
+    ws.chatHistory = vi.fn(async () => ([
+      {
+        __openclaw: { id: 'gw-msg-1' },
+        role: 'assistant',
+        timestamp: 1700000000000,
+        model: 'openai/gpt-5.4',
+        content: [
+          { type: 'thinking', thinking: 'inspect files first' },
+          { type: 'tool_use', id: 'tool-1', name: 'read', input: { filePath: '/tmp/demo.txt' } },
+        ],
+      },
+      {
+        __openclaw: { id: 'gw-msg-2' },
+        role: 'user',
+        timestamp: 1700000001000,
+        content: [
+          { type: 'tool_result', tool_use_id: 'tool-1', content: [{ type: 'text', text: 'file contents' }] },
+        ],
+      },
+      {
+        __openclaw: { id: 'gw-msg-3' },
+        role: 'assistant',
+        timestamp: 1700000002000,
+        model: 'openai/gpt-5.4',
+        content: [{ type: 'text', text: 'Done.' }],
+      },
+    ]));
+
+    registerChatHandlers({
+      sendToRenderer: vi.fn(),
+      ensureGatewayRunning: vi.fn(async () => ({ ok: true })),
+      getGatewayWs: vi.fn(async () => ws as any),
+      getConnectedGatewayWs: vi.fn(() => ws as any),
+      callMcpStrict: vi.fn(async () => ({})),
+      getEnhancedPath: vi.fn(() => process.env.PATH || ''),
+      wrapWindowsCommand: vi.fn((command: string) => command),
+      stripAnsi: vi.fn((output: string) => output),
+      spawnChatProcess: spawnMock as any,
+    });
+
+    const handlers = getRegisteredHandlers();
+    const result = await handlers['chat:load-history']({}, 'test-session');
+
+    expect(result).toMatchObject({ success: true });
+    expect(result.messages).toHaveLength(2);
+    expect(result.messages[0]).toMatchObject({
+      id: 'gw-msg-1',
+      role: 'assistant',
+      thinking: 'inspect files first',
+      toolCalls: [
+        expect.objectContaining({
+          id: 'tool-1',
+          name: 'read',
+          status: 'completed',
+          output: expect.stringContaining('file contents'),
+        }),
+      ],
+    });
+    expect(result.messages[0].contentBlocks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'tool_use' }),
+      expect.objectContaining({ type: 'tool_result' }),
+    ]));
+    expect(result.messages[1]).toMatchObject({
+      id: 'gw-msg-3',
+      role: 'assistant',
+      content: 'Done.',
+    });
+  });
+
+  it('forwards high-fidelity chat events for tool calls and tool results', async () => {
+    const ws = new FakeGatewayClient();
+    ws.chatSend = vi.fn(async () => {
+      setTimeout(() => {
+        ws.emit('event:agent', {
+          runId: 'run-2',
+          sessionKey: 'test-session',
+          seq: 2,
+          stream: 'tool',
+          data: {
+            phase: 'start',
+            name: 'exec',
+            toolCallId: 'tool-2',
+            args: { command: 'pwd' },
+          },
+        });
+        ws.emit('event:agent', {
+          runId: 'run-2',
+          sessionKey: 'test-session',
+          seq: 3,
+          stream: 'tool',
+          data: {
+            phase: 'result',
+            name: 'exec',
+            toolCallId: 'tool-2',
+            result: { stdout: '/tmp/project' },
+          },
+        });
+        ws.emit('event:chat', {
+          sessionKey: 'test-session',
+          state: 'final',
+          message: {
+            role: 'assistant',
+            content: 'done',
+          },
+        });
+      }, 0);
+      return { status: 'started' };
+    });
+
+    const sendToRenderer = vi.fn();
+
+    registerChatHandlers({
+      sendToRenderer,
+      ensureGatewayRunning: vi.fn(async () => ({ ok: true })),
+      getGatewayWs: vi.fn(async () => ws as any),
+      getConnectedGatewayWs: vi.fn(() => ws as any),
+      callMcpStrict: vi.fn(async () => ({})),
+      getEnhancedPath: vi.fn(() => process.env.PATH || ''),
+      wrapWindowsCommand: vi.fn((command: string) => command),
+      stripAnsi: vi.fn((output: string) => output),
+      spawnChatProcess: spawnMock as any,
+    });
+
+    const handlers = getRegisteredHandlers();
+    const result = await handlers['chat:send']({}, 'hello', 'test-session', {});
+
+    expect(result).toMatchObject({ success: true, text: 'done', sessionId: 'test-session' });
+    expect(sendToRenderer).toHaveBeenCalledWith(
+      'chat:event',
+      expect.objectContaining({
+        stream: 'tool',
+        phase: 'start',
+        toolCallId: 'tool-2',
+        toolName: 'exec',
+        args: { command: 'pwd' },
+      }),
+    );
+    expect(sendToRenderer).toHaveBeenCalledWith(
+      'chat:event',
+      expect.objectContaining({
+        stream: 'tool',
+        phase: 'result',
+        toolCallId: 'tool-2',
+        toolName: 'exec',
+        result: { stdout: '/tmp/project' },
+      }),
+    );
+  });
+
+  it('forwards structured tool and thinking blocks from event:chat deltas as high-fidelity chat events', async () => {
+    const ws = new FakeGatewayClient();
+    ws.chatSend = vi.fn(async () => {
+      setTimeout(() => {
+        ws.emit('event:chat', {
+          sessionKey: 'test-session',
+          state: 'delta',
+          message: {
+            role: 'assistant',
+            content: [
+              { type: 'thinking', thinking: 'inspect files first' },
+              { type: 'tool_use', id: 'tool-3', name: 'read_file', input: { filePath: '/tmp/demo.txt' } },
+              { type: 'tool_result', tool_use_id: 'tool-3', content: [{ type: 'text', text: 'hello world' }] },
+              { type: 'text', text: 'done' },
+            ],
+          },
+        });
+        ws.emit('event:chat', {
+          sessionKey: 'test-session',
+          state: 'final',
+          message: {
+            role: 'assistant',
+            content: 'done',
+          },
+        });
+      }, 0);
+      return { status: 'started' };
+    });
+
+    const sendToRenderer = vi.fn();
+
+    registerChatHandlers({
+      sendToRenderer,
+      ensureGatewayRunning: vi.fn(async () => ({ ok: true })),
+      getGatewayWs: vi.fn(async () => ws as any),
+      getConnectedGatewayWs: vi.fn(() => ws as any),
+      callMcpStrict: vi.fn(async () => ({})),
+      getEnhancedPath: vi.fn(() => process.env.PATH || ''),
+      wrapWindowsCommand: vi.fn((command: string) => command),
+      stripAnsi: vi.fn((output: string) => output),
+      spawnChatProcess: spawnMock as any,
+    });
+
+    const handlers = getRegisteredHandlers();
+    const result = await handlers['chat:send']({}, 'hello', 'test-session', {});
+
+    expect(result).toMatchObject({ success: true, text: 'done', sessionId: 'test-session' });
+    expect(sendToRenderer).toHaveBeenCalledWith('chat:thinking', 'inspect files first');
+    expect(sendToRenderer).toHaveBeenCalledWith(
+      'chat:event',
+      expect.objectContaining({
+        stream: 'assistant',
+        phase: 'thinking',
+        thinking: 'inspect files first',
+      }),
+    );
+    expect(sendToRenderer).toHaveBeenCalledWith(
+      'chat:event',
+      expect.objectContaining({
+        stream: 'tool',
+        phase: 'start',
+        toolCallId: 'tool-3',
+        toolName: 'read_file',
+        args: { filePath: '/tmp/demo.txt' },
+      }),
+    );
+    expect(sendToRenderer).toHaveBeenCalledWith(
+      'chat:event',
+      expect.objectContaining({
+        stream: 'tool',
+        phase: 'result',
+        toolCallId: 'tool-3',
+        result: expect.anything(),
+      }),
+    );
+  });
+
+  it('normalizes real event:agent payloads with tool.call and tool.output into chat events', async () => {
+    const ws = new FakeGatewayClient();
+    ws.chatSend = vi.fn(async () => {
+      setTimeout(() => {
+        ws.emit('event:agent', {
+          event: 'tool.call',
+          runId: 'run-3',
+          sessionKey: 'test-session',
+          data: {
+            toolCallId: 'tool-4',
+            name: 'exec',
+            args: { command: 'pwd' },
+          },
+        });
+        ws.emit('event:agent', {
+          event: 'tool.output',
+          runId: 'run-3',
+          sessionKey: 'test-session',
+          data: {
+            toolCallId: 'tool-4',
+            name: 'exec',
+            result: { stdout: '/tmp/project' },
+          },
+        });
+        ws.emit('event:chat', {
+          sessionKey: 'test-session',
+          state: 'final',
+          message: {
+            role: 'assistant',
+            content: 'done',
+          },
+        });
+      }, 0);
+      return { status: 'started' };
+    });
+
+    const sendToRenderer = vi.fn();
+
+    registerChatHandlers({
+      sendToRenderer,
+      ensureGatewayRunning: vi.fn(async () => ({ ok: true })),
+      getGatewayWs: vi.fn(async () => ws as any),
+      getConnectedGatewayWs: vi.fn(() => ws as any),
+      callMcpStrict: vi.fn(async () => ({})),
+      getEnhancedPath: vi.fn(() => process.env.PATH || ''),
+      wrapWindowsCommand: vi.fn((command: string) => command),
+      stripAnsi: vi.fn((output: string) => output),
+      spawnChatProcess: spawnMock as any,
+    });
+
+    const handlers = getRegisteredHandlers();
+    const result = await handlers['chat:send']({}, 'hello', 'test-session', {});
+
+    expect(result).toMatchObject({ success: true, text: 'done', sessionId: 'test-session' });
+    expect(sendToRenderer).toHaveBeenCalledWith(
+      'chat:event',
+      expect.objectContaining({
+        stream: 'tool',
+        phase: 'start',
+        toolCallId: 'tool-4',
+        toolName: 'exec',
+        args: { command: 'pwd' },
+      }),
+    );
+    expect(sendToRenderer).toHaveBeenCalledWith(
+      'chat:event',
+      expect.objectContaining({
+        stream: 'tool',
+        phase: 'result',
+        toolCallId: 'tool-4',
+        toolName: 'exec',
+        result: { stdout: '/tmp/project' },
+      }),
+    );
+    expect(sendToRenderer).toHaveBeenCalledWith(
+      'chat:status',
+      expect.objectContaining({
+        type: 'tool_update',
+        toolId: 'tool-4',
+        toolStatus: 'completed',
+        detail: expect.stringContaining('/tmp/project'),
+      }),
+    );
+  });
+
+  it('normalizes agent:assistant reasoning payloads into visible thinking events', async () => {
+    const ws = new FakeGatewayClient();
+    ws.chatSend = vi.fn(async () => {
+      setTimeout(() => {
+        ws.emit('event:agent:assistant', {
+          runId: 'run-4',
+          sessionKey: 'test-session',
+          data: {
+            reasoning: 'inspect project structure before answering',
+          },
+        });
+        ws.emit('event:chat', {
+          sessionKey: 'test-session',
+          state: 'final',
+          message: {
+            role: 'assistant',
+            content: 'done',
+          },
+        });
+      }, 0);
+      return { status: 'started' };
+    });
+
+    const sendToRenderer = vi.fn();
+
+    registerChatHandlers({
+      sendToRenderer,
+      ensureGatewayRunning: vi.fn(async () => ({ ok: true })),
+      getGatewayWs: vi.fn(async () => ws as any),
+      getConnectedGatewayWs: vi.fn(() => ws as any),
+      callMcpStrict: vi.fn(async () => ({})),
+      getEnhancedPath: vi.fn(() => process.env.PATH || ''),
+      wrapWindowsCommand: vi.fn((command: string) => command),
+      stripAnsi: vi.fn((output: string) => output),
+      spawnChatProcess: spawnMock as any,
+    });
+
+    const handlers = getRegisteredHandlers();
+    const result = await handlers['chat:send']({}, 'hello', 'test-session', {});
+
+    expect(result).toMatchObject({ success: true, text: 'done', sessionId: 'test-session' });
+    expect(sendToRenderer).toHaveBeenCalledWith('chat:thinking', 'inspect project structure before answering');
+    expect(sendToRenderer).toHaveBeenCalledWith(
+      'chat:event',
+      expect.objectContaining({
+        stream: 'assistant',
+        phase: 'thinking',
+        thinking: 'inspect project structure before answering',
       }),
     );
   });

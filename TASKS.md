@@ -259,6 +259,50 @@ OpenClaw 的 chat 质量依赖 `~/.openclaw/workspace/` 下的 MD 文档：
 - [x] **daemon 崩溃自动重启**：`daemon-watchdog.ts` 每 60s 健康检查 + 自动 spawn 重拉（2026-04-01）
 - [x] **better-sqlite3 编译失败降级**：Memory 页检测 `daemonHealth.search_mode !== 'hybrid'` 时显示 amber 提示条 "Semantic search unavailable"，引导重启 daemon（2026-04-03）
 
+## P3.5 — 任务中心：工作流 + 看板系统（F-016）
+
+> **详细 Spec**: `docs/prd/WORKFLOW_KANBAN_SPEC.md`
+> **核心原则**: 100% 基于 OpenClaw 原生能力（Sub-Agent + Lobster + Gateway WS），不重复造轮子
+> **i18n**: 所有 UI 文案 en/zh/ja/ko，通过 `useI18n()` 的 `t()`
+
+### Phase 0：基础设施
+- [ ] `register-workflow-handlers.ts` IPC handler 骨架（task:create/list/cancel/retry/detail, workflow:list/run/status/approve/save, workflow:check-lobster/install-lobster/config）
+- [ ] `task-store.ts` 数据模型 + localStorage 持久化（Task, Workflow, WorkflowRun 类型）
+- [ ] `GatewayClient` 扩展 `event:agent` 监听（subagent.spawned, agent.step_started, agent.finished, tool.call）
+- [ ] i18n 新增 `task.*` 和 `workflow.*` 键（en/zh/ja/ko）
+- [ ] 侧边栏新增 Task Center 入口（🎯 图标，nav.taskCenter 键）
+- [ ] App.tsx 新增 TaskCenter 页面路由
+- [ ] `~/.openclaw/awarenessclaw/` 目录初始化（tasks.json + workflows/）
+
+### Phase 1：看板
+- [ ] `TaskCenter.tsx` 页面骨架（Board / Workflows / History 三个 tab）
+- [ ] `KanbanBoard.tsx` 6 列拖拽看板（HTML5 DnD API，零新依赖）
+- [ ] `KanbanCard.tsx` 卡片组件（agent emoji + 标题 + 状态 badge + 耗时 + 优先级色条）
+- [ ] `TaskCreateModal.tsx` 创建任务弹窗（描述 + agent 选择 + 优先级 + model + timeout）
+- [ ] `task:create` IPC → 通过 Gateway chat.send 发送 `/subagents spawn <agentId> "<task>"`
+- [ ] `task:status-update` IPC → Gateway event:agent 推送实时状态变更到前端
+- [ ] `TaskDetailPanel.tsx` 侧栏查看任务结果 + sub-agent 对话历史
+- [ ] 拖拽规则：Backlog→Queued 触发 spawn，Failed→Queued 触发重试
+- [ ] 首次使用检查：maxSpawnDepth < 2 → 引导卡片一键配置
+
+### Phase 2：工作流
+- [ ] 内置 3 个 YAML 工作流模板文件（Code Review / Feature Dev / Bug Fix）
+- [ ] `WorkflowList.tsx` 模板列表（内置 + 自定义）
+- [ ] `WorkflowRunner.tsx` 执行视图（线性步骤进度条 + 当前步骤高亮 + 步骤结果展开）
+- [ ] `workflow:run` IPC → `openclaw lobster run <yaml> --args-json '{...}'`
+- [ ] `workflow:approve` IPC → resume token 审批（Approve / Reject 按钮）
+- [ ] `workflow:check-lobster` + `workflow:install-lobster` IPC → Lobster 安装检查 + 引导
+- [ ] Lobster 未安装时工作流 tab 显示友好引导（不报错）
+
+### Phase 3：增强
+- [ ] History tab（已完成任务时间线，按日期分组）
+- [ ] `WorkflowEditor.tsx` YAML 编辑器（textarea + 基础语法高亮 or Monaco Editor lazy-load）
+- [ ] 自定义工作流保存/删除（`~/.openclaw/awarenessclaw/workflows/`）
+- [ ] 首次使用引导卡片（检查 maxSpawnDepth + Lobster + Agent 数量，友好提示）
+- [ ] vitest 测试覆盖（task-store + KanbanBoard + WorkflowRunner + IPC handlers）
+
+---
+
 ## P4 — 长尾功能
 
 - [x] 更多通道（Teams, Twitch, Zalo）— 已通过动态通道注册表（Unified Channel Registry）自动覆盖所有 OpenClaw 支持的通道（2026-04-01）

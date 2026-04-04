@@ -57,6 +57,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onChatDebug: (callback: (msg: string) => void) => {
     ipcRenderer.on('chat:debug', (_e: any, msg: string) => callback(msg));
   },
+  onChatEvent: (callback: (event: any) => void) => {
+    ipcRenderer.on('chat:event', (_e: any, event: any) => callback(event));
+  },
 
   // Channel management
   channelSave: (channelId: string, config: Record<string, string>) => ipcRenderer.invoke('channel:save', channelId, config),
@@ -182,6 +185,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   memoryGetDailySummary: () => ipcRenderer.invoke('memory:get-daily-summary'),
   memoryGetEvents: (opts?: { limit?: number; offset?: number; search?: string }) => ipcRenderer.invoke('memory:get-events', opts || {}),
   memoryCheckHealth: () => ipcRenderer.invoke('memory:check-health'),
+  memoryGetCardsRest: (opts?: { category?: string; limit?: number }) => ipcRenderer.invoke('memory:get-cards-rest', opts),
+  memoryGetCardEvolution: (cardId: string) => ipcRenderer.invoke('memory:get-card-evolution', cardId),
+  memoryEnableSlotReplacement: () => ipcRenderer.invoke('memory:enable-slot-replacement'),
+  memoryGetSlotStatus: () => ipcRenderer.invoke('memory:get-slot-status'),
 
   // Cloud Memory Auth
   cloudAuthStart: () => ipcRenderer.invoke('cloud:auth-start'),
@@ -210,4 +217,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Daemon watchdog
   daemonMarkConnected: () => ipcRenderer.invoke('daemon:mark-connected'),
+
+  // Task Center (workflow + kanban)
+  workflowConfig: () => ipcRenderer.invoke('workflow:config'),
+  workflowEnableCollaboration: () => ipcRenderer.invoke('workflow:enable-collaboration'),
+  workflowCheckLobster: () => ipcRenderer.invoke('workflow:check-lobster'),
+  workflowInstallLobster: () => ipcRenderer.invoke('workflow:install-lobster'),
+  taskCreate: (params: { title: string; agentId: string; model?: string; thinking?: string; timeoutSeconds?: number; sessionKey?: string }) => ipcRenderer.invoke('task:create', params),
+  taskCancel: (sessionKey: string) => ipcRenderer.invoke('task:cancel', sessionKey),
+  taskDetail: (sessionKey: string) => ipcRenderer.invoke('task:detail', sessionKey),
+  workflowList: () => ipcRenderer.invoke('workflow:list'),
+  workflowRun: (yamlPath: string, args: Record<string, string>) => ipcRenderer.invoke('workflow:run', yamlPath, args),
+  workflowApprove: (resumeToken: string, approve: boolean) => ipcRenderer.invoke('workflow:approve', resumeToken, approve),
+  workflowSave: (fileName: string, content: string) => ipcRenderer.invoke('workflow:save', fileName, content),
+  workflowDelete: (yamlPath: string) => ipcRenderer.invoke('workflow:delete', yamlPath),
+  onTaskStatusUpdate: (callback: (data: { event: string; runId: string; agentId: string; status: string; result: string; sessionKey: string }) => void) => {
+    const listener = (_e: any, data: any) => callback(data);
+    ipcRenderer.on('task:status-update', listener);
+    return () => ipcRenderer.removeListener('task:status-update', listener);
+  },
 });

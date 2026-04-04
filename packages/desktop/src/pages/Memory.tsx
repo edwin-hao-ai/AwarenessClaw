@@ -3,139 +3,24 @@ import { Search, RefreshCw, Loader2, AlertCircle, Zap, HardDrive, Cloud, Chevron
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useI18n } from '../lib/i18n';
-import { parseMemoryContextResponse, type MemoryKnowledgeCard } from '../lib/memory-context';
+import { parseMemoryContextResponse } from '../lib/memory-context';
 import { useExternalNavigator } from '../lib/useExternalNavigator';
 import { useMemorySettings } from '../hooks/useMemorySettings';
 import { MemorySettingsPanel } from '../components/memory/MemorySettingsPanel';
 import { SettingsCloudAuthModal } from '../components/settings/SettingsCloudAuthModal';
-
-interface PerceptionSignal {
-  type: string;
-  message: string;
-}
-
-type KnowledgeCard = MemoryKnowledgeCard;
-
-/** A raw memory event from the daemon REST API */
-interface MemoryEvent {
-  id: string;
-  type?: string;
-  title?: string;
-  source?: string;
-  session_id?: string;
-  agent_role?: string;
-  tags?: string;
-  status?: string;
-  created_at?: string;
-  updated_at?: string;
-  fts_content?: string;
-}
-
-interface DaemonHealth {
-  status: string;
-  version?: string;
-  search_mode?: string;
-  uptime?: number;
-  stats?: {
-    totalMemories: number;
-    totalKnowledge: number;
-    totalTasks: number;
-    totalSessions: number;
-  };
-  error?: string;
-}
-
-// Known categories with curated icons/colors. Unknown categories get a generic fallback.
-const CATEGORY_CONFIG: Record<string, { emoji: string; labelKey: string; color: string }> = {
-  decision: { emoji: '💡', labelKey: 'memory.category.decision', color: 'text-amber-400' },
-  problem_solution: { emoji: '🔧', labelKey: 'memory.category.problem_solution', color: 'text-emerald-400' },
-  workflow: { emoji: '📋', labelKey: 'memory.category.workflow', color: 'text-blue-400' },
-  pitfall: { emoji: '⚠️', labelKey: 'memory.category.pitfall', color: 'text-red-400' },
-  insight: { emoji: '✨', labelKey: 'memory.category.insight', color: 'text-purple-400' },
-  key_point: { emoji: '📌', labelKey: 'memory.category.key_point', color: 'text-cyan-400' },
-  personal_preference: { emoji: '👤', labelKey: 'memory.category.personal_preference', color: 'text-pink-400' },
-  important_detail: { emoji: '📎', labelKey: 'memory.category.important_detail', color: 'text-orange-400' },
-  skill: { emoji: '🛠️', labelKey: 'memory.category.skill', color: 'text-indigo-400' },
-};
-
-const SOURCE_CONFIG: Record<string, { emoji: string; label: string }> = {
-  'claude-code': { emoji: '🤖', label: 'Claude Code' },
-  'openclaw': { emoji: '🦞', label: 'OpenClaw' },
-  'desktop': { emoji: '🖥️', label: 'Desktop' },
-  'wechat': { emoji: '💬', label: 'WeChat' },
-  'whatsapp': { emoji: '📱', label: 'WhatsApp' },
-  'telegram': { emoji: '✈️', label: 'Telegram' },
-  'manual': { emoji: '✍️', label: 'Manual' },
-};
-
-function getCategoryDisplay(category: string): { emoji: string; label: string; color: string } {
-  const known = CATEGORY_CONFIG[category];
-  if (known) return { emoji: known.emoji, label: known.labelKey, color: known.color };
-  const humanized = category.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-  return { emoji: '🏷️', label: humanized, color: 'text-slate-400' };
-}
-
-function getSourceDisplay(source: string | undefined): { emoji: string; label: string } {
-  if (!source) return { emoji: '📝', label: 'Unknown' };
-  return SOURCE_CONFIG[source] || { emoji: '📝', label: source };
-}
-
-/** Parse code_change fts_content into structured parts */
-function parseCodeChangeContent(content: string): { filepath: string; shortPath: string; diffLines: string[] } {
-  const lines = content.split('\n');
-  let filepath = '';
-  const diffLines: string[] = [];
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (i === 0 && line.startsWith('File changed:')) {
-      filepath = line.replace('File changed:', '').trim();
-    } else if (line.trim()) {
-      diffLines.push(line);
-    }
-  }
-
-  // If no "File changed:" prefix, treat the whole content as diff
-  if (!filepath && lines.length > 0) {
-    filepath = lines[0].trim();
-  }
-
-  // shortPath: last 2 path segments
-  const parts = filepath.replace(/\\/g, '/').split('/').filter(Boolean);
-  const shortPath = parts.length >= 2 ? parts.slice(-2).join('/') : filepath;
-
-  return { filepath, shortPath, diffLines };
-}
-
-function formatRelativeTime(dateStr: string): string {
-  const date = new Date(dateStr);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  if (diffMins < 1) return 'just now';
-  if (diffMins < 60) return `${diffMins}m ago`;
-  const diffHours = Math.floor(diffMins / 60);
-  if (diffHours < 24) return `${diffHours}h ago`;
-  const diffDays = Math.floor(diffHours / 24);
-  if (diffDays < 7) return `${diffDays}d ago`;
-  return date.toLocaleDateString();
-}
-
-/** Parse MCP JSON-RPC response into knowledge cards */
-function parseMcpResponse(result: any): { cards: KnowledgeCard[]; errorKey?: string } {
-  if (result?.error) return { cards: [], errorKey: 'memory.serviceDisconnected' };
-  const text = result?.result?.content?.[0]?.text;
-  if (!text) return { cards: [], errorKey: 'memory.emptyResponse' };
-  try {
-    const parsed = JSON.parse(text);
-    if (parsed.error) return { cards: [], errorKey: 'memory.serviceDisconnected' };
-    const items = parsed.knowledge_cards || parsed.items || parsed.cards || [];
-    if (Array.isArray(items)) return { cards: items };
-    return { cards: [] };
-  } catch {
-    return { cards: [], errorKey: 'memory.parseFailed' };
-  }
-}
+import {
+  type PerceptionSignal,
+  type KnowledgeCard,
+  type MemoryEvent,
+  type DaemonHealth,
+  type TabView,
+  getCategoryDisplay,
+  getSourceDisplay,
+  parseCodeChangeContent,
+  formatRelativeTime,
+  parseMcpResponse,
+  memoryMarkdownComponents,
+} from '../components/memory/memory-helpers.js';
 
 function MemoryLayerInfo({ className = '' }: { className?: string }) {
   const { t } = useI18n();
@@ -172,27 +57,6 @@ function MemoryLayerInfo({ className = '' }: { className?: string }) {
 }
 
 const KnowledgeGraph = lazy(() => import('../components/memory/KnowledgeGraph'));
-
-/** Shared markdown components for memory content rendering */
-const memoryMarkdownComponents = {
-  p({ children }: any) { return <p className="mb-1.5 last:mb-0 leading-relaxed">{children}</p>; },
-  strong({ children }: any) { return <strong className="text-slate-200 font-semibold">{children}</strong>; },
-  em({ children }: any) { return <em className="text-slate-300">{children}</em>; },
-  code({ children, className }: any) {
-    const isInline = !className;
-    if (isInline) return <code className="px-1 py-0.5 bg-slate-700/80 rounded text-brand-300 text-xs">{children}</code>;
-    return <pre className="bg-slate-800/80 rounded p-2 my-1.5 overflow-x-auto text-xs"><code>{children}</code></pre>;
-  },
-  h1({ children }: any) { return <h3 className="text-sm font-bold text-slate-300 mb-1 mt-2">{children}</h3>; },
-  h2({ children }: any) { return <h4 className="text-sm font-bold text-slate-300 mb-1 mt-1.5">{children}</h4>; },
-  h3({ children }: any) { return <h5 className="text-sm font-semibold text-slate-300 mb-1 mt-1">{children}</h5>; },
-  ul({ children }: any) { return <ul className="list-disc list-inside mb-1.5 space-y-0.5 pl-1">{children}</ul>; },
-  ol({ children }: any) { return <ol className="list-decimal list-inside mb-1.5 space-y-0.5 pl-1">{children}</ol>; },
-  blockquote({ children }: any) { return <blockquote className="border-l-2 border-brand-500/40 pl-2 text-slate-500 italic my-1">{children}</blockquote>; },
-  a({ children, href }: any) { return <a href={href} className="text-brand-400 hover:text-brand-300 underline" target="_blank" rel="noopener noreferrer">{children}</a>; },
-};
-
-type TabView = 'timeline' | 'knowledge' | 'graph' | 'settings';
 
 /** Highlight matching search terms in text */
 function HighlightText({ text, query }: { text: string; query: string }) {
@@ -252,6 +116,10 @@ export default function Memory() {
   // Source filter: 'chat' = OpenClaw conversations only (default), 'dev' = Claude Code, 'all' = everything
   const [sourceView, setSourceView] = useState<'chat' | 'dev' | 'all'>('chat');
   const graphContainerRef = useRef<HTMLDivElement>(null);
+  // Card detail + evolution chain
+  const [expandedCard, setExpandedCard] = useState<string | null>(null);
+  const [cardEvolution, setCardEvolution] = useState<any[] | null>(null);
+  const [evolutionLoading, setEvolutionLoading] = useState(false);
   const [graphSize, setGraphSize] = useState({ width: 600, height: 400 });
 
   // Measure graph container for responsive sizing
@@ -294,6 +162,31 @@ export default function Memory() {
       return false;
     }
   }, [api]);
+
+  // Load evolution chain for a card
+  const loadEvolution = useCallback(async (cardId: string) => {
+    if (!api) return;
+    setEvolutionLoading(true);
+    try {
+      const result = await api.memoryGetCardEvolution(cardId);
+      setCardEvolution(Array.isArray(result?.chain) ? result.chain : Array.isArray(result) ? result : []);
+    } catch {
+      setCardEvolution([]);
+    } finally {
+      setEvolutionLoading(false);
+    }
+  }, [api]);
+
+  // Toggle card expansion — load evolution on first expand
+  const toggleCardExpand = useCallback((cardId: string) => {
+    if (expandedCard === cardId) {
+      setExpandedCard(null);
+      setCardEvolution(null);
+    } else {
+      setExpandedCard(cardId);
+      loadEvolution(cardId);
+    }
+  }, [expandedCard, loadEvolution]);
 
   const loadCards = useCallback(async () => {
     if (!api) return;
@@ -429,6 +322,21 @@ export default function Memory() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceView, daemonConnected]);
 
+  // Auto-refresh when window regains focus (3.3)
+  useEffect(() => {
+    const onFocus = () => {
+      if (daemonConnected) {
+        checkHealth();
+        loadEvents(0, false, sourceView);
+        loadCards();
+        loadPerception();
+      }
+    };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [daemonConnected, sourceView]);
+
   const handleRefresh = async () => {
     setLoading(true);
     setError(null);
@@ -493,26 +401,43 @@ export default function Memory() {
           }
           setSearchResults([]); // marker that search is active
         } else {
-          // Search knowledge cards via MCP semantic search
+          // Search knowledge cards via MCP semantic recall (structured JSON response)
           const result = await api.memorySearch(searchQuery);
-          const text = result?.result?.content?.[0]?.text || '';
-          if (text) {
-            const lines = text.split('\n').filter((l: string) => l.trim());
-            const searchCards = lines
-              .filter((l: string) => l.match(/^\d+\.\s/))
-              .map((l: string, i: number) => {
-                const match = l.match(/^\d+\.\s\[(\w+)\]\s(.+)/);
-                return {
-                  id: `search-${i}`,
-                  category: match?.[1] || 'key_point',
-                  title: match?.[2]?.split('\n')[0] || l.replace(/^\d+\.\s/, ''),
-                  summary: l,
-                };
-              });
-            setSearchResults(searchCards.length > 0 ? searchCards : []);
-          } else {
-            setSearchResults([]);
+          const content = result?.result?.content;
+          const textBlock = content?.[0]?.text || '';
+          const metaBlock = content?.[1]?.text || '';
+
+          // Parse structured IDs and metadata from the JSON block
+          let parsedMeta: any = {};
+          try { parsedMeta = JSON.parse(metaBlock); } catch { /* ignore */ }
+          const ids: string[] = parsedMeta._ids || [];
+
+          // Parse readable text to extract titles and summaries (line-based)
+          const searchCards: KnowledgeCard[] = [];
+          const entries = textBlock.split(/\n\n/).filter((block: string) => /^\d+\.\s/.test(block.trim()));
+
+          for (let i = 0; i < entries.length; i++) {
+            const block = entries[i].trim();
+            // Extract: "1. [type] title (score, time, tokens)\n   summary"
+            const headerMatch = block.match(/^\d+\.\s+\[([^\]]*)\]\s+(.*?)(?:\s+\(([^)]+)\))?\s*$/m);
+            const summaryLines = block.split('\n').slice(1).map((l: string) => l.trim()).filter(Boolean);
+            const title = headerMatch?.[2] || block.split('\n')[0].replace(/^\d+\.\s*/, '');
+            const category = headerMatch?.[1] || 'key_point';
+            const meta = headerMatch?.[3] || '';
+
+            searchCards.push({
+              id: ids[i] || `search-${i}`,
+              category,
+              title,
+              summary: summaryLines.join(' ') || title,
+              status: 'active',
+              confidence: meta.includes('%') ? parseInt(meta) / 100 : undefined,
+              created_at: undefined,
+              tags: '',
+            } as KnowledgeCard);
           }
+
+          setSearchResults(searchCards.length > 0 ? searchCards : []);
         }
       } catch {
         setSearchResults([]);
@@ -1014,13 +939,18 @@ export default function Memory() {
 
                 {displayCards.map((card: any, i: number) => {
                   const catDisplay = getCategoryDisplay(card.category);
+                  const isExpanded = expandedCard === card.id;
+                  const relatedSignal = signals.find(s => s.card_id === card.id || (s.card_title && s.card_title === card.title));
                   return (
                     <div
                       key={card.id || i}
-                      className={`p-4 rounded-xl border transition-colors ${
+                      onClick={() => card.id && toggleCardExpand(card.id)}
+                      className={`p-4 rounded-xl border transition-colors cursor-pointer ${
                         card.status === 'superseded'
                           ? 'bg-slate-800/30 border-slate-700/30 opacity-60'
-                          : 'bg-slate-800/50 border-slate-700/50 hover:border-slate-600'
+                          : isExpanded
+                            ? 'bg-slate-800/70 border-brand-500/50 ring-1 ring-brand-500/20'
+                            : 'bg-slate-800/50 border-slate-700/50 hover:border-slate-600'
                       }`}
                     >
                       <div className="flex items-center gap-2 mb-2">
@@ -1032,11 +962,20 @@ export default function Memory() {
                             <span className="text-xs text-slate-500">{new Date(card.created_at).toLocaleDateString()}</span>
                           </>
                         )}
+                        {card.confidence && (
+                          <span className="text-xs text-slate-500">{Math.round(card.confidence * 100)}%</span>
+                        )}
                         {card.status === 'superseded' && (
                           <span className="text-xs px-1.5 py-0.5 bg-amber-600/20 rounded text-amber-500 border border-amber-600/30">
-                            ⚠️ {t('memory.superseded', 'Superseded')}
+                            {t('memory.superseded', 'Superseded')}
                           </span>
                         )}
+                        {relatedSignal && (
+                          <span className="text-xs px-1.5 py-0.5 bg-purple-600/20 rounded text-purple-400 border border-purple-600/30">
+                            {relatedSignal.type === 'staleness' ? '⏳' : relatedSignal.type === 'contradiction' ? '⚡' : '🔔'} {relatedSignal.type}
+                          </span>
+                        )}
+                        <span className="ml-auto text-xs text-slate-600">{isExpanded ? '▼' : '▶'}</span>
                       </div>
                       <h4 className={`font-medium text-sm mb-1 ${card.status === 'superseded' ? 'line-through text-slate-500' : ''}`}>
                         <HighlightText text={card.title} query={searchQuery} />
@@ -1050,6 +989,47 @@ export default function Memory() {
                           </ReactMarkdown>
                         )}
                       </div>
+
+                      {/* Expanded detail: tags + evolution chain */}
+                      {isExpanded && (
+                        <div className="mt-3 pt-3 border-t border-slate-700/50 space-y-2" onClick={(e) => e.stopPropagation()}>
+                          {/* Tags */}
+                          {card.tags && (() => {
+                            const tags = typeof card.tags === 'string' ? (() => { try { return JSON.parse(card.tags); } catch { return []; } })() : card.tags;
+                            return Array.isArray(tags) && tags.length > 0 ? (
+                              <div className="flex flex-wrap gap-1">
+                                {tags.map((tag: string, j: number) => (
+                                  <span key={j} className="text-xs px-1.5 py-0.5 bg-slate-700/60 rounded text-slate-400">{tag}</span>
+                                ))}
+                              </div>
+                            ) : null;
+                          })()}
+
+                          {/* Evolution chain */}
+                          {evolutionLoading ? (
+                            <div className="flex items-center gap-2 text-xs text-slate-500">
+                              <Loader2 size={12} className="animate-spin" />
+                              {t('memory.loadingEvolution', 'Loading history...')}
+                            </div>
+                          ) : cardEvolution && cardEvolution.length > 0 ? (
+                            <div className="space-y-1.5">
+                              <p className="text-xs font-medium text-slate-400">{t('memory.evolutionChain', 'Version History')}</p>
+                              {cardEvolution.map((ver: any, j: number) => (
+                                <div key={j} className={`text-xs p-2 rounded ${ver.id === card.id ? 'bg-brand-500/10 border border-brand-500/20' : 'bg-slate-800/50'}`}>
+                                  <span className="text-slate-500">{ver.created_at ? new Date(ver.created_at).toLocaleDateString() : ''}</span>
+                                  {' '}
+                                  <span className={ver.status === 'superseded' ? 'line-through text-slate-600' : 'text-slate-300'}>{ver.title || '(no title)'}</span>
+                                  {ver.evolution_type && ver.evolution_type !== 'initial' && (
+                                    <span className="ml-1 text-amber-400">({ver.evolution_type})</span>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          ) : cardEvolution !== null ? (
+                            <p className="text-xs text-slate-600">{t('memory.noEvolution', 'No version history')}</p>
+                          ) : null}
+                        </div>
+                      )}
                     </div>
                   );
                 })}

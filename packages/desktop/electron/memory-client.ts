@@ -107,6 +107,46 @@ export function fetchMemoryEvents(opts: MemoryEventQueryOptions): Promise<any> {
   });
 }
 
+export function fetchKnowledgeCards(opts: { category?: string; limit?: number } = {}): Promise<any> {
+  const params = new URLSearchParams();
+  if (opts.category) params.set('category', opts.category);
+  if (opts.limit) params.set('limit', String(opts.limit));
+  const qs = params.toString();
+  const endpoint = `http://127.0.0.1:37800/api/v1/knowledge${qs ? `?${qs}` : ''}`;
+
+  return new Promise((resolve) => {
+    const req = http.request(endpoint, { method: 'GET', timeout: 10000 }, (res) => {
+      let data = '';
+      res.on('data', (chunk: Buffer) => { data += chunk; });
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); }
+        catch { resolve({ error: 'Invalid JSON' }); }
+      });
+    });
+    req.on('error', (err: Error) => resolve({ error: String(err) }));
+    req.on('timeout', () => { req.destroy(); resolve({ error: 'Timeout' }); });
+    req.end();
+  });
+}
+
+export function fetchCardEvolution(cardId: string): Promise<any> {
+  return new Promise((resolve) => {
+    const req = http.request(`http://127.0.0.1:37800/api/v1/knowledge/${encodeURIComponent(cardId)}/evolution`, {
+      method: 'GET', timeout: 10000,
+    }, (res) => {
+      let data = '';
+      res.on('data', (chunk: Buffer) => { data += chunk; });
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); }
+        catch { resolve({ error: 'Invalid JSON' }); }
+      });
+    });
+    req.on('error', (err: Error) => resolve({ error: String(err) }));
+    req.on('timeout', () => { req.destroy(); resolve({ error: 'Timeout' }); });
+    req.end();
+  });
+}
+
 export function checkMemoryHealth(): Promise<any> {
   return new Promise((resolve) => {
     const req = http.request('http://127.0.0.1:37800/healthz', { method: 'GET', timeout: 5000 }, (res) => {

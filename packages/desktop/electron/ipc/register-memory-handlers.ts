@@ -1,8 +1,10 @@
 import fs from 'fs';
 import path from 'path';
 import { ipcMain } from 'electron';
-import { callMcp, checkMemoryHealth, fetchMemoryEvents, type MemoryEventQueryOptions } from '../memory-client';
+import os from 'os';
+import { callMcp, checkMemoryHealth, fetchMemoryEvents, fetchKnowledgeCards, fetchCardEvolution, type MemoryEventQueryOptions } from '../memory-client';
 import { buildMemoryInitArgs, buildMemorySearchArgs } from '../memory-protocol';
+import { readJsonFileWithBom } from '../json-file';
 
 type FileBackedMemoryEvent = {
   id: string;
@@ -157,5 +159,43 @@ export function registerMemoryHandlers() {
 
   ipcMain.handle('memory:check-health', async () => {
     return checkMemoryHealth();
+  });
+
+  ipcMain.handle('memory:get-cards-rest', async (_e, opts?: { category?: string; limit?: number }) => {
+    return fetchKnowledgeCards(opts || {});
+  });
+
+  ipcMain.handle('memory:get-card-evolution', async (_e, cardId: string) => {
+    return fetchCardEvolution(cardId);
+  });
+
+  ipcMain.handle('memory:enable-slot-replacement', async () => {
+    // Write plugins.slots.memory = "openclaw-memory" into openclaw.json
+    // so OpenClaw uses Awareness Memory instead of memory-core
+    const configPath = path.join(os.homedir(), '.openclaw', 'openclaw.json');
+    try {
+      let config: Record<string, any> = {};
+      try { config = readJsonFileWithBom<Record<string, any>>(configPath) || {}; } catch { /* new file */ }
+
+      if (!config.plugins) config.plugins = {};
+      if (!config.plugins.slots) config.plugins.slots = {};
+      config.plugins.slots.memory = 'openclaw-memory';
+
+      fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+      return { success: true, message: 'Memory slot set to openclaw-memory' };
+    } catch (err: any) {
+      return { success: false, error: err?.message || String(err) };
+    }
+  });
+
+  ipcMain.handle('memory:get-slot-status', async () => {
+    const configPath = path.join(os.homedir(), '.openclaw', 'openclaw.json');
+    try {
+      const config = readJsonFileWithBom<Record<string, any>>(configPath) || {};
+      const currentSlot = config?.plugins?.slots?.memory || 'memory-core';
+      return { slot: currentSlot, isAwareness: currentSlot === 'openclaw-memory' };
+    } catch {
+      return { slot: 'memory-core', isAwareness: false };
+    }
   });
 }

@@ -1,8 +1,8 @@
-import { MessageCircle, Brain, Radio, Puzzle, Settings, Clock, Bot, Cpu } from 'lucide-react';
+import { MessageCircle, Brain, Radio, Puzzle, Settings, Clock, Bot, Cpu, Target } from 'lucide-react';
 import logoUrl from '../assets/logo.png';
 import { useI18n } from '../lib/i18n';
 
-export type Page = 'chat' | 'memory' | 'channels' | 'models' | 'skills' | 'automation' | 'agents' | 'settings';
+export type Page = 'chat' | 'memory' | 'channels' | 'models' | 'skills' | 'automation' | 'agents' | 'taskCenter' | 'settings';
 
 interface SidebarProps {
   currentPage: Page;
@@ -17,6 +17,7 @@ const navItems: { id: Page; icon: typeof MessageCircle; i18nKey: string }[] = [
   { id: 'skills', icon: Puzzle, i18nKey: 'nav.skills' },
   { id: 'automation', icon: Clock, i18nKey: 'nav.automation' },
   { id: 'agents', icon: Bot, i18nKey: 'nav.agents' },
+  { id: 'taskCenter', icon: Target, i18nKey: 'nav.taskCenter' },
   { id: 'settings', icon: Settings, i18nKey: 'nav.settings' },
 ];
 

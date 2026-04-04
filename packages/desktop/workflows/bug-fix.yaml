@@ -1,0 +1,39 @@
+# Bug Fix Workflow
+# Lobster YAML — investigate, fix, verify pipeline.
+# Steps: investigate → fix → verify
+
+name: bug-fix
+args:
+  bug:
+    default: ""
+  reproduction:
+    default: ""
+
+steps:
+  - id: investigate
+    run: >
+      openclaw.invoke --tool llm-task --action json
+      --args-json '{"prompt": "Investigate this bug report and identify the root cause. List possible causes ranked by likelihood.\n\nBug: ${bug}\nReproduction steps: ${reproduction}"}'
+    env:
+      OPENCLAW_URL: "http://127.0.0.1:18789"
+
+  - id: fix
+    run: >
+      openclaw.invoke --tool llm-task --action json
+      --args-json '{"prompt": "Based on the investigation below, write the minimal code fix. Show the exact changes needed (file path + diff)."}'
+    stdin: $investigate.stdout
+    env:
+      OPENCLAW_URL: "http://127.0.0.1:18789"
+
+  - id: approve-fix
+    approval: "Review the proposed fix. Approve to run verification."
+    stdin: $fix.json
+
+  - id: verify
+    run: >
+      openclaw.invoke --tool llm-task --action json
+      --args-json '{"prompt": "Verify the fix below. Check: 1) Does it address the root cause? 2) Could it cause regressions? 3) Are edge cases handled? Output VERIFIED or NEEDS_REVISION with reasoning."}'
+    stdin: $fix.stdout
+    when: $approve-fix.approved
+    env:
+      OPENCLAW_URL: "http://127.0.0.1:18789"

@@ -554,6 +554,183 @@ describe('Dashboard (Chat)', () => {
     });
   });
 
+  it('hydrates structured thinking and tool output from gateway chat history', async () => {
+    const session = {
+      id: 'session-history',
+      title: 'History',
+      messages: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    localStorage.setItem('awareness-claw-sessions', JSON.stringify([session]));
+    localStorage.setItem('awareness-claw-active-session', 'session-history');
+
+    const api = window.electronAPI as any;
+    api.chatLoadHistory = vi.fn().mockResolvedValue({
+      success: true,
+      messages: [
+        {
+          id: 'gw-msg-1',
+          role: 'assistant',
+          content: 'Done.',
+          timestamp: Date.now(),
+          model: 'openai/gpt-5.4',
+          thinking: 'inspect files first',
+          toolCalls: [
+            {
+              id: 'tool-1',
+              name: 'read',
+              status: 'completed',
+              timestamp: Date.now(),
+              detail: 'filePath: /tmp/demo.txt',
+              output: 'file contents',
+            },
+          ],
+          contentBlocks: [
+            { type: 'thinking', thinking: 'inspect files first' },
+            { type: 'tool_use', id: 'tool-1', name: 'read', input: { filePath: '/tmp/demo.txt' } },
+            { type: 'tool_result', tool_use_id: 'tool-1', content: [{ type: 'text', text: 'file contents' }] },
+            { type: 'text', text: 'Done.' },
+          ],
+        },
+      ],
+    });
+
+    await act(async () => { render(<Dashboard />); });
+
+    await waitFor(() => {
+      expect(screen.getByText('Done.')).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByText(/Run trace|运行链路/));
+    });
+
+    await waitFor(() => {
+      expect(screen.getAllByText(/inspect files first/).length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/filePath: \/tmp\/demo\.txt/).length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/file contents/).length).toBeGreaterThan(0);
+    });
+  });
+
+  it('renders high-fidelity live tool events with args and output in run trace', async () => {
+    let eventCallback: ((event: any) => void) | null = null;
+    let resolveChat: ((value: any) => void) | null = null;
+    const api = window.electronAPI as any;
+    api.onChatEvent = (cb: any) => { eventCallback = cb; };
+    api.chatSend = vi.fn(() => new Promise((resolve) => {
+      resolveChat = resolve;
+    }));
+
+    await act(async () => { render(<Dashboard />); });
+
+    const textarea = screen.getByPlaceholderText(/输入消息/) as HTMLTextAreaElement;
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'show me tool trace' } });
+    });
+
+    const buttons = screen.getAllByRole('button');
+    const sendBtn = buttons[buttons.length - 1];
+    await act(async () => { fireEvent.click(sendBtn); });
+
+    await act(async () => {
+      eventCallback?.({
+        stream: 'tool',
+        phase: 'start',
+        toolCallId: 'tool-2',
+        toolName: 'exec',
+        args: { command: 'pwd' },
+      });
+      eventCallback?.({
+        stream: 'tool',
+        phase: 'result',
+        toolCallId: 'tool-2',
+        toolName: 'exec',
+        result: { stdout: '/tmp/project' },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getAllByText(/Run trace|运行链路/).length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/pwd/).length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/\/tmp\/project/).length).toBeGreaterThan(0);
+    });
+
+    await act(async () => {
+      resolveChat?.({ success: true, text: 'done', sessionId: 'test-session' });
+    });
+  });
+
+  it('renders thinking streamed through chat events even when onChatThinking is not used', async () => {
+    let eventCallback: ((event: any) => void) | null = null;
+    let resolveChat: ((value: any) => void) | null = null;
+    const api = window.electronAPI as any;
+    api.onChatEvent = (cb: any) => { eventCallback = cb; };
+    api.chatSend = vi.fn(() => new Promise((resolve) => {
+      resolveChat = resolve;
+    }));
+
+    await act(async () => { render(<Dashboard />); });
+
+    const textarea = screen.getByPlaceholderText(/输入消息/) as HTMLTextAreaElement;
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'show reasoning' } });
+    });
+
+    const buttons = screen.getAllByRole('button');
+    const sendBtn = buttons[buttons.length - 1];
+    await act(async () => { fireEvent.click(sendBtn); });
+
+    await act(async () => {
+      eventCallback?.({
+        stream: 'assistant',
+        phase: 'thinking',
+        thinking: 'inspect files before editing',
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getAllByText(/inspect files before editing/).length).toBeGreaterThan(0);
+    });
+
+    await act(async () => {
+      resolveChat?.({ success: true, text: 'done', sessionId: 'test-session' });
+    });
+  });
+
+  it('collapses repeated generating status updates into a single trace entry', async () => {
+    let statusCallback: ((status: any) => void) | null = null;
+    const api = window.electronAPI as any;
+    api.onChatStatus = (cb: any) => { statusCallback = cb; };
+    api.chatSend = vi.fn(async () => {
+      statusCallback?.({ type: 'generating' });
+      statusCallback?.({ type: 'generating' });
+      statusCallback?.({ type: 'generating' });
+      return { success: true, text: 'done', sessionId: 'test-session' };
+    });
+
+    await act(async () => { render(<Dashboard />); });
+
+    const textarea = screen.getByPlaceholderText(/输入消息/) as HTMLTextAreaElement;
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'finish once' } });
+    });
+
+    const buttons = screen.getAllByRole('button');
+    const sendBtn = buttons[buttons.length - 1];
+    await act(async () => { fireEvent.click(sendBtn); });
+
+    await waitFor(() => {
+      expect(screen.getByText('done')).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getAllByText(/Run trace|运行链路/)[0]);
+    });
+
+    expect(screen.getAllByText(/Agent status|代理状态/).length).toBe(1);
+  });
+
   it('ignores trailing status events after the assistant response has already completed', async () => {
     let statusCallback: ((status: any) => void) | null = null;
     let resolveChat: ((value: any) => void) | null = null;

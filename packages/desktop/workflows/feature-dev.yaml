@@ -1,0 +1,47 @@
+# Feature Development Workflow
+# Lobster YAML — plan, implement, test, review pipeline.
+# Steps: plan → implement → test → review (with approval gate)
+
+name: feature-dev
+args:
+  feature:
+    default: ""
+  context:
+    default: ""
+
+steps:
+  - id: plan
+    run: >
+      openclaw.invoke --tool llm-task --action json
+      --args-json '{"prompt": "Create a step-by-step implementation plan for the following feature. Include file changes, dependencies, and risks.\n\nFeature: ${feature}\nContext: ${context}"}'
+    env:
+      OPENCLAW_URL: "http://127.0.0.1:18789"
+
+  - id: approve-plan
+    approval: "Review the implementation plan. Approve to proceed with coding."
+    stdin: $plan.json
+
+  - id: implement
+    run: >
+      openclaw.invoke --tool llm-task --action json
+      --args-json '{"prompt": "Based on the approved plan below, write the implementation code. Output each file with its full path and content."}'
+    stdin: $plan.stdout
+    when: $approve-plan.approved
+    env:
+      OPENCLAW_URL: "http://127.0.0.1:18789"
+
+  - id: test
+    run: >
+      openclaw.invoke --tool llm-task --action json
+      --args-json '{"prompt": "Write unit tests for the following implementation. Cover edge cases and error scenarios."}'
+    stdin: $implement.stdout
+    env:
+      OPENCLAW_URL: "http://127.0.0.1:18789"
+
+  - id: review
+    run: >
+      openclaw.invoke --tool llm-task --action json
+      --args-json '{"prompt": "Review the implementation and tests below. Flag any issues with severity levels. Output a final verdict: APPROVE, REQUEST_CHANGES, or BLOCK."}'
+    stdin: $implement.stdout
+    env:
+      OPENCLAW_URL: "http://127.0.0.1:18789"

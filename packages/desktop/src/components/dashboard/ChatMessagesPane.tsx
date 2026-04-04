@@ -8,6 +8,8 @@ type ToolCallInfo = {
   status: 'running' | 'completed' | 'approved' | 'recalling' | 'saving' | 'cached' | 'awaiting_approval' | 'failed';
   timestamp: number;
   detail?: string;
+  args?: unknown;
+  output?: string;
   approvalRequestId?: string;
   approvalCommand?: string;
 };
@@ -27,6 +29,7 @@ type Message = {
   toolCalls?: ToolCallInfo[];
   thinking?: string;
   traceEvents?: ChatTraceEvent[];
+  contentBlocks?: Array<Record<string, unknown>>;
 };
 
 export function ChatMessagesPane({

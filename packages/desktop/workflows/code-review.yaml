@@ -1,0 +1,40 @@
+# Code Review Workflow
+# Lobster YAML — runs a structured code review pipeline across agents.
+# Steps: analyze → review → summarize
+# Requires: at least 1 non-main agent (reviewer role recommended)
+
+name: code-review
+args:
+  description:
+    default: ""
+  files:
+    default: ""
+
+steps:
+  - id: analyze
+    run: >
+      openclaw.invoke --tool llm-task --action json
+      --args-json '{"prompt": "Analyze the following code change and list potential issues, focusing on correctness, security, and performance.\n\nChange description: ${description}\nFiles: ${files}"}'
+    env:
+      OPENCLAW_URL: "http://127.0.0.1:18789"
+
+  - id: review
+    run: >
+      openclaw.invoke --tool llm-task --action json
+      --args-json '{"prompt": "Based on the analysis below, write a structured code review with severity levels (CRITICAL/HIGH/MEDIUM/LOW) for each finding.\n\nAnalysis:"}'
+    stdin: $analyze.stdout
+    env:
+      OPENCLAW_URL: "http://127.0.0.1:18789"
+
+  - id: approve
+    approval: "Review the findings above. Approve to generate the final summary."
+    stdin: $review.json
+
+  - id: summarize
+    run: >
+      openclaw.invoke --tool llm-task --action json
+      --args-json '{"prompt": "Write a concise code review summary suitable for a PR comment. Include: 1) Overall assessment 2) Critical issues 3) Suggested improvements."}'
+    stdin: $review.stdout
+    when: $approve.approved
+    env:
+      OPENCLAW_URL: "http://127.0.0.1:18789"

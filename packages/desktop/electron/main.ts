@@ -31,6 +31,7 @@ import { registerChatHandlers } from './ipc/register-chat-handlers';
 import { registerCloudWorkspaceHandlers } from './ipc/register-cloud-workspace-handlers';
 import { registerConfigIoHandlers } from './ipc/register-config-io-handlers';
 import { registerCronHandlers } from './ipc/register-cron-handlers';
+import { registerWorkflowHandlers } from './ipc/register-workflow-handlers';
 import { registerFileDialogHandlers } from './ipc/register-file-dialog-handlers';
 import { registerGatewayHandlers } from './ipc/register-gateway-handlers';
 import { registerMemoryHandlers } from './ipc/register-memory-handlers';
@@ -856,6 +857,13 @@ registerChannelSetupHandlers({
 });
 registerCronHandlers({
   safeShellExecAsync,
+});
+registerWorkflowHandlers({
+  home: HOME,
+  safeShellExecAsync,
+  runAsync,
+  getGatewayWs,
+  getMainWindow: () => mainWindow,
 });
 registerGatewayHandlers({
   readShellOutputAsync,
