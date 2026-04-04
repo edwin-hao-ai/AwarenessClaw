@@ -632,14 +632,14 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
     if (!window.electronAPI) return;
     const api = window.electronAPI as any;
     api.onMemoryWarning?.((payload: { type: string; message: string }) => {
-      setMemoryWarning(payload.message || 'Memory save failed');
+      setMemoryWarning(payload.message || t('chat.memoryWarning', 'Memory save failed'));
       if (memoryWarningTimerRef.current) clearTimeout(memoryWarningTimerRef.current);
       memoryWarningTimerRef.current = setTimeout(() => setMemoryWarning(null), 3000);
     });
     return () => {
       if (memoryWarningTimerRef.current) clearTimeout(memoryWarningTimerRef.current);
     };
-  }, []);
+  }, [t]);
 
   // Load channel sessions from Gateway + listen for real-time channel messages
   useEffect(() => {

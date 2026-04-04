@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ForceGraph2D, { type ForceGraphMethods } from 'react-force-graph-2d';
+import { useI18n } from '../../lib/i18n';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -206,6 +207,7 @@ function buildGraphData(cards: KnowledgeCard[], events: MemoryEvent[]) {
 export default function KnowledgeGraph({ cards, events, width, height, onCardClick }: Props) {
   const graphRef = useRef<ForceGraphMethods | undefined>(undefined);
   const [hoveredNode, setHoveredNode] = useState<GraphNode | null>(null);
+  const { t } = useI18n();
 
   const graphData = useMemo(() => buildGraphData(cards, events), [cards, events]);
 
@@ -294,8 +296,8 @@ export default function KnowledgeGraph({ cards, events, width, height, onCardCli
   if (graphData.nodes.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-slate-500 space-y-2">
-        <p className="text-sm">No knowledge cards to visualize</p>
-        <p className="text-xs">Cards will appear here as the AI learns from your conversations</p>
+        <p className="text-sm">{t('memory.graph.empty', 'No knowledge cards to visualize')}</p>
+        <p className="text-xs">{t('memory.graph.emptyHint', 'Cards will appear here as the AI learns from your conversations')}</p>
       </div>
     );
   }
@@ -329,7 +331,7 @@ export default function KnowledgeGraph({ cards, events, width, height, onCardCli
 
       {/* Legend */}
       <div className="absolute top-3 left-3 bg-slate-900/90 backdrop-blur-sm rounded-lg border border-slate-700/50 p-2.5 max-w-[180px]">
-        <div className="text-[10px] text-slate-400 font-medium mb-1.5 uppercase tracking-wider">Categories</div>
+        <div className="text-[10px] text-slate-400 font-medium mb-1.5 uppercase tracking-wider">{t('memory.graph.categories', 'Categories')}</div>
         <div className="space-y-1">
           {categoriesInGraph.map(cat => (
             <div key={cat} className="flex items-center gap-1.5">
@@ -338,13 +340,15 @@ export default function KnowledgeGraph({ cards, events, width, height, onCardCli
                 style={{ backgroundColor: getCategoryColor(cat) }}
               />
               <span className="text-[10px] text-slate-300 truncate">
-                {cat.replace(/_/g, ' ')}
+                {t(`memory.category.${cat}`, cat.replace(/_/g, ' '))}
               </span>
             </div>
           ))}
         </div>
         <div className="text-[9px] text-slate-500 mt-2 border-t border-slate-700/50 pt-1.5">
-          {graphData.nodes.length} cards &middot; {graphData.links.length} links
+          {t('memory.graph.stats', '{0} cards · {1} links')
+            .replace('{0}', String(graphData.nodes.length))
+            .replace('{1}', String(graphData.links.length))}
         </div>
       </div>
 

@@ -97,8 +97,13 @@ export function ChatComposer({
           <div className="max-w-3xl mx-auto">
             <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-900/30 border border-amber-700/40 text-amber-300 text-xs animate-in fade-in slide-in-from-bottom-2">
               <AlertTriangle size={14} className="flex-shrink-0" />
-              <span className="truncate">Memory save failed: {memoryWarning}</span>
-              <button onClick={onDismissMemoryWarning} className="ml-auto flex-shrink-0 text-amber-400 hover:text-amber-200">
+              <span className="truncate">{t('chat.memoryWarningPrefix', 'Memory save failed:')} {memoryWarning}</span>
+              <button
+                onClick={onDismissMemoryWarning}
+                title={t('common.close', 'Close')}
+                aria-label={t('common.close', 'Close')}
+                className="ml-auto flex-shrink-0 text-amber-400 hover:text-amber-200"
+              >
                 <X size={12} />
               </button>
             </div>
@@ -126,7 +131,12 @@ export function ChatComposer({
                   {file.preview?.type === 'image' ? <Image size={10} className="text-brand-400" /> : <File size={10} className="text-slate-400" />}
                   <span className="text-[10px] text-slate-300 truncate flex-1">{file.name}</span>
                   {file.preview?.size && <span className="text-[9px] text-slate-600">{(file.preview.size / 1024).toFixed(0)}KB</span>}
-                  <button onClick={() => onRemoveFile(index)} aria-label={`Remove ${file.name}`} title={`Remove ${file.name}`} className="text-slate-500 hover:text-red-400 flex-shrink-0">
+                  <button
+                    onClick={() => onRemoveFile(index)}
+                    aria-label={t('common.removeFile', 'Remove {0}').replace('{0}', file.name)}
+                    title={t('common.removeFile', 'Remove {0}').replace('{0}', file.name)}
+                    className="text-slate-500 hover:text-red-400 flex-shrink-0"
+                  >
                     <X size={10} />
                   </button>
                 </div>
@@ -264,7 +274,13 @@ export function ChatComposer({
                   <Square size={14} fill="currentColor" />
                 </button>
               ) : (
-                <button onClick={onSend} disabled={!canSendCurrentMessage} className="p-1.5 bg-brand-600 hover:bg-brand-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded-lg transition-colors">
+                <button
+                  onClick={onSend}
+                  disabled={!canSendCurrentMessage}
+                  title={t('chat.send', 'Send')}
+                  aria-label={t('chat.send', 'Send')}
+                  className="p-1.5 bg-brand-600 hover:bg-brand-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded-lg transition-colors"
+                >
                   <Send size={14} />
                 </button>
               )}

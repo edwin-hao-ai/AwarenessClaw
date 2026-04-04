@@ -257,7 +257,7 @@ export default function Settings() {
 
     api.openclawConfigSchema().then(async (schemaResult: any) => {
       if (!schemaResult?.success || !schemaResult.schema) {
-        setWebError(schemaResult?.error || 'Failed to load OpenClaw config schema.');
+        setWebError(schemaResult?.error || t('settings.web.loadSchemaFailed', 'Failed to load OpenClaw config schema.'));
         setWebLoading(false);
         return;
       }
@@ -645,7 +645,7 @@ export default function Settings() {
             if (result?.success) {
               setDaemonAutostart(value);
             } else {
-              alert(result?.error || 'Failed to update daemon autostart');
+              alert(result?.error || t('settings.system.daemonAutostartFailed', 'Failed to update daemon autostart'));
             }
           }}
           onRunDiagnostic={async () => {

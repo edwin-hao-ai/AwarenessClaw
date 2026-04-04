@@ -118,7 +118,7 @@ export default function Agents({ onNavigate }: { onNavigate?: (page: string) => 
     try {
       const result = await (window.electronAPI as any).agentsDelete(agentId);
       if (result.success) loadAgents();
-      else setError(result.error || 'Delete failed');
+      else setError(result.error || t('agents.deleteFailed', 'Delete failed'));
     } finally {
       setDeletingId(null);
     }
@@ -131,7 +131,7 @@ export default function Agents({ onNavigate }: { onNavigate?: (page: string) => 
       setEditingId(null);
       loadAgents();
     } else {
-      setError(result.error || 'Set identity failed');
+      setError(result.error || t('agents.identityFailed', 'Set identity failed'));
     }
   };
 
@@ -143,7 +143,7 @@ export default function Agents({ onNavigate }: { onNavigate?: (page: string) => 
       setBindChannel('');
       loadAgents();
     } else {
-      setError(result.error || 'Bind failed');
+      setError(result.error || t('agents.bindFailed', 'Bind failed'));
     }
   };
 
@@ -151,7 +151,7 @@ export default function Agents({ onNavigate }: { onNavigate?: (page: string) => 
     if (!window.electronAPI) return;
     const result = await (window.electronAPI as any).agentsUnbind(agentId, binding);
     if (result.success) loadAgents();
-    else setError(result.error || 'Unbind failed');
+    else setError(result.error || t('agents.unbindFailed', 'Unbind failed'));
   };
 
   // Workspace file editing
@@ -161,33 +161,33 @@ export default function Agents({ onNavigate }: { onNavigate?: (page: string) => 
     setFileSaved(false);
     try {
       if (!(window.electronAPI as any).agentsReadFile) {
-        throw new Error('This desktop build does not expose agent file reading yet. Please restart with the latest package.');
+        throw new Error(t('agents.fileReadUnavailable', 'This desktop build does not expose agent file reading yet. Please restart with the latest package.'));
       }
       const result = await (window.electronAPI as any).agentsReadFile(agentId, fileName);
       if (result.success) {
         setFileContent(result.content || '');
         setFileOriginal(result.content || '');
       } else {
-        throw new Error(result.error || `Failed to load ${fileName}`);
+        throw new Error(result.error || t('agents.loadFileFailed', 'Failed to load {0}').replace('{0}', fileName));
       }
     } catch (err: any) {
       setFileContent('');
       setFileOriginal('');
-      setError(err?.message || `Failed to load ${fileName}`);
+      setError(err?.message || t('agents.loadFileFailed', 'Failed to load {0}').replace('{0}', fileName));
     }
     setFileLoading(false);
-  }, []);
+  }, [t]);
 
   const loadWorkspaceFiles = useCallback(async (agentId: string) => {
     if (!window.electronAPI) return;
     setFileListLoading(true);
     try {
       if (!(window.electronAPI as any).agentsListFiles) {
-        throw new Error('This desktop build does not expose dynamic agent workspace files yet. Please restart with the latest package.');
+        throw new Error(t('agents.fileListUnavailable', 'This desktop build does not expose dynamic agent workspace files yet. Please restart with the latest package.'));
       }
       const result = await (window.electronAPI as any).agentsListFiles(agentId);
       if (!result?.success) {
-        throw new Error(result?.error || 'Failed to load workspace files');
+        throw new Error(result?.error || t('agents.filesLoadFailed', 'Failed to load workspace files'));
       }
       const files = Array.isArray(result?.files) ? result.files : [];
       setWorkspaceFiles(files);
@@ -209,7 +209,7 @@ export default function Agents({ onNavigate }: { onNavigate?: (page: string) => 
     } finally {
       setFileListLoading(false);
     }
-  }, [activeFile, loadFile]);
+  }, [activeFile, loadFile, t]);
 
   const handleOpenFiles = (agentId: string) => {
     if (fileEditAgentId === agentId) {
@@ -271,7 +271,7 @@ export default function Agents({ onNavigate }: { onNavigate?: (page: string) => 
           <div className="flex items-center gap-2 p-3 bg-red-600/10 border border-red-600/20 rounded-xl text-xs text-red-400">
             <AlertCircle size={14} />
             <span className="flex-1">{error}</span>
-            <button onClick={() => setError(null)} className="ml-auto"><X size={12} /></button>
+            <button onClick={() => setError(null)} title={t('common.close', 'Close')} aria-label={t('common.close', 'Close')} className="ml-auto"><X size={12} /></button>
           </div>
         )}
 
@@ -346,7 +346,7 @@ export default function Agents({ onNavigate }: { onNavigate?: (page: string) => 
                       {agent.bindings.map((b, i) => (
                         <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] bg-emerald-600/15 text-emerald-400 rounded-full">
                           <Link size={9} />{b}
-                          <button onClick={() => handleUnbind(agent.id, b)} className="hover:text-red-400 ml-0.5"><X size={9} /></button>
+                          <button onClick={() => handleUnbind(agent.id, b)} title={t('common.delete', 'Delete')} aria-label={t('common.delete', 'Delete')} className="hover:text-red-400 ml-0.5"><X size={9} /></button>
                         </span>
                       ))}
                     </div>
@@ -360,14 +360,14 @@ export default function Agents({ onNavigate }: { onNavigate?: (page: string) => 
                           className="w-10 px-1 py-1 bg-slate-900 border border-slate-600 rounded text-center text-sm" maxLength={4} />
                         <input value={editName} onChange={(e) => setEditName(e.target.value)} placeholder={t('agents.namePlaceholder', 'Name')}
                           className="flex-1 px-2 py-1 bg-slate-900 border border-slate-600 rounded text-sm" />
-                        <button onClick={() => handleSetIdentity(agent.id)} className="p-1 text-emerald-400 hover:text-emerald-300"><Check size={14} /></button>
-                        <button onClick={() => setEditingId(null)} className="p-1 text-slate-500 hover:text-slate-300"><X size={14} /></button>
+                        <button onClick={() => handleSetIdentity(agent.id)} title={t('common.save', 'Save')} aria-label={t('common.save', 'Save')} className="p-1 text-emerald-400 hover:text-emerald-300"><Check size={14} /></button>
+                        <button onClick={() => setEditingId(null)} title={t('common.cancel', 'Cancel')} aria-label={t('common.cancel', 'Cancel')} className="p-1 text-slate-500 hover:text-slate-300"><X size={14} /></button>
                       </div>
                       <div className="flex items-center gap-2">
                         <input value={editAvatar} onChange={(e) => setEditAvatar(e.target.value)}
                           placeholder={t('agents.avatarPlaceholder', 'Avatar URL (optional)')}
                           className="flex-1 px-2 py-1 bg-slate-900 border border-slate-600 rounded text-xs text-slate-400" />
-                        <select value={editTheme} onChange={(e) => setEditTheme(e.target.value)}
+                        <select value={editTheme} onChange={(e) => setEditTheme(e.target.value)} aria-label={t('agents.theme', 'Theme')}
                           className="px-2 py-1 bg-slate-900 border border-slate-600 rounded text-xs text-slate-400">
                           <option value="">{t('agents.theme', 'Theme')}</option>
                           <option value="dark">{t('agents.themeDark', 'Dark')}</option>
@@ -380,7 +380,7 @@ export default function Agents({ onNavigate }: { onNavigate?: (page: string) => 
                   {/* Inline bind input */}
                   {bindingAgentId === agent.id && (
                     <div className="flex items-center gap-2 pl-11 pt-1 border-t border-slate-700/30">
-                      <select value={bindChannel} onChange={(e) => setBindChannel(e.target.value)}
+                      <select value={bindChannel} onChange={(e) => setBindChannel(e.target.value)} aria-label={t('agents.selectChannel', 'Select channel')}
                         className="flex-1 px-2 py-1.5 bg-slate-900 border border-slate-600 rounded text-sm text-slate-300">
                         <option value="">{t('agents.selectChannel', 'Select a channel...')}</option>
                         {availableChannels
@@ -392,7 +392,7 @@ export default function Agents({ onNavigate }: { onNavigate?: (page: string) => 
                         className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-700 text-white rounded text-xs">
                         {t('agents.bind', 'Bind')}
                       </button>
-                      <button onClick={() => setBindingAgentId(null)} className="p-1 text-slate-500 hover:text-slate-300"><X size={14} /></button>
+                      <button onClick={() => setBindingAgentId(null)} title={t('common.cancel', 'Cancel')} aria-label={t('common.cancel', 'Cancel')} className="p-1 text-slate-500 hover:text-slate-300"><X size={14} /></button>
                     </div>
                   )}
                 </div>

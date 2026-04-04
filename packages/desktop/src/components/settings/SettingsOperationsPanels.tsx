@@ -1,6 +1,6 @@
 import { AlertTriangle, CheckCircle, ChevronRight, Cloud, Code2, Download, ExternalLink, Loader2, Play, RefreshCw, RotateCw, Shield, Square, Trash2, Upload, Webhook } from 'lucide-react';
 import type { ReactNode } from 'react';
-import { SettingsRow, SettingsSection, SettingsToggle } from './SettingsPrimitives';
+import { SettingsModalShell, SettingsRow, SettingsSection, SettingsToggle } from './SettingsPrimitives';
 
 type TFunction = (key: string, fallback?: string) => string;
 
@@ -144,7 +144,7 @@ export function SettingsExtensionsPanel({
   return (
     <>
       {Object.keys(plugins).length > 0 && (
-        <SettingsSection title={`🧩 Plugins (${Object.keys(plugins).length})`}>
+        <SettingsSection title={`🧩 ${t('settings.plugins', 'Plugins')} (${Object.keys(plugins).length})`}>
           {Object.entries(plugins).map(([name, cfg]) => {
             const enabled = cfg?.enabled !== false;
             return (
@@ -157,7 +157,7 @@ export function SettingsExtensionsPanel({
       )}
 
       {Object.keys(hooks).length > 0 && (
-        <SettingsSection title={`🪝 Hooks (${Object.keys(hooks).length})`}>
+        <SettingsSection title={`🪝 ${t('settings.hooks', 'Hooks')} (${Object.keys(hooks).length})`}>
           {Object.entries(hooks).map(([hookName, hookCfg]) => {
             const enabled = hookCfg?.enabled !== false;
             const subEntries = hookCfg?.entries ? Object.entries(hookCfg.entries) : [];

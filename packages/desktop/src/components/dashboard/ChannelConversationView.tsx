@@ -1,5 +1,6 @@
 import { ChevronRight, Loader2, MessageSquare, Send } from 'lucide-react';
 import ChannelIcon from '../ChannelIcon';
+import { useI18n } from '../../lib/i18n';
 
 type ChannelSession = {
   sessionKey: string;
@@ -37,12 +38,13 @@ export function ChannelConversationView({
   onReplyTextChange: (value: string) => void;
   onReplySubmit: () => void;
 }) {
+  const { t } = useI18n();
   const currentSession = channelSessions.find((session) => session.sessionKey === activeChannelKey);
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
       <div className="px-4 py-2 border-b border-slate-800/50 flex items-center gap-2">
-        <button onClick={onBack} className="p-1 text-slate-500 hover:text-slate-200 hover:bg-slate-800 rounded-md transition-colors" title="Back">
+        <button onClick={onBack} className="p-1 text-slate-500 hover:text-slate-200 hover:bg-slate-800 rounded-md transition-colors" title={t('common.back', 'Back')}>
           <ChevronRight size={14} className="rotate-180" />
         </button>
         {currentSession ? (
@@ -61,14 +63,14 @@ export function ChannelConversationView({
           {channelLoading ? (
             <div className="flex items-center justify-center py-12 text-slate-500">
               <Loader2 size={20} className="animate-spin mr-2" />
-              <span className="text-sm">Loading history...</span>
+              <span className="text-sm">{t('channels.loadingHistory', 'Loading history...')}</span>
             </div>
           ) : channelMessages.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-slate-500 space-y-3">
               {currentSession && <ChannelIcon channelId={currentSession.channel} size={32} />}
               <MessageSquare size={24} className="opacity-40" />
-              <span className="text-sm">No messages yet</span>
-              <span className="text-xs text-slate-600">Send a message to start the conversation</span>
+              <span className="text-sm">{t('channels.noMessages', 'No messages yet')}</span>
+              <span className="text-xs text-slate-600">{t('channels.noMessagesHint', 'Send a message to start the conversation')}</span>
             </div>
           ) : (
             channelMessages.map((message) => (
@@ -117,7 +119,7 @@ export function ChannelConversationView({
                 onReplySubmit();
               }
             }}
-            placeholder="Reply to this channel..."
+            placeholder={t('channels.replyPlaceholder', 'Reply to this channel...')}
             className="w-full pl-4 pr-12 py-3 bg-slate-900 border border-slate-700/50 rounded-2xl text-sm focus:outline-none focus:ring-1 focus:ring-brand-500 resize-none placeholder:text-slate-600"
             style={{ minHeight: '44px', maxHeight: '120px' }}
             disabled={channelReplying}
