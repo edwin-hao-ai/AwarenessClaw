@@ -825,7 +825,7 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
   }, [sessions, agentStatus]);
 
   // Track previous agent to detect switches (e.g. after creating a new agent on Agents page)
-  const prevAgentRef = useRef(config.selectedAgentId);
+  const prevAgentRef = useRef(config.selectedAgentId || 'main');
   // When tab becomes active again, restore focus + scroll to bottom + refresh agents
   useEffect(() => {
     if (!isActive) return;
@@ -839,19 +839,26 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
         })));
       }
     }).catch(() => {});
-    // If agent was changed while on another page (e.g. after wizard created a new agent),
-    // create a new session for the new agent
-    const currentAgent = config.selectedAgentId || 'main';
-    if (prevAgentRef.current !== currentAgent) {
-      prevAgentRef.current = currentAgent;
-      handleNewSession();
-    }
     if (agentStatus === 'idle') {
       // Small delay so the hidden→visible transition completes first
       const t = setTimeout(() => textareaRef.current?.focus(), 50);
       return () => clearTimeout(t);
     }
   }, [isActive]);
+
+  // Detect agent changes from config (e.g. Agents page created a new agent and set selectedAgentId)
+  const autoBootstrapAgentRef = useRef<string | null>(null);
+  useEffect(() => {
+    const currentAgent = config.selectedAgentId || 'main';
+    if (prevAgentRef.current !== currentAgent) {
+      prevAgentRef.current = currentAgent;
+      handleNewSession();
+      // Mark for auto-bootstrap greeting (non-main agents only)
+      if (currentAgent !== 'main') {
+        autoBootstrapAgentRef.current = currentAgent;
+      }
+    }
+  }, [config.selectedAgentId]);
 
   const activeSession = sessions.find(s => s.id === activeSessionId);
   const messages = activeSession?.messages || [];
@@ -1039,6 +1046,21 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
   }, [activeSessionId, attachedFiles, canSendMessage, config.modelId, config.providerKey, config.selectedAgentId, config.thinkingLevel, projectRoot, t, updateSession]);
 
   const canSendCurrentMessage = canSendMessage(input);
+
+  // Auto-send greeting to kick off Bootstrap Q&A for newly created agents
+  useEffect(() => {
+    if (autoBootstrapAgentRef.current && agentStatus === 'idle' && !sendingRef.current) {
+      const agent = autoBootstrapAgentRef.current;
+      autoBootstrapAgentRef.current = null;
+      // Small delay to let new session settle
+      const timer = setTimeout(() => {
+        if (agentStatus === 'idle' && !sendingRef.current) {
+          runChatRequest('hi', { userText: 'hi' });
+        }
+      }, 800);
+      return () => clearTimeout(timer);
+    }
+  }, [activeSessionId, agentStatus]);
 
   const handleSend = async () => {
     if (!canSendCurrentMessage) return;
