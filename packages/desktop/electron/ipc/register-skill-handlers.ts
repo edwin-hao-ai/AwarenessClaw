@@ -675,15 +675,32 @@ export function registerSkillHandlers(deps: {
       }
 
       if (!ok) {
-        // Provide actionable error messages instead of raw stderr
+        // Extract the real error from brew/npm stderr noise.
+        // brew stderr contains ✔ progress lines mixed with Error: lines.
         let friendlyError = lastError;
-        if (lastError.includes('SSL_ERROR') || lastError.includes('curl')) {
-          friendlyError = 'Network error during download. Please check your internet connection and try again.';
-        } else if (lastError.includes('Permission denied') || lastError.includes('EACCES')) {
-          friendlyError = 'Permission denied. Try running the install command manually in Terminal.';
-        } else if (lastError.includes('timed out')) {
-          friendlyError = 'Installation timed out. Your network may be slow — try again or install manually.';
+
+        // Try to extract just the Error: lines from brew output
+        const errorLines = lastError.split('\n').filter((l: string) =>
+          l.trim().startsWith('Error:') || l.trim().startsWith('fatal:') || l.trim().startsWith('npm ERR!'));
+        if (errorLines.length > 0) {
+          friendlyError = errorLines.join(' ').slice(0, 300);
         }
+
+        // Map known errors to actionable user-friendly messages
+        if (friendlyError.includes('Command Line Tools') || friendlyError.includes('xcode-select')) {
+          friendlyError = process.platform === 'darwin'
+            ? 'Xcode Command Line Tools need updating. Open Terminal and run: xcode-select --install'
+            : friendlyError;
+        } else if (friendlyError.includes('SSL_ERROR') || friendlyError.includes('curl') || friendlyError.includes('Failed to download')) {
+          friendlyError = 'Network error during download. Please check your internet connection and try again.';
+        } else if (friendlyError.includes('Permission denied') || friendlyError.includes('EACCES')) {
+          friendlyError = 'Permission denied. Try running the install command manually in Terminal.';
+        } else if (friendlyError.includes('timed out')) {
+          friendlyError = 'Installation timed out. Your network may be slow — try again or install manually.';
+        } else if (friendlyError.includes('No available formula') || friendlyError.includes('not found')) {
+          friendlyError = `Package not found in package manager. Try the Install Guide for manual instructions.`;
+        }
+
         failures.push({
           id: spec.id || 'unknown',
           label: spec.label || spec.id || 'unknown',
