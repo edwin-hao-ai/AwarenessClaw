@@ -205,6 +205,7 @@ OpenClaw 的 chat 质量依赖 `~/.openclaw/workspace/` 下的 MD 文档：
 - [x] **旧用户 browser/web 启动自迁移**：应用启动时一次性修复历史 openclaw.json，把缺失的 browser allowlist、被旧默认关掉的 browser/web search/web fetch 自动拉回可用态，后续不再反复覆盖用户新选择（2026-04-04）
 - [x] **旧用户 host exec 缺省自迁移**：若历史机器没有显式 exec-approvals 配置，启动时一次性补齐桌面首装同级 host exec 默认，避免旧用户缺权限却要手动进 Settings 修复（2026-04-04）
 - [x] **修正无效 browser 搜索默认值**：Windows smoke 发现 OpenClaw 2026.4.2 不接受 `tools.web.search.provider = browser`；桌面默认值和旧用户迁移已改为 keyless `duckduckgo`，并同步修正文案与 provider 选项（2026-04-04）
+- [x] **Settings 明确 Search / Fetch / Browser 分工**：Web & Browser 区块新增用户视角流程说明，明确 DuckDuckGo 只是默认 search provider，而 browser 仍是独立自动化工具（2026-04-05）
 
 ### 工作区设置
 - [x] **工作区文件编辑器**：Settings 页 Workspace section，编辑 SOUL.md / USER.md / IDENTITY.md / TOOLS.md（模态框 + 保存）（2026-03-30）

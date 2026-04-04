@@ -409,6 +409,7 @@ export default function Settings() {
   };
 
   const selectedWebProvider = String(webValues?.search?.provider || '').trim();
+  const effectiveWebProvider = selectedWebProvider || 'duckduckgo';
   const webProviderGuide = selectedWebProvider
     ? WEB_PROVIDER_GUIDANCE[selectedWebProvider] || {
         title: `settings.web.guide.generic.title`,
@@ -542,6 +543,49 @@ export default function Settings() {
           <div className="p-4 space-y-4">
             <div className="text-xs text-slate-500">
               {t('settings.web.desc', 'Configure OpenClaw web search, page fetch, and browser automation settings directly from Desktop. This form is generated from the OpenClaw config schema, so supported fields track the installed OpenClaw version.')}
+            </div>
+
+            <div className="rounded-xl border border-slate-700/60 bg-slate-900/40 p-3 space-y-3">
+              <div className="text-xs font-medium text-slate-200">
+                {t('settings.web.flow.title', 'How Desktop uses these web tools')}
+              </div>
+              <div className="grid gap-3 md:grid-cols-3">
+                <div className="rounded-lg border border-sky-500/20 bg-sky-500/10 px-3 py-3">
+                  <div className="text-[11px] font-semibold uppercase tracking-wide text-sky-200">
+                    {t('settings.web.flow.search.label', '1. Search')}
+                  </div>
+                  <div className="mt-2 text-xs text-slate-100">
+                    {t('settings.web.flow.search.title', 'Find sources and snippets from the web')}
+                  </div>
+                  <div className="mt-1 text-[11px] text-slate-300">
+                    {t('settings.web.flow.search.detail', 'Desktop calls web_search first. If you have not picked another provider, the effective default is {0}.').replace('{0}', effectiveWebProvider)}
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-3 py-3">
+                  <div className="text-[11px] font-semibold uppercase tracking-wide text-emerald-200">
+                    {t('settings.web.flow.fetch.label', '2. Fetch')}
+                  </div>
+                  <div className="mt-2 text-xs text-slate-100">
+                    {t('settings.web.flow.fetch.title', 'Read a specific page or article')}
+                  </div>
+                  <div className="mt-1 text-[11px] text-slate-300">
+                    {t('settings.web.flow.fetch.detail', 'Desktop uses web_fetch to pull readable page content from a URL. This is usually enough when the user already has the link.')}
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-3">
+                  <div className="text-[11px] font-semibold uppercase tracking-wide text-amber-200">
+                    {t('settings.web.flow.browser.label', '3. Browser')}
+                  </div>
+                  <div className="mt-2 text-xs text-slate-100">
+                    {t('settings.web.flow.browser.title', 'Open, click, log in, and handle JS-heavy sites')}
+                  </div>
+                  <div className="mt-1 text-[11px] text-slate-300">
+                    {t('settings.web.flow.browser.detail', 'Browser stays enabled as a separate tool. It is not your web_search provider, but Desktop keeps it available for page automation.')}
+                  </div>
+                </div>
+              </div>
             </div>
 
             {webProviderGuide && (
