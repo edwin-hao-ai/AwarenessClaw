@@ -172,10 +172,13 @@ export function registerChatHandlers(deps: {
 
     let fullMessage = message;
 
-    // Bootstrap injection: if this agent has a BOOTSTRAP.md, inject its content
-    // into the FIRST message only, then delete it so subsequent messages are normal.
-    // OpenClaw's native bootstrap relies on the LLM reading BOOTSTRAP.md via AGENTS.md,
-    // but smaller models may not follow those instructions. We inject once and delete.
+    // Bootstrap dual mechanism:
+    // 1. Primary: OpenClaw Gateway injects AGENTS.md into system prompt, which instructs
+    //    the LLM to read BOOTSTRAP.md and follow it. This is the native mechanism.
+    // 2. Fallback: If BOOTSTRAP.md still exists when a non-main agent sends its FIRST
+    //    message in this desktop session, we inject the content as a safety net for
+    //    smaller models that may not follow AGENTS.md instructions reliably.
+    //    After injection, we delete BOOTSTRAP.md to prevent re-triggering.
     if (agentId !== 'main') {
       try {
         const slug = agentId.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
@@ -187,19 +190,16 @@ export function registerChatHandlers(deps: {
           if (fs.existsSync(bp)) {
             const bootstrapContent = fs.readFileSync(bp, 'utf-8').trim();
             if (bootstrapContent) {
-              fullMessage = `[BOOTSTRAP — First Run Ritual]\nThis agent has never been initialized. Before answering, you MUST follow the bootstrap ritual below. Ask the user the questions described, then update the workspace files as instructed.\n\n${bootstrapContent}\n\n[User's first message]\n${message}`;
-              // Delete BOOTSTRAP.md immediately after injection — this ensures
-              // the ritual only runs once, matching OpenClaw's native behavior.
-              // Delete from ALL possible locations so it doesn't re-trigger.
+              fullMessage = `[BOOTSTRAP — First Run Ritual]\nThis is your first conversation. Follow the bootstrap instructions below to get to know your user, then update IDENTITY.md, USER.md, and SOUL.md with what you learn.\n\n${bootstrapContent}\n\n[User's first message]\n${message}`;
+              // Delete from all locations after injection — one-time only
               for (const d of [flatWs, nestedWs, agentWs]) {
-                const f = path.join(d, 'BOOTSTRAP.md');
-                try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch { /* ignore */ }
+                try { const f = path.join(d, 'BOOTSTRAP.md'); if (fs.existsSync(f)) fs.unlinkSync(f); } catch { /* ignore */ }
               }
             }
             break;
           }
         }
-      } catch { /* ignore bootstrap read errors */ }
+      } catch { /* ignore */ }
     }
 
     const homeDir = os.homedir();
