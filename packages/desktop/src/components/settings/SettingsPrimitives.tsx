@@ -16,7 +16,7 @@ export function SettingsToggle({ checked, onChange }: { checked: boolean; onChan
   );
 }
 
-export function SettingsSection({ title, children }: { title: string; children: ReactNode }) {
+export function SettingsSection({ title, children }: { title: ReactNode; children: ReactNode }) {
   return (
     <div className="space-y-3">
       <h3 className="settings-section-title">{title}</h3>

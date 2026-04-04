@@ -1,4 +1,4 @@
-import { Monitor, Moon, Sun } from 'lucide-react';
+import { Coins, Monitor, Moon, Palette, Sun } from 'lucide-react';
 import { SettingsRow, SettingsSection, SettingsToggle } from './SettingsPrimitives';
 
 type TFunction = (key: string, fallback?: string) => string;
@@ -19,7 +19,12 @@ export function SettingsTokenPanel({
   const thinkingTokens = { off: 0, minimal: 100, low: 300, medium: 800, high: 2000 }[thinkingLevel || 'low'] || 300;
 
   return (
-    <SettingsSection title={`💰 ${t('settings.token')}`}>
+    <SettingsSection title={(
+      <span className="inline-flex items-center gap-2">
+        <Coins size={15} className="text-amber-300" />
+        {t('settings.token')}
+      </span>
+    )}>
       <SettingsRow label={t('settings.token.thinkingLevel')} desc={t('settings.token.thinkingLevel.desc')}>
         <select
           value={thinkingLevel || 'low'}
@@ -67,17 +72,22 @@ export function SettingsAppearancePanel({
   onThemeChange: (value: 'light' | 'dark' | 'system') => void;
 }) {
   return (
-    <SettingsSection title={`🎨 ${t('settings.appearance')}`}>
+    <SettingsSection title={(
+      <span className="inline-flex items-center gap-2">
+        <Palette size={15} className="text-pink-300" />
+        {t('settings.appearance')}
+      </span>
+    )}>
       <SettingsRow label={t('settings.language')}>
         <select
           value={language}
           onChange={(event) => onLanguageChange(event.target.value)}
           className="settings-select text-sm"
         >
-          <option value="zh">🇨🇳 中文</option>
-          <option value="en">🇺🇸 English</option>
-          <option value="ja">🇯🇵 日本語</option>
-          <option value="ko">🇰🇷 한국어</option>
+          <option value="zh">中文</option>
+          <option value="en">English</option>
+          <option value="ja">日本語</option>
+          <option value="ko">한국어</option>
         </select>
       </SettingsRow>
       <SettingsRow label={t('settings.theme')}>

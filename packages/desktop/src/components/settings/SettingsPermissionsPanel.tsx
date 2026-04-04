@@ -117,7 +117,12 @@ export function SettingsPermissionsPanel({
   };
 
   return (
-    <SettingsSection title={`🛡️ ${t('settings.permissions')}`}>
+    <SettingsSection title={(
+      <span className="inline-flex items-center gap-2">
+        <Shield size={15} className="text-emerald-300" />
+        {t('settings.permissions')}
+      </span>
+    )}>
       <div className="p-5 space-y-5">
         <p className="text-xs leading-5 text-slate-500">{t('settings.permissions.presetDesc', 'This panel is a simplified desktop view of OpenClaw permissions. It controls tool allow/deny plus part of exec approval behavior.')}</p>
         <div className="settings-glass-soft px-3 py-3 text-[11px] leading-5 text-amber-300">

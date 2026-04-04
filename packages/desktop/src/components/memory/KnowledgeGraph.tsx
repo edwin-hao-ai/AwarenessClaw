@@ -45,18 +45,6 @@ const CATEGORY_COLORS: Record<string, string> = {
   skill: '#6366f1',            // indigo
 };
 
-const CATEGORY_EMOJI: Record<string, string> = {
-  decision: '\u{1F4A1}',
-  problem_solution: '\u{1F527}',
-  workflow: '\u{1F4CB}',
-  pitfall: '\u{26A0}',
-  insight: '\u{2728}',
-  key_point: '\u{1F4CC}',
-  personal_preference: '\u{1F464}',
-  important_detail: '\u{1F4CE}',
-  skill: '\u{1F6E0}',
-};
-
 function getCategoryColor(cat: string): string {
   return CATEGORY_COLORS[cat] || '#64748b';
 }
@@ -207,6 +195,10 @@ function buildGraphData(cards: KnowledgeCard[], events: MemoryEvent[]) {
 export default function KnowledgeGraph({ cards, events, width, height, onCardClick }: Props) {
   const graphRef = useRef<ForceGraphMethods | undefined>(undefined);
   const [hoveredNode, setHoveredNode] = useState<GraphNode | null>(null);
+  const [isDark, setIsDark] = useState<boolean>(() => {
+    if (typeof document === 'undefined') return true;
+    return document.documentElement.classList.contains('dark');
+  });
   const { t } = useI18n();
 
   const graphData = useMemo(() => buildGraphData(cards, events), [cards, events]);
@@ -219,6 +211,44 @@ export default function KnowledgeGraph({ cards, events, width, height, onCardCli
     }, 500);
     return () => clearTimeout(id);
   }, [graphData, width, height]);
+
+  // Track light/dark mode so canvas text/links stay readable in both themes.
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const root = document.documentElement;
+    const syncTheme = () => setIsDark(root.classList.contains('dark'));
+    syncTheme();
+
+    const observer = new MutationObserver(syncTheme);
+    observer.observe(root, { attributes: true, attributeFilter: ['class'] });
+
+    return () => observer.disconnect();
+  }, []);
+
+  // Increase graph spacing and reduce overlap.
+  useEffect(() => {
+    const fg = graphRef.current;
+    if (!fg || graphData.nodes.length === 0) return;
+
+    const charge = fg.d3Force('charge') as any;
+    if (charge && typeof charge.strength === 'function') {
+      charge.strength(-420);
+    }
+
+    const link = fg.d3Force('link') as any;
+    if (link) {
+      if (typeof link.distance === 'function') {
+        link.distance((l: any) => {
+          const base = l?.reason === 'session' ? 230 : 180;
+          const score = typeof l?.value === 'number' ? l.value : 0.4;
+          return base + Math.round((1 - Math.min(1, score)) * 70);
+        });
+      }
+      if (typeof link.strength === 'function') {
+        link.strength((l: any) => (l?.reason === 'session' ? 0.55 : 0.85));
+      }
+    }
+  }, [graphData.nodes.length, graphData.links.length]);
 
   const handleNodeHover = useCallback((node: any, prevNode: any) => {
     if (node) {
@@ -238,40 +268,42 @@ export default function KnowledgeGraph({ cards, events, width, height, onCardCli
   // Custom node rendering
   const paintNode = useCallback((node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
     const gNode = node as GraphNode & { x: number; y: number };
-    const fontSize = Math.max(10 / globalScale, 2);
-    const nodeRadius = 6;
+    const fontSize = Math.max(11 / globalScale, 2);
+    const nodeRadius = 7;
     const isHovered = hoveredNode?.id === gNode.id;
+    const radius = isHovered ? nodeRadius * 1.45 : nodeRadius;
 
-    // Node circle
+    // Hollow node ring
     ctx.beginPath();
-    ctx.arc(gNode.x, gNode.y, isHovered ? nodeRadius * 1.4 : nodeRadius, 0, 2 * Math.PI);
-    ctx.fillStyle = gNode.color;
-    ctx.globalAlpha = isHovered ? 1 : 0.85;
-    ctx.fill();
-    ctx.globalAlpha = 1;
+    ctx.arc(gNode.x, gNode.y, radius, 0, 2 * Math.PI);
+    ctx.strokeStyle = gNode.color;
+    ctx.lineWidth = (isHovered ? 3.2 : 2.4) / globalScale;
+    ctx.stroke();
 
     if (isHovered) {
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 1.5 / globalScale;
+      ctx.beginPath();
+      ctx.arc(gNode.x, gNode.y, radius + 2.8 / globalScale, 0, 2 * Math.PI);
+      ctx.strokeStyle = isDark ? 'rgba(226,232,240,0.65)' : 'rgba(15,23,42,0.45)';
+      ctx.lineWidth = 1.4 / globalScale;
       ctx.stroke();
     }
 
-    // Category emoji above node
-    const emoji = CATEGORY_EMOJI[gNode.category] || '\u{1F3F7}';
-    ctx.font = `${fontSize * 1.2}px sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.fillText(emoji, gNode.x, gNode.y - nodeRadius - fontSize * 0.4);
+    // Small center dot improves hit readability when zoomed out.
+    ctx.beginPath();
+    ctx.arc(gNode.x, gNode.y, 1.25 / globalScale, 0, 2 * Math.PI);
+    ctx.fillStyle = gNode.color;
+    ctx.fill();
 
     // Label below node
-    if (globalScale > 0.6) {
+    if (globalScale > 0.55) {
       ctx.font = `${fontSize}px sans-serif`;
       ctx.textAlign = 'center';
-      ctx.fillStyle = '#e2e8f0'; // slate-200
+      ctx.fillStyle = isDark ? '#e2e8f0' : '#334155';
       const maxLen = Math.min(Math.round(20 / Math.max(0.5, 1 / globalScale)), 30);
       const label = gNode.label.length > maxLen ? gNode.label.slice(0, maxLen) + '...' : gNode.label;
-      ctx.fillText(label, gNode.x, gNode.y + nodeRadius + fontSize);
+      ctx.fillText(label, gNode.x, gNode.y + radius + fontSize + 1);
     }
-  }, [hoveredNode]);
+  }, [hoveredNode, isDark]);
 
   // Custom link rendering
   const paintLink = useCallback((link: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
@@ -282,10 +314,12 @@ export default function KnowledgeGraph({ cards, events, width, height, onCardCli
     ctx.beginPath();
     ctx.moveTo(src.x, src.y);
     ctx.lineTo(tgt.x, tgt.y);
-    ctx.strokeStyle = link.reason === 'session' ? 'rgba(59,130,246,0.2)' : 'rgba(148,163,184,0.15)';
-    ctx.lineWidth = Math.max(0.5, link.value * 2) / globalScale;
+    ctx.strokeStyle = link.reason === 'session'
+      ? (isDark ? 'rgba(96,165,250,0.52)' : 'rgba(59,130,246,0.46)')
+      : (isDark ? 'rgba(148,163,184,0.34)' : 'rgba(71,85,105,0.30)');
+    ctx.lineWidth = Math.max(0.95, 0.95 + (link.value || 0.3) * 1.8) / globalScale;
     ctx.stroke();
-  }, []);
+  }, [isDark]);
 
   // Build legend data
   const categoriesInGraph = useMemo(() => {
@@ -314,7 +348,7 @@ export default function KnowledgeGraph({ cards, events, width, height, onCardCli
         nodeCanvasObject={paintNode}
         nodePointerAreaPaint={(node: any, color, ctx) => {
           ctx.beginPath();
-          ctx.arc(node.x, node.y, 8, 0, 2 * Math.PI);
+          ctx.arc(node.x, node.y, 12, 0, 2 * Math.PI);
           ctx.fillStyle = color;
           ctx.fill();
         }}
@@ -330,22 +364,28 @@ export default function KnowledgeGraph({ cards, events, width, height, onCardCli
       />
 
       {/* Legend */}
-      <div className="absolute top-3 left-3 bg-slate-900/90 backdrop-blur-sm rounded-lg border border-slate-700/50 p-2.5 max-w-[180px]">
-        <div className="text-[10px] text-slate-400 font-medium mb-1.5 uppercase tracking-wider">{t('memory.graph.categories', 'Categories')}</div>
+      <div className={`absolute top-3 left-3 rounded-lg border p-2.5 max-w-[180px] backdrop-blur-sm ${
+        isDark
+          ? 'bg-slate-900/90 border-slate-700/50'
+          : 'bg-white/90 border-slate-300/80 shadow-sm'
+      }`}>
+        <div className={`text-[10px] font-medium mb-1.5 uppercase tracking-wider ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
+          {t('memory.graph.categories', 'Categories')}
+        </div>
         <div className="space-y-1">
           {categoriesInGraph.map(cat => (
             <div key={cat} className="flex items-center gap-1.5">
               <div
-                className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                style={{ backgroundColor: getCategoryColor(cat) }}
+                className="w-2.5 h-2.5 rounded-full border-2 bg-transparent flex-shrink-0"
+                style={{ borderColor: getCategoryColor(cat) }}
               />
-              <span className="text-[10px] text-slate-300 truncate">
+              <span className={`text-[10px] truncate ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
                 {t(`memory.category.${cat}`, cat.replace(/_/g, ' '))}
               </span>
             </div>
           ))}
         </div>
-        <div className="text-[9px] text-slate-500 mt-2 border-t border-slate-700/50 pt-1.5">
+        <div className={`text-[9px] mt-2 pt-1.5 border-t ${isDark ? 'text-slate-500 border-slate-700/50' : 'text-slate-500 border-slate-300/70'}`}>
           {t('memory.graph.stats', '{0} cards · {1} links')
             .replace('{0}', String(graphData.nodes.length))
             .replace('{1}', String(graphData.links.length))}
@@ -355,7 +395,11 @@ export default function KnowledgeGraph({ cards, events, width, height, onCardCli
       {/* Hover tooltip */}
       {hoveredNode && (
         <div
-          className="absolute pointer-events-none z-50 bg-slate-800/95 backdrop-blur-sm border border-slate-600/50 rounded-xl p-3 shadow-xl max-w-[280px]"
+          className={`absolute pointer-events-none z-50 rounded-xl p-3 backdrop-blur-sm max-w-[280px] ${
+            isDark
+              ? 'bg-slate-800/95 border border-slate-600/50 shadow-xl'
+              : 'bg-white/96 border border-slate-300 shadow-lg'
+          }`}
           style={{ top: 60, right: 12 }}
         >
           <div className="flex items-center gap-1.5 mb-1">
@@ -367,14 +411,14 @@ export default function KnowledgeGraph({ cards, events, width, height, onCardCli
               {hoveredNode.category.replace(/_/g, ' ')}
             </span>
             {hoveredNode.card.created_at && (
-              <span className="text-[9px] text-slate-500 ml-auto">
+              <span className={`text-[9px] ml-auto ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
                 {new Date(hoveredNode.card.created_at).toLocaleDateString()}
               </span>
             )}
           </div>
-          <p className="text-xs font-medium text-slate-200 mb-0.5">{hoveredNode.card.title}</p>
+          <p className={`text-xs font-medium mb-0.5 ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>{hoveredNode.card.title}</p>
           {hoveredNode.card.summary && (
-            <p className="text-[10px] text-slate-400 leading-relaxed line-clamp-3">{hoveredNode.card.summary}</p>
+            <p className={`text-[10px] leading-relaxed line-clamp-3 ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>{hoveredNode.card.summary}</p>
           )}
         </div>
       )}

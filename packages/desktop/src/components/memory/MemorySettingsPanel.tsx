@@ -1,4 +1,5 @@
-import { Cloud, ExternalLink, HardDrive, Shield, SlidersHorizontal, Trash2 } from 'lucide-react';
+import { Cloud, ExternalLink, HardDrive, MessageSquare, Shield, SlidersHorizontal, Trash2, Wrench } from 'lucide-react';
+import ChannelIcon from '../ChannelIcon';
 import { SettingsToggle } from '../settings/SettingsPrimitives';
 
 type TFunction = (key: string, fallback?: string) => string;
@@ -27,13 +28,13 @@ export function MemorySettingsPanel({
   onClearAll: () => void;
 }) {
   const sourceItems = [
-    { id: 'desktop', label: t('settings.privacy.desktop', 'Desktop Chat'), emoji: '💬' },
-    { id: 'openclaw-telegram', label: 'Telegram', emoji: '✈️' },
-    { id: 'openclaw-whatsapp', label: 'WhatsApp', emoji: '📱' },
-    { id: 'openclaw-discord', label: 'Discord', emoji: '🎮' },
-    { id: 'openclaw-slack', label: 'Slack', emoji: '💼' },
-    { id: 'openclaw-wechat', label: 'WeChat', emoji: '💚' },
-    { id: 'mcp', label: t('settings.privacy.devTools', 'Dev Tools (Claude Code / IDE)'), emoji: '🛠️' },
+    { id: 'desktop', label: t('settings.privacy.desktop', 'Desktop Chat'), icon: <MessageSquare size={14} className="text-slate-300" /> },
+    { id: 'openclaw-telegram', label: 'Telegram', icon: <ChannelIcon channelId="telegram" size={16} /> },
+    { id: 'openclaw-whatsapp', label: 'WhatsApp', icon: <ChannelIcon channelId="whatsapp" size={16} /> },
+    { id: 'openclaw-discord', label: 'Discord', icon: <ChannelIcon channelId="discord" size={16} /> },
+    { id: 'openclaw-slack', label: 'Slack', icon: <ChannelIcon channelId="slack" size={16} /> },
+    { id: 'openclaw-wechat', label: 'WeChat', icon: <ChannelIcon channelId="wechat" size={16} /> },
+    { id: 'mcp', label: t('settings.privacy.devTools', 'Dev Tools (Claude Code / IDE)'), icon: <Wrench size={14} className="text-slate-300" /> },
   ];
   const blockedSources = config.memoryBlockedSources || [];
   const allowedSourceCount = sourceItems.filter(({ id }) => !blockedSources.includes(id)).length;
@@ -93,6 +94,8 @@ export function MemorySettingsPanel({
                 max={20}
                 value={config.recallLimit}
                 onChange={(event) => onRecallLimitChange(parseInt(event.target.value, 10))}
+                aria-label={t('settings.memory.recallCount')}
+                title={t('settings.memory.recallCount')}
                 className="mt-4 w-full accent-brand-500"
               />
             </div>
@@ -142,7 +145,7 @@ export function MemorySettingsPanel({
                   </span>
                   <button
                     onClick={onCloudDisconnect}
-                    className="rounded-lg border border-red-500/20 px-3 py-1.5 text-xs text-red-300 transition-colors hover:bg-red-600/10"
+                    className="rounded-lg border border-red-300 bg-red-50 px-3 py-1.5 text-xs text-red-700 transition-colors hover:bg-red-100 dark:border-red-500/20 dark:bg-transparent dark:text-red-300 dark:hover:bg-red-600/10"
                   >
                     {t('settings.memory.cloud.disconnect')}
                   </button>
@@ -177,12 +180,15 @@ export function MemorySettingsPanel({
         </div>
 
         <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {sourceItems.map(({ id, label, emoji }) => {
+          {sourceItems.map(({ id, label, icon }) => {
             const isAllowed = !blockedSources.includes(id);
             return (
               <div key={id} className="flex items-center justify-between rounded-2xl border border-slate-700/70 bg-slate-950/70 p-4">
                 <div className="min-w-0 pr-3">
-                  <div className="text-sm font-medium text-slate-100">{emoji} {label}</div>
+                  <div className="flex items-center gap-2 text-sm font-medium text-slate-100">
+                    <span className="inline-flex h-5 w-5 items-center justify-center">{icon}</span>
+                    <span className="truncate">{label}</span>
+                  </div>
                   <div className="mt-1 text-xs text-slate-500">
                     {isAllowed ? t('memory.settings.sourceAllowed', 'Allowed to write memory') : t('memory.settings.sourceBlocked', 'Blocked from writing memory')}
                   </div>
@@ -194,17 +200,17 @@ export function MemorySettingsPanel({
         </div>
       </section>
 
-      <section className="rounded-[24px] border border-red-500/20 bg-red-950/20 p-5">
+      <section className="rounded-[24px] border border-red-300/70 bg-red-50 p-5 dark:border-red-500/20 dark:bg-red-950/20">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <div className="text-sm font-medium text-red-200">{t('memory.settings.dangerZone', 'Danger zone')}</div>
-            <p className="mt-2 text-sm leading-6 text-red-100/70">
+            <div className="text-sm font-medium text-red-700 dark:text-red-200">{t('memory.settings.dangerZone', 'Danger zone')}</div>
+            <p className="mt-2 text-sm leading-6 text-red-600 dark:text-red-100/70">
               {t('memory.settings.dangerZone.desc', 'Delete local knowledge cards only when you want to reset this machine’s durable memory state.')}
             </p>
           </div>
           <button
             onClick={onClearAll}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-red-500/30 px-3 py-2 text-xs font-medium text-red-200 transition-colors hover:bg-red-600/10"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-red-300 bg-white px-3 py-2 text-xs font-medium text-red-700 transition-colors hover:bg-red-100 dark:border-red-500/30 dark:bg-transparent dark:text-red-200 dark:hover:bg-red-600/10"
           >
             <Trash2 size={12} />
             {t('settings.privacy.clearAll', 'Delete All Knowledge Cards')}

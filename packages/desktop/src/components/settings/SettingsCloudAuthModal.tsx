@@ -1,4 +1,4 @@
-import { CheckCircle, Cloud, CloudOff, ExternalLink, Loader2 } from 'lucide-react';
+import { Brain, CheckCircle, Cloud, CloudOff, ExternalLink, Loader2 } from 'lucide-react';
 import { SettingsModalShell } from './SettingsPrimitives';
 
 type CloudMemory = { id: string; name: string };
@@ -84,7 +84,7 @@ export function SettingsCloudAuthModal({
               onClick={() => onSelectMemory(memory.id)}
               className="w-full flex items-center gap-3 p-3 settings-glass-soft text-left transition-colors hover:border-slate-500/50"
             >
-              <span className="text-brand-400">🧠</span>
+              <Brain size={16} className="text-brand-400" />
               <div>
                 <p className="text-sm text-slate-200">{memory.name || memory.id}</p>
                 <p className="text-[10px] text-slate-500 font-mono">{memory.id.slice(0, 8)}...</p>

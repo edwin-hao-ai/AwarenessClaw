@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Check, Loader2, Lock, Shield, Code2 } from 'lucide-react';
+import { Check, Code2, Globe2, Loader2, Lock, Settings as SettingsIcon, Shield } from 'lucide-react';
 import { useAppConfig, useDynamicProviders } from '../lib/store';
 import { getUsageStats, clearUsage, type UsageStats } from '../lib/usage';
 import { useI18n } from '../lib/i18n';
@@ -536,12 +536,20 @@ export default function Settings() {
     <div className="settings-ios h-full overflow-y-auto">
       <div className="settings-ios-header">
         <div className="settings-ios-shell px-6 py-4">
-          <h1 className="settings-page-title">⚙️ {t('settings.title')}</h1>
+          <h1 className="settings-page-title flex items-center gap-2">
+            <SettingsIcon size={18} className="text-brand-300" />
+            {t('settings.title')}
+          </h1>
         </div>
       </div>
 
       <div className="settings-ios-shell p-6 pb-10 space-y-7">
-        <SettingsSection title={`🌐 ${t('settings.web.title', 'Web & Browser')}`}>
+        <SettingsSection title={(
+          <span className="inline-flex items-center gap-2">
+            <Globe2 size={15} className="text-sky-300" />
+            {t('settings.web.title', 'Web & Browser')}
+          </span>
+        )}>
           <div className="p-5 space-y-5">
             <div className="text-xs text-slate-500 leading-5">
               {t('settings.web.desc', 'Configure OpenClaw web search, page fetch, and browser automation settings directly from Desktop. This form is generated from the OpenClaw config schema, so supported fields track the installed OpenClaw version.')}

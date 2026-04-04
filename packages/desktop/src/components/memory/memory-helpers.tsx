@@ -4,6 +4,27 @@
  */
 
 import type { MemoryKnowledgeCard } from '../../lib/memory-context';
+import type { LucideIcon } from 'lucide-react';
+import {
+  AppWindow,
+  Bot,
+  FileText,
+  Hammer,
+  Lightbulb,
+  ListTodo,
+  MessageCircle,
+  Monitor,
+  Paperclip,
+  PenSquare,
+  Pin,
+  Send,
+  Smartphone,
+  Sparkles,
+  Tag,
+  TriangleAlert,
+  UserRound,
+  Wrench,
+} from 'lucide-react';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -52,38 +73,38 @@ export type TabView = 'timeline' | 'knowledge' | 'graph' | 'settings';
 // Category & Source display config
 // ---------------------------------------------------------------------------
 
-const CATEGORY_CONFIG: Record<string, { emoji: string; labelKey: string; color: string }> = {
-  decision: { emoji: '💡', labelKey: 'memory.category.decision', color: 'text-amber-400' },
-  problem_solution: { emoji: '🔧', labelKey: 'memory.category.problem_solution', color: 'text-emerald-400' },
-  workflow: { emoji: '📋', labelKey: 'memory.category.workflow', color: 'text-blue-400' },
-  pitfall: { emoji: '⚠️', labelKey: 'memory.category.pitfall', color: 'text-red-400' },
-  insight: { emoji: '✨', labelKey: 'memory.category.insight', color: 'text-purple-400' },
-  key_point: { emoji: '📌', labelKey: 'memory.category.key_point', color: 'text-cyan-400' },
-  personal_preference: { emoji: '👤', labelKey: 'memory.category.personal_preference', color: 'text-pink-400' },
-  important_detail: { emoji: '📎', labelKey: 'memory.category.important_detail', color: 'text-orange-400' },
-  skill: { emoji: '🛠️', labelKey: 'memory.category.skill', color: 'text-indigo-400' },
+const CATEGORY_CONFIG: Record<string, { icon: LucideIcon; labelKey: string; color: string }> = {
+  decision: { icon: Lightbulb, labelKey: 'memory.category.decision', color: 'text-amber-400' },
+  problem_solution: { icon: Wrench, labelKey: 'memory.category.problem_solution', color: 'text-emerald-400' },
+  workflow: { icon: ListTodo, labelKey: 'memory.category.workflow', color: 'text-blue-400' },
+  pitfall: { icon: TriangleAlert, labelKey: 'memory.category.pitfall', color: 'text-red-400' },
+  insight: { icon: Sparkles, labelKey: 'memory.category.insight', color: 'text-purple-400' },
+  key_point: { icon: Pin, labelKey: 'memory.category.key_point', color: 'text-cyan-400' },
+  personal_preference: { icon: UserRound, labelKey: 'memory.category.personal_preference', color: 'text-pink-400' },
+  important_detail: { icon: Paperclip, labelKey: 'memory.category.important_detail', color: 'text-orange-400' },
+  skill: { icon: Hammer, labelKey: 'memory.category.skill', color: 'text-indigo-400' },
 };
 
-const SOURCE_CONFIG: Record<string, { emoji: string; label: string }> = {
-  'claude-code': { emoji: '🤖', label: 'Claude Code' },
-  'openclaw': { emoji: '🦞', label: 'OpenClaw' },
-  'desktop': { emoji: '🖥️', label: 'Desktop' },
-  'wechat': { emoji: '💬', label: 'WeChat' },
-  'whatsapp': { emoji: '📱', label: 'WhatsApp' },
-  'telegram': { emoji: '✈️', label: 'Telegram' },
-  'manual': { emoji: '✍️', label: 'Manual' },
+const SOURCE_CONFIG: Record<string, { icon: LucideIcon; label: string }> = {
+  'claude-code': { icon: Bot, label: 'Claude Code' },
+  'openclaw': { icon: AppWindow, label: 'OpenClaw' },
+  'desktop': { icon: Monitor, label: 'Desktop' },
+  'wechat': { icon: MessageCircle, label: 'WeChat' },
+  'whatsapp': { icon: Smartphone, label: 'WhatsApp' },
+  'telegram': { icon: Send, label: 'Telegram' },
+  'manual': { icon: PenSquare, label: 'Manual' },
 };
 
-export function getCategoryDisplay(category: string): { emoji: string; label: string; color: string } {
+export function getCategoryDisplay(category: string): { icon: LucideIcon; label: string; color: string } {
   const known = CATEGORY_CONFIG[category];
-  if (known) return { emoji: known.emoji, label: known.labelKey, color: known.color };
+  if (known) return { icon: known.icon, label: known.labelKey, color: known.color };
   const humanized = category.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-  return { emoji: '🏷️', label: humanized, color: 'text-slate-400' };
+  return { icon: Tag, label: humanized, color: 'text-slate-400' };
 }
 
-export function getSourceDisplay(source: string | undefined): { emoji: string; label: string } {
-  if (!source) return { emoji: '📝', label: 'Unknown' };
-  return SOURCE_CONFIG[source] || { emoji: '📝', label: source };
+export function getSourceDisplay(source: string | undefined): { icon: LucideIcon; label: string } {
+  if (!source) return { icon: FileText, label: 'Unknown' };
+  return SOURCE_CONFIG[source] || { icon: FileText, label: source };
 }
 
 // ---------------------------------------------------------------------------

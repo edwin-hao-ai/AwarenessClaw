@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle, ChevronRight, Cloud, Code2, Download, ExternalLink, Loader2, Play, RefreshCw, RotateCw, Shield, Square, Trash2, Upload, Webhook } from 'lucide-react';
+import { AlertTriangle, CheckCircle, ChevronRight, CircleX, Cloud, Code2, Download, ExternalLink, Loader2, Play, Puzzle, RefreshCw, RotateCw, Shield, SkipForward, Square, Stethoscope, Trash2, Upload, Webhook, Wrench } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { SettingsModalShell, SettingsRow, SettingsSection, SettingsToggle } from './SettingsPrimitives';
 
@@ -20,7 +20,12 @@ export function SettingsHealthPanel({
   onFix: (checkId: string) => void;
 }) {
   return (
-    <SettingsSection title={`🩺 ${t('settings.health', 'System Health')}`}>
+    <SettingsSection title={(
+      <span className="inline-flex items-center gap-2">
+        <Stethoscope size={15} className="text-rose-300" />
+        {t('settings.health', 'System Health')}
+      </span>
+    )}>
       <div className="p-4 space-y-2">
         <div className="flex items-center justify-between mb-3">
           <p className="text-xs text-slate-500">{t('settings.health.desc', 'Automatic diagnostics for OpenClaw and AwarenessClaw')}</p>
@@ -61,7 +66,13 @@ export function SettingsHealthPanel({
                 }`}
               >
                 <span className="shrink-0">
-                  {check.status === 'pass' ? '✅' : check.status === 'warn' ? '⚠️' : check.status === 'fail' ? '❌' : '⏭️'}
+                  {check.status === 'pass'
+                    ? <CheckCircle size={14} />
+                    : check.status === 'warn'
+                      ? <AlertTriangle size={14} />
+                      : check.status === 'fail'
+                        ? <CircleX size={14} />
+                        : <SkipForward size={14} />}
                 </span>
                 <div className="flex-1 min-w-0">
                   <span className="font-medium">{check.label}</span>
@@ -100,7 +111,12 @@ export function SettingsSecurityAuditPanel({
   securityIssues: Array<{ level: string; message: string; fix?: string }>;
 }) {
   return (
-    <SettingsSection title={`🔒 ${t('settings.security') || 'Security Audit'}`}>
+    <SettingsSection title={(
+      <span className="inline-flex items-center gap-2">
+        <Shield size={15} className="text-amber-300" />
+        {t('settings.security') || 'Security Audit'}
+      </span>
+    )}>
       <div className="p-4 space-y-2">
         {securityIssues.length === 0 ? (
           <div className="flex items-center gap-2 text-xs p-2 rounded-lg bg-emerald-500/10 text-emerald-400">
@@ -144,7 +160,12 @@ export function SettingsExtensionsPanel({
   return (
     <>
       {Object.keys(plugins).length > 0 && (
-        <SettingsSection title={`🧩 ${t('settings.plugins', 'Plugins')} (${Object.keys(plugins).length})`}>
+        <SettingsSection title={(
+          <span className="inline-flex items-center gap-2">
+            <Puzzle size={15} className="text-violet-300" />
+            {t('settings.plugins', 'Plugins')} ({Object.keys(plugins).length})
+          </span>
+        )}>
           {Object.entries(plugins).map(([name, cfg]) => {
             const enabled = cfg?.enabled !== false;
             return (
@@ -157,7 +178,12 @@ export function SettingsExtensionsPanel({
       )}
 
       {Object.keys(hooks).length > 0 && (
-        <SettingsSection title={`🪝 ${t('settings.hooks', 'Hooks')} (${Object.keys(hooks).length})`}>
+        <SettingsSection title={(
+          <span className="inline-flex items-center gap-2">
+            <Webhook size={15} className="text-cyan-300" />
+            {t('settings.hooks', 'Hooks')} ({Object.keys(hooks).length})
+          </span>
+        )}>
           {Object.entries(hooks).map(([hookName, hookCfg]) => {
             const enabled = hookCfg?.enabled !== false;
             const subEntries = hookCfg?.entries ? Object.entries(hookCfg.entries) : [];
@@ -204,7 +230,12 @@ export function SettingsGatewayPanel({
   onLoadLogs: () => void;
 }) {
   return (
-    <SettingsSection title={`🖥️ ${t('settings.gateway')}`}>
+    <SettingsSection title={(
+      <span className="inline-flex items-center gap-2">
+        <Cloud size={15} className="text-sky-300" />
+        {t('settings.gateway')}
+      </span>
+    )}>
       <SettingsRow
         label={t('settings.gateway.label', 'OpenClaw Gateway')}
         desc={t(`settings.gateway.status.${gatewayStatus}`)}
@@ -276,7 +307,12 @@ export function SettingsSystemPanel({
   onResetSetup: () => void;
 }) {
   return (
-    <SettingsSection title={`🔧 ${t('settings.system')}`}>
+    <SettingsSection title={(
+      <span className="inline-flex items-center gap-2">
+        <Wrench size={15} className="text-slate-300" />
+        {t('settings.system')}
+      </span>
+    )}>
       <SettingsRow label={t('settings.autoUpdate')} desc={t('settings.autoUpdate.desc')}>
         <SettingsToggle checked={autoUpdate} onChange={onAutoUpdateChange} />
       </SettingsRow>
@@ -334,7 +370,12 @@ export function SettingsLogsModal({
 
   return (
     <SettingsModalShell
-      title={`📋 ${t('settings.gateway.logs')}`}
+      title={(
+        <span className="inline-flex items-center gap-2">
+          <Code2 size={16} className="text-slate-300" />
+          {t('settings.gateway.logs')}
+        </span>
+      )}
       onClose={onClose}
       maxWidthClass="max-w-3xl"
       maxHeightClass="max-h-[80vh]"

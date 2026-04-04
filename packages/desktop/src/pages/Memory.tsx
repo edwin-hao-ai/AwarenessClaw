@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
-import { Search, RefreshCw, Loader2, AlertCircle, Zap, HardDrive, Cloud, ChevronDown, ChevronRight, Calendar, Play, Clock, FileText, Share2, SlidersHorizontal } from 'lucide-react';
+import { Search, RefreshCw, Loader2, AlertCircle, Zap, HardDrive, Cloud, ChevronDown, ChevronRight, Calendar, Play, Clock, FileText, Share2, SlidersHorizontal, AlarmClock, Bell, Brain, FileCode, Lightbulb, Sparkles, TriangleAlert } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useI18n } from '../lib/i18n';
@@ -795,7 +795,10 @@ export default function Memory() {
       <div className="px-6 py-4 border-b border-slate-800">
         <div className="flex items-center justify-between mb-3">
           <div>
-            <h1 className="text-lg font-semibold">🧠 {t('memory.title')}</h1>
+            <h1 className="flex items-center gap-2 text-lg font-semibold">
+              <Brain size={18} className="text-brand-300" />
+              {t('memory.title')}
+            </h1>
             <p className="text-xs text-slate-500">
               {error ? <span className="text-amber-500">{error}</span>
                 : statsText ? <span className="text-slate-400">{statsText}</span>
@@ -872,6 +875,7 @@ export default function Memory() {
             {[...new Set(cards.map(c => c.category).filter(Boolean))].map((cat) => {
               const count = cards.filter(c => c.category === cat).length;
               const display = getCategoryDisplay(cat);
+              const CategoryIcon = display.icon;
               return (
                 <button
                   key={cat}
@@ -880,7 +884,10 @@ export default function Memory() {
                     selectedCategory === cat ? 'bg-brand-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
                   }`}
                 >
-                  {display.emoji} {t(display.label, display.label)} ({count})
+                  <span className="inline-flex items-center gap-1.5">
+                    <CategoryIcon size={12} />
+                    {t(display.label, display.label)} ({count})
+                  </span>
                 </button>
               );
             })}
@@ -950,9 +957,10 @@ export default function Memory() {
                 <div className="space-y-1">
                   {dailySummary.recentCards.map((card, i) => {
                     const cfg = getCategoryDisplay(card.category);
+                    const CardIcon = cfg.icon;
                     return (
                       <div key={i} className="flex items-start gap-2 text-[11px]">
-                        <span>{cfg.emoji}</span>
+                        <CardIcon size={13} className="mt-0.5 text-slate-300" />
                         <span className="text-slate-300 line-clamp-1">{card.title || card.summary}</span>
                       </div>
                     );
@@ -968,16 +976,17 @@ export default function Memory() {
                   <Zap size={12} /> {t('memory.perception')}
                 </h3>
                 {signals.map((signal, i) => {
-                  const config: Record<string, { emoji: string; color: string }> = {
-                    contradiction: { emoji: '⚡', color: 'border-red-500/30 bg-red-500/5' },
-                    pattern: { emoji: '🔄', color: 'border-amber-500/30 bg-amber-500/5' },
-                    resonance: { emoji: '💫', color: 'border-purple-500/30 bg-purple-500/5' },
-                    staleness: { emoji: '⏰', color: 'border-slate-500/30 bg-slate-500/5' },
+                  const config: Record<string, { icon: typeof Lightbulb; color: string }> = {
+                    contradiction: { icon: TriangleAlert, color: 'border-red-500/30 bg-red-500/5' },
+                    pattern: { icon: RefreshCw, color: 'border-amber-500/30 bg-amber-500/5' },
+                    resonance: { icon: Sparkles, color: 'border-purple-500/30 bg-purple-500/5' },
+                    staleness: { icon: AlarmClock, color: 'border-slate-500/30 bg-slate-500/5' },
                   };
-                  const c = config[signal.type] || { emoji: '💡', color: 'border-brand-500/30 bg-brand-500/5' };
+                  const c = config[signal.type] || { icon: Lightbulb, color: 'border-brand-500/30 bg-brand-500/5' };
+                  const SignalIcon = c.icon;
                   return (
                     <div key={i} className={`p-3 rounded-xl border ${c.color} flex items-start gap-2.5`}>
-                      <span className="text-base">{c.emoji}</span>
+                      <SignalIcon size={16} className="mt-0.5 text-slate-200/85" />
                       <p className="text-sm text-slate-200">{signal.message}</p>
                     </div>
                   );
@@ -1047,6 +1056,7 @@ export default function Memory() {
 
                 {displayedEvents.map((event) => {
                   const src = getSourceDisplay(event.source);
+                  const SourceIcon = src.icon;
                   const isExpanded = expandedEvent === event.id;
                   const isCodeChange = event.type === 'code_change';
 
@@ -1067,7 +1077,7 @@ export default function Memory() {
                     >
                       {/* Event header */}
                       <div className="flex items-center gap-2 mb-2 flex-wrap">
-                        <span className="text-base">{src.emoji}</span>
+                        <SourceIcon size={16} className="text-slate-300" />
                         <span className="text-xs font-medium text-slate-300">{src.label}</span>
                         {event.type && (
                           <span className="text-[10px] px-1.5 py-0.5 bg-slate-700 rounded text-slate-400">
@@ -1093,8 +1103,9 @@ export default function Memory() {
 
                       {/* Event title — for code_change show parsed shortPath */}
                       {isCodeChange && parsedCode ? (
-                        <h4 className="font-medium text-sm mb-1 text-slate-200">
-                          📄 {parsedCode.shortPath}
+                        <h4 className="flex items-center gap-1.5 font-medium text-sm mb-1 text-slate-200">
+                          <FileCode size={14} className="text-slate-400" />
+                          {parsedCode.shortPath}
                         </h4>
                       ) : event.title ? (
                         <h4 className="font-medium text-sm mb-1 text-slate-200">
@@ -1201,8 +1212,14 @@ export default function Memory() {
 
                 {displayCards.map((card: any, i: number) => {
                   const catDisplay = getCategoryDisplay(card.category);
+                  const CategoryIcon = catDisplay.icon;
                   const isExpanded = expandedCard === card.id;
                   const relatedSignal = signals.find(s => s.card_id === card.id || (s.card_title && s.card_title === card.title));
+                  const RelatedSignalIcon = relatedSignal?.type === 'staleness'
+                    ? AlarmClock
+                    : relatedSignal?.type === 'contradiction'
+                      ? TriangleAlert
+                      : Bell;
                   return (
                     <div
                       key={card.id || i}
@@ -1216,7 +1233,7 @@ export default function Memory() {
                       }`}
                     >
                       <div className="flex items-center gap-2 mb-2">
-                        <span>{catDisplay.emoji}</span>
+                        <CategoryIcon size={14} className={catDisplay.color} />
                         <span className={`text-xs font-medium ${catDisplay.color}`}>{t(catDisplay.label, catDisplay.label)}</span>
                         {card.created_at && (
                           <>
@@ -1242,10 +1259,12 @@ export default function Memory() {
                         )}
                         {relatedSignal && (
                           <span className="text-xs px-1.5 py-0.5 bg-purple-600/20 rounded text-purple-400 border border-purple-600/30">
-                            {relatedSignal.type === 'staleness' ? '⏳' : relatedSignal.type === 'contradiction' ? '⚡' : '🔔'} {relatedSignal.type}
+                            <RelatedSignalIcon size={11} className="inline mr-1" />{relatedSignal.type}
                           </span>
                         )}
-                        <span className="ml-auto text-xs text-slate-600">{isExpanded ? '▼' : '▶'}</span>
+                        <span className="ml-auto text-xs text-slate-600">
+                          {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                        </span>
                       </div>
                       <h4 className={`font-medium text-sm mb-1 ${card.status === 'superseded' ? 'line-through text-slate-500' : ''}`}>
                         <HighlightText text={card.title} query={searchQuery} />

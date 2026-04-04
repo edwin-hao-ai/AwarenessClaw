@@ -1,4 +1,4 @@
-import { Check, Loader2 } from 'lucide-react';
+import { Bot, Check, KeyRound, Link2, Loader2 } from 'lucide-react';
 import PasswordInput from '../PasswordInput';
 import { SettingsModalShell } from './SettingsPrimitives';
 
@@ -55,7 +55,12 @@ export function SettingsModelPickerModal({
 
   return (
     <SettingsModalShell
-      title={`🤖 ${t('settings.model.change')}`}
+      title={(
+        <span className="flex items-center gap-2">
+          <Bot size={18} className="text-brand-400" />
+          {t('settings.model.change')}
+        </span>
+      )}
       onClose={onClose}
       footer={(
         <div className="flex justify-end gap-3 p-5">
@@ -97,7 +102,10 @@ export function SettingsModelPickerModal({
           <div className="space-y-3 p-4 settings-glass-soft animate-fade-in">
             {selectedProvider.needsKey && (
               <div>
-                <label className="block text-xs font-medium text-slate-400 mb-1">🔑 {t('settings.model.apiKey', 'API Key')}</label>
+                <label className="mb-1 flex items-center gap-1.5 text-xs font-medium text-slate-400">
+                  <KeyRound size={12} className="text-slate-500" />
+                  {t('settings.model.apiKey', 'API Key')}
+                </label>
                 <PasswordInput
                   value={tempApiKey}
                   onChange={(event) => onApiKeyChange(event.target.value)}
@@ -142,7 +150,7 @@ export function SettingsModelPickerModal({
                   disabled={testingConnection}
                   className="settings-btn settings-btn-secondary"
                 >
-                  {testingConnection ? <Loader2 size={12} className="animate-spin" /> : '🔗'} {t('settings.model.discoverModels', 'Test & Refresh Models')}
+                  {testingConnection ? <Loader2 size={12} className="animate-spin" /> : <Link2 size={12} />} {t('settings.model.discoverModels', 'Test & Refresh Models')}
                 </button>
                 {testResult === 'success' && <span className="text-xs text-emerald-400">{t('settings.model.detectSuccess', 'Model list updated')}</span>}
                 {testResult === 'error' && <span className="text-xs text-red-400">{t('settings.model.detectFailed', 'Could not fetch models, please check API Key / Base URL')}</span>}
