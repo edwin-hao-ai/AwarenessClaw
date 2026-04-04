@@ -45,7 +45,7 @@ export default function Agents({ onNavigate }: { onNavigate?: (page: string) => 
   // Binding
   const [bindingAgentId, setBindingAgentId] = useState<string | null>(null);
   const [bindChannel, setBindChannel] = useState('');
-  const [availableChannels, setAvailableChannels] = useState<string[]>([]);
+  const [availableChannels, setAvailableChannels] = useState<Array<{ id: string; label: string }>>([]);
 
   // Workspace file editing
   const [fileEditAgentId, setFileEditAgentId] = useState<string | null>(null);
@@ -77,19 +77,33 @@ export default function Agents({ onNavigate }: { onNavigate?: (page: string) => 
     setLoading(false);
   };
 
-  // Load available channels for binding dropdown
+  // Load available channels for binding dropdown (from dynamic OpenClaw registry)
   const loadChannels = async () => {
     if (!window.electronAPI) return;
     try {
-      const result = await (window.electronAPI as any).channelListConfigured();
-      const supported = await (window.electronAPI as any).channelListSupported?.();
-      // Merge configured + supported, dedupe
-      const all = new Set<string>([
-        ...(result?.configured || []),
-        ...(supported?.channels || []),
-      ]);
-      all.delete('local');
-      setAvailableChannels(Array.from(all).sort());
+      const api = window.electronAPI as any;
+      const regResult = await api.channelGetRegistry?.();
+      const configured = await api.channelListConfigured?.();
+      const configuredSet = new Set<string>(configured?.configured || []);
+
+      if (regResult?.channels?.length > 0) {
+        const channels = (regResult.channels as Array<{ id: string; openclawId?: string; label: string }>)
+          .filter(ch => ch.id !== 'local')
+          .map(ch => ({
+            id: ch.openclawId || ch.id,
+            label: ch.label || ch.id,
+            configured: configuredSet.has(ch.id) || configuredSet.has(ch.openclawId || ''),
+          }))
+          .sort((a, b) => {
+            if (a.configured !== b.configured) return a.configured ? -1 : 1;
+            return a.label.localeCompare(b.label);
+          });
+        setAvailableChannels(channels);
+      } else {
+        // Fallback: use configured list as-is
+        const ids = Array.from(configuredSet).filter(id => id !== 'local');
+        setAvailableChannels(ids.map(id => ({ id, label: id })).sort((a, b) => a.label.localeCompare(b.label)));
+      }
     } catch { /* fallback to empty */ }
   };
 
@@ -368,16 +382,10 @@ export default function Agents({ onNavigate }: { onNavigate?: (page: string) => 
                       <select value={bindChannel} onChange={(e) => setBindChannel(e.target.value)}
                         className="flex-1 px-2 py-1.5 bg-slate-900 border border-slate-600 rounded text-sm text-slate-300">
                         <option value="">{t('agents.selectChannel', 'Select a channel...')}</option>
-                        {availableChannels.length > 0 ? (
-                          availableChannels
-                            .filter(ch => !agent.bindings?.includes(ch))
-                            .map(ch => <option key={ch} value={ch}>{ch}</option>)
-                        ) : (
-                          // Fallback: common channel names if API not available
-                          ['telegram', 'discord', 'whatsapp', 'slack', 'signal', 'openclaw-weixin', 'feishu', 'line', 'imessage']
-                            .filter(ch => !agent.bindings?.includes(ch))
-                            .map(ch => <option key={ch} value={ch}>{ch}</option>)
-                        )}
+                        {availableChannels
+                          .filter(ch => !agent.bindings?.includes(ch.id))
+                          .map(ch => <option key={ch.id} value={ch.id}>{ch.label}</option>)
+                        }
                       </select>
                       <button onClick={() => handleBind(agent.id)} disabled={!bindChannel}
                         className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-700 text-white rounded text-xs">
