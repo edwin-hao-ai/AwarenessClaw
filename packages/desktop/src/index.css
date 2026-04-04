@@ -77,18 +77,18 @@
 /* ── Text ──────────────────────────────────────────────────────── */
 :root:not(.dark) .text-slate-100 { color: #1e293b; }
 :root:not(.dark) .text-slate-200 { color: #334155; }
-:root:not(.dark) .text-slate-300 { color: #475569; }
-:root:not(.dark) .text-slate-400 { color: #64748b; }
-:root:not(.dark) .text-slate-500 { color: #94a3b8; }
-:root:not(.dark) .text-slate-600 { color: #94a3b8; }
-:root:not(.dark) .text-slate-700 { color: #94a3b8; }
+:root:not(.dark) .text-slate-300 { color: #334155; }
+:root:not(.dark) .text-slate-400 { color: #1f2937; }
+:root:not(.dark) .text-slate-500 { color: #111827; }
+:root:not(.dark) .text-slate-600 { color: #111827; }
+:root:not(.dark) .text-slate-700 { color: #111827; }
 
 /* Hover text */
 :root:not(.dark) .hover\:text-slate-100:hover { color: #1e293b; }
 :root:not(.dark) .hover\:text-slate-200:hover { color: #334155; }
-:root:not(.dark) .hover\:text-slate-300:hover { color: #475569; }
-:root:not(.dark) .hover\:text-slate-400:hover { color: #64748b; }
-:root:not(.dark) .hover\:text-slate-500:hover { color: #94a3b8; }
+:root:not(.dark) .hover\:text-slate-300:hover { color: #1e293b; }
+:root:not(.dark) .hover\:text-slate-400:hover { color: #111827; }
+:root:not(.dark) .hover\:text-slate-500:hover { color: #111827; }
 
 /* ── Borders ───────────────────────────────────────────────────── */
 :root:not(.dark) .border-slate-800 { border-color: #f1f5f9; }

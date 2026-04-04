@@ -80,6 +80,7 @@
 - [x] **Awareness 记忆 vs OpenClaw 原生 memory 协作策略**：双层架构（Awareness=长期跨项目云端，OpenClaw=短期本地工作区），零冲突设计，Memory 页面增加架构可视化（2026-03-30）
 - [x] **轻量化 + 节省 token**：新增 Thinking Level 控制（off/minimal/low/medium/high），token 估算显示，recall limit 联动 token 开销（2026-03-30）
 - [x] **.learnings 递归晋升提案**：当同类模式在最近窗口内累计达到阈值时，自动生成 `.learnings/PROMOTION_PROPOSALS.md` 提案（先提案后人工确认，不直接改 SOUL/AGENTS/TOOLS）（2026-04-05）
+- [x] **.learnings 提案审批闭环**：Memory 页面支持提案单条应用、拒绝与批量应用，审批结果回写 `PROMOTION_PROPOSALS.md` 并同步状态统计（2026-04-05）
 
 ### 通道
 - [x] 通道配置写入 openclaw.json（Telegram/Discord/Slack/Feishu）（2026-03-30）
