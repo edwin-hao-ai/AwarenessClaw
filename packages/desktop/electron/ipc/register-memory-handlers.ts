@@ -5,6 +5,7 @@ import os from 'os';
 import { callMcp, checkMemoryHealth, fetchMemoryEvents, fetchKnowledgeCards, fetchCardEvolution, type MemoryEventQueryOptions } from '../memory-client';
 import { buildMemoryInitArgs, buildMemorySearchArgs } from '../memory-protocol';
 import { readJsonFileWithBom } from '../json-file';
+import { appendSelfImprovementEntry, getSelfImprovementStatus } from '../self-improvement';
 
 type FileBackedMemoryEvent = {
   id: string;
@@ -196,6 +197,55 @@ export function registerMemoryHandlers() {
       return { slot: currentSlot, isAwareness: currentSlot === 'openclaw-memory' };
     } catch {
       return { slot: 'memory-core', isAwareness: false };
+    }
+  });
+
+  ipcMain.handle('memory:learning-status', async (_e, opts?: { agentId?: string; workspacePath?: string }) => {
+    try {
+      const status = await getSelfImprovementStatus({
+        homeDir: os.homedir(),
+        agentId: opts?.agentId || 'main',
+        workspacePath: opts?.workspacePath,
+      });
+      return { success: true, ...status };
+    } catch (err: any) {
+      return { success: false, error: err?.message || String(err) };
+    }
+  });
+
+  ipcMain.handle('memory:learning-log', async (_e, payload: {
+    type: 'learning' | 'error' | 'feature';
+    summary: string;
+    details?: string;
+    suggestedAction?: string;
+    area?: 'frontend' | 'backend' | 'infra' | 'tests' | 'docs' | 'config';
+    priority?: 'low' | 'medium' | 'high' | 'critical';
+    category?: 'correction' | 'insight' | 'knowledge_gap' | 'best_practice';
+    commandName?: string;
+    source?: string;
+    relatedFiles?: string[];
+    tags?: string[];
+    complexity?: 'simple' | 'medium' | 'complex';
+    frequency?: 'first_time' | 'recurring';
+    userContext?: string;
+    agentId?: string;
+    workspacePath?: string;
+  }) => {
+    if (!payload?.summary || !payload.summary.trim()) {
+      return { success: false, error: 'Summary is required.' };
+    }
+
+    try {
+      const result = await appendSelfImprovementEntry({
+        ...payload,
+        homeDir: os.homedir(),
+        agentId: payload.agentId || 'main',
+        workspacePath: payload.workspacePath,
+        source: payload.source || 'desktop',
+      });
+      return { success: true, ...result };
+    } catch (err: any) {
+      return { success: false, error: err?.message || String(err) };
     }
   });
 }

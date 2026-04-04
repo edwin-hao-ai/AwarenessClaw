@@ -49,6 +49,16 @@ function createCliFallbackChild(output: string) {
   return child;
 }
 
+function createAwarenessInitResponse(renderedContext = 'Memory context loaded') {
+  return {
+    result: {
+      content: [{
+        text: JSON.stringify({ rendered_context: renderedContext }),
+      }],
+    },
+  };
+}
+
 describe('registerChatHandlers', () => {
   beforeEach(() => {
     ipcHandleMock.mockReset();
@@ -218,9 +228,129 @@ describe('registerChatHandlers', () => {
     warnSpy.mockRestore();
   });
 
-  it('flags unverified local file-write success claims when gateway returns text without completed tools', async () => {
+  it('skips awareness_record when autoCapture is disabled', async () => {
     const ws = new FakeGatewayClient();
     const callMcpStrict = vi.fn(async () => ({}));
+
+    ws.chatSend = vi.fn(async () => {
+      setTimeout(() => {
+        ws.emit('event:chat', {
+          sessionKey: 'test-session',
+          state: 'final',
+          message: {
+            role: 'assistant',
+            content: 'normal answer',
+          },
+        });
+      }, 0);
+      return { status: 'started' };
+    });
+
+    registerChatHandlers({
+      sendToRenderer: vi.fn(),
+      ensureGatewayRunning: vi.fn(async () => ({ ok: true })),
+      getGatewayWs: vi.fn(async () => ws as any),
+      getConnectedGatewayWs: vi.fn(() => ws as any),
+      callMcpStrict,
+      getEnhancedPath: vi.fn(() => process.env.PATH || ''),
+      wrapWindowsCommand: vi.fn((command: string) => command),
+      stripAnsi: vi.fn((output: string) => output),
+      spawnChatProcess: spawnMock as any,
+      readMemoryCapturePolicy: () => ({ autoCapture: false, blockedSources: [] }),
+    });
+
+    const handlers = getRegisteredHandlers();
+    const result = await handlers['chat:send']({}, 'hello', 'test-session', {});
+
+    expect(result).toMatchObject({ success: true, text: 'normal answer', sessionId: 'test-session' });
+    expect(callMcpStrict).not.toHaveBeenCalled();
+  });
+
+  it('skips awareness_record when desktop source is blocked', async () => {
+    const ws = new FakeGatewayClient();
+    const callMcpStrict = vi.fn(async () => ({}));
+
+    ws.chatSend = vi.fn(async () => {
+      setTimeout(() => {
+        ws.emit('event:chat', {
+          sessionKey: 'test-session',
+          state: 'final',
+          message: {
+            role: 'assistant',
+            content: 'normal answer',
+          },
+        });
+      }, 0);
+      return { status: 'started' };
+    });
+
+    registerChatHandlers({
+      sendToRenderer: vi.fn(),
+      ensureGatewayRunning: vi.fn(async () => ({ ok: true })),
+      getGatewayWs: vi.fn(async () => ws as any),
+      getConnectedGatewayWs: vi.fn(() => ws as any),
+      callMcpStrict,
+      getEnhancedPath: vi.fn(() => process.env.PATH || ''),
+      wrapWindowsCommand: vi.fn((command: string) => command),
+      stripAnsi: vi.fn((output: string) => output),
+      spawnChatProcess: spawnMock as any,
+      readMemoryCapturePolicy: () => ({ autoCapture: true, blockedSources: ['desktop'] }),
+    });
+
+    const handlers = getRegisteredHandlers();
+    const result = await handlers['chat:send']({}, 'hello', 'test-session', {});
+
+    expect(result).toMatchObject({ success: true, text: 'normal answer', sessionId: 'test-session' });
+    expect(callMcpStrict).not.toHaveBeenCalled();
+  });
+
+  it('records memory when autoCapture is enabled and desktop source is allowed', async () => {
+    const ws = new FakeGatewayClient();
+    const callMcpStrict = vi.fn(async () => ({ result: { content: [{ text: '{}' }] } }));
+
+    ws.chatSend = vi.fn(async () => {
+      setTimeout(() => {
+        ws.emit('event:chat', {
+          sessionKey: 'test-session',
+          state: 'final',
+          message: {
+            role: 'assistant',
+            content: 'normal answer',
+          },
+        });
+      }, 0);
+      return { status: 'started' };
+    });
+
+    registerChatHandlers({
+      sendToRenderer: vi.fn(),
+      ensureGatewayRunning: vi.fn(async () => ({ ok: true })),
+      getGatewayWs: vi.fn(async () => ws as any),
+      getConnectedGatewayWs: vi.fn(() => ws as any),
+      callMcpStrict,
+      getEnhancedPath: vi.fn(() => process.env.PATH || ''),
+      wrapWindowsCommand: vi.fn((command: string) => command),
+      stripAnsi: vi.fn((output: string) => output),
+      spawnChatProcess: spawnMock as any,
+      readMemoryCapturePolicy: () => ({ autoCapture: true, blockedSources: [] }),
+    });
+
+    const handlers = getRegisteredHandlers();
+    const result = await handlers['chat:send']({}, 'hello', 'test-session', {});
+
+    expect(result).toMatchObject({ success: true, text: 'normal answer', sessionId: 'test-session' });
+    expect(callMcpStrict).toHaveBeenCalledWith('awareness_record', expect.objectContaining({
+      action: 'remember',
+      event_type: 'turn_brief',
+      source: 'desktop',
+    }));
+  });
+
+  it('flags unverified local file-write success claims when gateway returns text without completed tools', async () => {
+    const ws = new FakeGatewayClient();
+    const callMcpStrict = vi.fn(async (toolName: string) => (
+      toolName === 'awareness_init' ? createAwarenessInitResponse('Desktop memory snapshot') : {}
+    ));
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     ws.chatSend = vi.fn(async () => {
@@ -258,7 +388,16 @@ describe('registerChatHandlers', () => {
       sessionId: 'test-session',
       unverifiedLocalFileOperation: true,
     });
-    expect(callMcpStrict).not.toHaveBeenCalled();
+    expect(callMcpStrict).toHaveBeenCalledWith(
+      'awareness_init',
+      expect.objectContaining({ query: '在 E:\\新建文件夹2 里写一个 txt 文件' }),
+      expect.any(Number),
+    );
+    expect(ws.chatSend).toHaveBeenCalledWith(
+      'test-session',
+      expect.stringContaining('Desktop already loaded the current Awareness memory context for this turn.'),
+      expect.any(Object),
+    );
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining('Assistant claimed a local filesystem mutation succeeded without any completed tool result'),
       expect.objectContaining({ sessionId: 'test-session' }),
@@ -295,7 +434,9 @@ describe('registerChatHandlers', () => {
       ensureGatewayRunning: vi.fn(async () => ({ ok: true })),
       getGatewayWs: vi.fn(async () => ws as any),
       getConnectedGatewayWs: vi.fn(() => ws as any),
-      callMcpStrict: vi.fn(async () => ({})),
+      callMcpStrict: vi.fn(async (toolName: string) => (
+        toolName === 'awareness_init' ? createAwarenessInitResponse('Web memory snapshot') : {}
+      )),
       getEnhancedPath: vi.fn(() => process.env.PATH || ''),
       runSpawn,
       wrapWindowsCommand: vi.fn((command: string) => command),
@@ -312,6 +453,11 @@ describe('registerChatHandlers', () => {
       sessionId: 'test-session',
       preferResultText: true,
     });
+    expect(ws.chatSend).toHaveBeenCalledWith(
+      'test-session',
+      expect.stringContaining('Treat the block below as the result of awareness_init'),
+      expect.any(Object),
+    );
     expect(runSpawn).toHaveBeenCalledTimes(1);
     const [, retryArgs] = runSpawn.mock.calls[0] as [string, string[], Record<string, unknown>];
     const retryMessage = retryArgs[retryArgs.indexOf('-m') + 1] || '';
@@ -319,6 +465,75 @@ describe('registerChatHandlers', () => {
     expect(retryMessage).toContain('Target public URL: https://example.com');
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining('Web tool response indicates VPN/DNS special-use IP compatibility issue'),
+      expect.objectContaining({ sessionId: 'test-session' }),
+    );
+
+    warnSpy.mockRestore();
+  });
+
+  it('retries through CLI compatibility mode when awareness_init fails inside a gateway tool result', async () => {
+    const ws = new FakeGatewayClient();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const fallbackChild = createCliFallbackChild('Recovered without awareness_init');
+    const runSpawn = vi.fn(() => {
+      setTimeout(() => fallbackChild.emitOutput(), 0);
+      return fallbackChild as any;
+    });
+
+    ws.chatSend = vi.fn(async () => {
+      setTimeout(() => {
+        ws.emit('event:chat', {
+          sessionKey: 'test-session',
+          state: 'final',
+          message: {
+            role: 'assistant',
+            content: [
+              { type: 'tool_use', id: 'tool-awareness', name: 'awareness_init', input: {} },
+              {
+                type: 'tool_result',
+                tool_use_id: 'tool-awareness',
+                is_error: true,
+                content: [{ type: 'text', text: 'schema must be object or boolean' }],
+              },
+              { type: 'text', text: 'BROWSER_UNAVAILABLE' },
+            ],
+          },
+        });
+      }, 0);
+      return { status: 'started' };
+    });
+
+    registerChatHandlers({
+      sendToRenderer: vi.fn(),
+      ensureGatewayRunning: vi.fn(async () => ({ ok: true })),
+      getGatewayWs: vi.fn(async () => ws as any),
+      getConnectedGatewayWs: vi.fn(() => ws as any),
+      callMcpStrict: vi.fn(async (toolName: string) => (
+        toolName === 'awareness_init' ? createAwarenessInitResponse('Recovered memory snapshot') : {}
+      )),
+      getEnhancedPath: vi.fn(() => process.env.PATH || ''),
+      runSpawn,
+      wrapWindowsCommand: vi.fn((command: string) => command),
+      stripAnsi: vi.fn((output: string) => output),
+      spawnChatProcess: spawnMock as any,
+    });
+
+    const handlers = getRegisteredHandlers();
+    const result = await handlers['chat:send']({}, '请浏览 https://example.com 并告诉我标题', 'test-session', {});
+
+    expect(result).toMatchObject({
+      success: true,
+      text: 'Recovered without awareness_init',
+      sessionId: 'test-session',
+      preferResultText: true,
+    });
+    expect(runSpawn).toHaveBeenCalledTimes(1);
+    const [, retryArgs] = runSpawn.mock.calls[0] as [string, string[], Record<string, unknown>];
+    const retryMessage = retryArgs[retryArgs.indexOf('-m') + 1] || '';
+    expect(retryMessage).toContain('Do not call awareness_init on this retry.');
+    expect(retryMessage).toContain('[Original runtime message]');
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Awareness memory bootstrap compatibility issue detected; retrying without awareness_init'),
       expect.objectContaining({ sessionId: 'test-session' }),
     );
 
@@ -539,13 +754,16 @@ describe('registerChatHandlers', () => {
     const runSpawn = vi.fn(() => fakeChild as any);
     const wrapWindowsCommand = vi.fn((command: string) => command);
     const workspaceDir = process.cwd();
+    const callMcpStrict = vi.fn(async (toolName: string) => (
+      toolName === 'awareness_init' ? createAwarenessInitResponse('CLI file task memory') : {}
+    ));
 
     registerChatHandlers({
       sendToRenderer: vi.fn(),
       ensureGatewayRunning: vi.fn(async () => ({ ok: false, error: 'Gateway failed to start.' })),
       getGatewayWs: vi.fn(),
       getConnectedGatewayWs: vi.fn(() => null),
-      callMcpStrict: vi.fn(async () => ({})),
+      callMcpStrict,
       getEnhancedPath: vi.fn(() => process.env.PATH || ''),
       runSpawn,
       wrapWindowsCommand,
@@ -562,9 +780,15 @@ describe('registerChatHandlers', () => {
     const messageArgIndex = args.indexOf('-m');
     expect(messageArgIndex).toBeGreaterThanOrEqual(0);
     expect(args[messageArgIndex + 1]).toContain(`[Project working directory: ${workspaceDir}]`);
+    expect(args[messageArgIndex + 1]).toContain('Desktop already loaded the current Awareness memory context for this turn.');
     expect(args[messageArgIndex + 1]).toContain('Never claim a file or folder change succeeded unless a tool result confirms it');
     expect(opts).toMatchObject({ cwd: workspaceDir, stdio: 'pipe' });
     expect(wrapWindowsCommand).not.toHaveBeenCalled();
+    expect(callMcpStrict).toHaveBeenCalledWith(
+      'awareness_init',
+      expect.objectContaining({ query: 'create a file and verify it' }),
+      expect.any(Number),
+    );
 
     fakeChild.emitOutput();
     await expect(pending).resolves.toMatchObject({ success: true, text: 'CLI fallback reply', sessionId: 'test-session' });

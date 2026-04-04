@@ -5,6 +5,8 @@ import path from 'path';
 import { ipcMain } from 'electron';
 import type { GatewayClient } from '../gateway-ws';
 import { getExecApprovalSettings } from '../openclaw-config';
+import { readJsonFileWithBom } from '../json-file';
+import { buildMemoryInitArgs } from '../memory-protocol';
 
 type ChatSendOptions = {
   thinkingLevel?: string;
@@ -15,7 +17,18 @@ type ChatSendOptions = {
   agentId?: string;
 };
 
+type MemoryCapturePolicy = {
+  autoCapture: boolean;
+  blockedSources: string[];
+};
+
 let activeChatChild: ReturnType<typeof spawn> | null = null;
+let awarenessInitCompatibilityMode = false;
+let lastAwarenessInitCompatibilityError = '';
+
+const CHAT_TIMEOUT_MS = 120000;
+const MCP_MEMORY_BOOTSTRAP_TIMEOUT_MS = 2500;
+const MEMORY_BOOTSTRAP_MAX_CHARS = 4000;
 
 function normalizeDesktopRole(role: unknown): 'user' | 'assistant' {
   return role === 'user' ? 'user' : 'assistant';
@@ -462,6 +475,151 @@ function hasMeaningfulAgentText(text: string): boolean {
   return true;
 }
 
+function looksLikeAwarenessInitCompatibilityError(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  return /schema must be object or boolean/i.test(trimmed);
+}
+
+function parseMcpTextPayload(mcpResponse: any) {
+  const textPayload = mcpResponse?.result?.content?.[0]?.text;
+  if (!textPayload || typeof textPayload !== 'string') return {};
+  try {
+    return JSON.parse(textPayload);
+  } catch {
+    return {};
+  }
+}
+
+function buildAwarenessInitSkipInstruction(errorDetail?: string): string {
+  const summary = errorDetail ? `Latest compatibility failure: ${truncateDetail(errorDetail, 240)}` : '';
+  return [
+    '[Awareness memory compatibility note]',
+    'Desktop has already detected that awareness_init can fail in the current OpenClaw wrapper path.',
+    'Do not call awareness_init for this turn unless the user explicitly asks you to refresh memory bootstrap state.',
+    'Continue with the main task even if Awareness memory bootstrap is unavailable.',
+    'If you need targeted memory, use awareness_recall or awareness_lookup instead of awareness_init.',
+    summary,
+  ].filter(Boolean).join('\n');
+}
+
+function buildDesktopMemoryBootstrapSummary(memoryPayload: Record<string, any>): string {
+  const renderedContext = typeof memoryPayload?.rendered_context === 'string'
+    ? memoryPayload.rendered_context.trim()
+    : '';
+  if (renderedContext) {
+    return truncateDetail(renderedContext, MEMORY_BOOTSTRAP_MAX_CHARS);
+  }
+
+  const sections: string[] = [];
+  const knowledgeCards = Array.isArray(memoryPayload?.knowledge_cards)
+    ? memoryPayload.knowledge_cards.slice(0, 5)
+    : [];
+  if (knowledgeCards.length > 0) {
+    sections.push([
+      'Knowledge cards:',
+      ...knowledgeCards.map((card: any) => `- ${String(card?.title || card?.summary || card?.content || '').trim()}`),
+    ].join('\n'));
+  }
+
+  const openTasks = Array.isArray(memoryPayload?.open_tasks)
+    ? memoryPayload.open_tasks.slice(0, 5)
+    : [];
+  if (openTasks.length > 0) {
+    sections.push([
+      'Open tasks:',
+      ...openTasks.map((task: any) => `- ${String(task?.title || task?.summary || task?.content || '').trim()}`),
+    ].join('\n'));
+  }
+
+  const recentSessions = Array.isArray(memoryPayload?.recent_sessions)
+    ? memoryPayload.recent_sessions.slice(0, 3)
+    : [];
+  if (recentSessions.length > 0) {
+    sections.push([
+      'Recent sessions:',
+      ...recentSessions.map((entry: any) => `- ${String(entry?.summary || entry?.title || entry?.content || '').trim()}`),
+    ].join('\n'));
+  }
+
+  return truncateDetail(sections.filter(Boolean).join('\n\n'), MEMORY_BOOTSTRAP_MAX_CHARS);
+}
+
+function buildDesktopMemoryBootstrapSection(memoryPayload: Record<string, any>, compatibilityError?: string): string {
+  const contextSummary = buildDesktopMemoryBootstrapSummary(memoryPayload);
+  const sections = [
+    compatibilityError ? buildAwarenessInitSkipInstruction(compatibilityError) : '',
+    [
+      '[Awareness memory bootstrap loaded by Desktop]',
+      'Desktop already loaded the current Awareness memory context for this turn.',
+      'Treat the block below as the result of awareness_init and do not call awareness_init again on this turn.',
+      'If more memory is needed, use awareness_recall or awareness_lookup instead.',
+      contextSummary,
+    ].filter(Boolean).join('\n'),
+  ].filter(Boolean);
+  return sections.join('\n\n');
+}
+
+function buildAwarenessInitCompatibilityRetryPrompt(runtimeMessage: string, failureDetail: string): string {
+  return [
+    '[Automatic compatibility retry]',
+    'Previous attempt hit the known Awareness memory bootstrap compatibility failure in awareness_init.',
+    'Do not call awareness_init on this retry.',
+    'Continue with the main task directly. If memory is needed, rely on the preloaded desktop memory context already present in the runtime metadata or use awareness_recall / awareness_lookup instead.',
+    `Compatibility failure: ${truncateDetail(failureDetail, 400)}`,
+    '',
+    '[Original runtime message]',
+    runtimeMessage,
+  ].join('\n');
+}
+
+function shouldRetryAfterAwarenessInitFailure(originalRequest: string, finalText: string): boolean {
+  if (looksLikeWebOperationRequest(originalRequest) || looksLikeFilesystemMutationRequest(originalRequest)) {
+    return true;
+  }
+
+  const trimmed = finalText.trim();
+  if (!trimmed) return true;
+  if (/^BROWSER_UNAVAILABLE$/i.test(trimmed)) return true;
+  if (/^INIT_FAILED$/i.test(trimmed)) return true;
+  if (/^No response$/i.test(trimmed)) return true;
+  return false;
+}
+
+async function tryBuildDesktopMemoryBootstrapSection(
+  callMcpStrict: (toolName: string, args: Record<string, any>, timeoutMs?: number) => Promise<any>,
+  userMessage: string,
+): Promise<string> {
+  const mcpResponse = await callMcpStrict(
+    'awareness_init',
+    buildMemoryInitArgs(userMessage),
+    MCP_MEMORY_BOOTSTRAP_TIMEOUT_MS,
+  );
+  const memoryPayload = parseMcpTextPayload(mcpResponse);
+  return buildDesktopMemoryBootstrapSection(memoryPayload, awarenessInitCompatibilityMode ? lastAwarenessInitCompatibilityError : undefined);
+}
+
+function getMemoryCapturePolicy(homeDir: string): MemoryCapturePolicy {
+  const defaultPolicy: MemoryCapturePolicy = { autoCapture: true, blockedSources: [] };
+
+  try {
+    const configPath = path.join(homeDir, '.openclaw', 'openclaw.json');
+    const config = readJsonFileWithBom<Record<string, any>>(configPath) || {};
+    const memoryConfig = config?.plugins?.entries?.['openclaw-memory']?.config || {};
+
+    const blockedSources = Array.isArray(memoryConfig?.blockedSources)
+      ? memoryConfig.blockedSources.filter((item: unknown): item is string => typeof item === 'string').map(item => item.trim()).filter(Boolean)
+      : [];
+
+    return {
+      autoCapture: memoryConfig?.autoCapture !== false,
+      blockedSources,
+    };
+  } catch {
+    return defaultPolicy;
+  }
+}
+
 function buildWebCompatibilityRetryPrompt(originalRequest: string, blockedResponse: string): string {
   const targetUrl = extractFirstHttpUrl(originalRequest);
   const urlHint = targetUrl ? `Target public URL: ${targetUrl}` : '';
@@ -491,12 +649,13 @@ export function registerChatHandlers(deps: {
   prepareCliFallback?: () => Promise<void>;
   getGatewayWs: () => Promise<GatewayClient>;
   getConnectedGatewayWs: () => GatewayClient | null;
-  callMcpStrict: (toolName: string, args: Record<string, any>) => Promise<any>;
+  callMcpStrict: (toolName: string, args: Record<string, any>, timeoutMs?: number) => Promise<any>;
   getEnhancedPath: () => string;
   runSpawn?: (cmd: string, args: string[], opts?: Record<string, unknown>) => ReturnType<typeof spawn>;
   wrapWindowsCommand: (command: string) => string;
   stripAnsi: (output: string) => string;
   spawnChatProcess?: typeof spawn;
+  readMemoryCapturePolicy?: () => MemoryCapturePolicy;
 }) {
   ipcMain.handle('chat:abort', async (_e: any, sessionKey?: string) => {
     const connectedGatewayWs = deps.getConnectedGatewayWs();
@@ -567,6 +726,25 @@ export function registerChatHandlers(deps: {
       : rawSid;
 
     let fullMessage = message;
+    const shouldPreloadDesktopMemory = awarenessInitCompatibilityMode
+      || looksLikeWebOperationRequest(message)
+      || looksLikeFilesystemMutationRequest(message);
+
+    if (shouldPreloadDesktopMemory) {
+      try {
+        const memoryBootstrapSection = await tryBuildDesktopMemoryBootstrapSection(deps.callMcpStrict, message);
+        if (memoryBootstrapSection.trim()) {
+          fullMessage = `${memoryBootstrapSection}\n\n${fullMessage}`;
+        }
+      } catch (memoryBootstrapErr: any) {
+        const detail = memoryBootstrapErr?.message || String(memoryBootstrapErr);
+        if (awarenessInitCompatibilityMode) {
+          fullMessage = `${buildAwarenessInitSkipInstruction(detail)}\n\n${fullMessage}`;
+        }
+      }
+    } else if (awarenessInitCompatibilityMode) {
+      fullMessage = `${buildAwarenessInitSkipInstruction(lastAwarenessInitCompatibilityError)}\n\n${fullMessage}`;
+    }
 
     // Bootstrap dual mechanism:
     // 1. Primary: OpenClaw Gateway injects AGENTS.md into system prompt, which instructs
@@ -706,7 +884,7 @@ ${message}`;
       const chatTimeout = setTimeout(() => {
         didTimeout = true;
         chatResolve();
-      }, 120000);
+      }, CHAT_TIMEOUT_MS);
 
       const seenToolIds = new Set<string>();
       const completedToolIds = new Set<string>();
@@ -724,6 +902,18 @@ ${message}`;
       let sawFinalState = false;
       let finalAssistantText = '';
       let finalAssistantContentTypes: string[] = [];
+      let awarenessInitCompatibilityIssue = false;
+      let awarenessInitFailureDetail = '';
+
+      const noteAwarenessInitCompatibilityIssue = (toolName: string | undefined, detail: string | undefined) => {
+        if (toolName !== 'awareness_init') return;
+        const normalizedDetail = String(detail || '').trim();
+        if (!looksLikeAwarenessInitCompatibilityError(normalizedDetail)) return;
+        awarenessInitCompatibilityIssue = true;
+        awarenessInitFailureDetail = normalizedDetail || 'schema must be object or boolean';
+        awarenessInitCompatibilityMode = true;
+        lastAwarenessInitCompatibilityError = awarenessInitFailureDetail;
+      };
 
       const processAssistantContentBlocks = (blocks: any[]) => {
         for (const block of blocks) {
@@ -757,6 +947,8 @@ ${message}`;
             sawCompletedToolResult = true;
             const toolId = block.tool_use_id || '';
             const toolName = toolNamesById.get(toolId) || block.name || 'tool';
+            const toolOutput = extractToolOutput(block);
+            noteAwarenessInitCompatibilityIssue(toolName, toolOutput);
             send('chat:event', {
               stream: 'tool',
               phase: 'result',
@@ -772,7 +964,7 @@ ${message}`;
                 type: 'tool_update',
                 toolId,
                 toolStatus: block.is_error || block.isError ? 'failed' : 'completed',
-                detail: extractToolOutput(block),
+                detail: toolOutput,
               });
             }
             continue;
@@ -847,6 +1039,7 @@ ${message}`;
 
           if (normalizedAgentEvent.phase === 'result') {
             sawCompletedToolResult = true;
+            noteAwarenessInitCompatibilityIssue(toolName, extractToolDetail(normalizedAgentEvent.result));
             send('chat:status', {
               type: 'tool_update',
               toolId,
@@ -1008,6 +1201,12 @@ ${message}`;
         && looksLikeSuccessfulFilesystemMutationResponse(finalText)
         && !pendingApprovalRequestId
         && !sawCompletedToolResult;
+      if (looksLikeAwarenessInitCompatibilityError(finalText)) {
+        awarenessInitCompatibilityIssue = true;
+        awarenessInitFailureDetail = finalText;
+        awarenessInitCompatibilityMode = true;
+        lastAwarenessInitCompatibilityError = finalText;
+      }
       let shouldFlagVpnDnsCompatibilityIssue = looksLikeWebOperationRequest(message)
         && looksLikeSpecialUseIpWebBlock(finalText);
       let preferResultText = false;
@@ -1020,6 +1219,55 @@ ${message}`;
           sawToolBlocks,
           sawCompletedToolResult,
         });
+      }
+
+      if (awarenessInitCompatibilityIssue && !pendingApprovalRequestId && shouldRetryAfterAwarenessInitFailure(message, finalText)) {
+        console.warn('[chat] Awareness memory bootstrap compatibility issue detected; retrying without awareness_init', {
+          sessionId: sid,
+          responsePreview: finalText.slice(0, 200),
+          detail: awarenessInitFailureDetail,
+        });
+
+        send('chat:status', {
+          type: 'gateway',
+          message: 'Detected Awareness memory compatibility mode. Retrying without awareness_init...',
+        });
+
+        try {
+          await deps.prepareCliFallback?.();
+        } catch (prepareErr: any) {
+          console.warn('[chat] CLI compatibility retry preparation failed:', prepareErr?.message || prepareErr);
+        }
+
+        const retryPrompt = buildAwarenessInitCompatibilityRetryPrompt(
+          fullMessage,
+          awarenessInitFailureDetail || finalText,
+        );
+        const retryResult = await chatSendViaCliWithWebCompatibilityRetry({
+          requestMessage: retryPrompt,
+          originalUserMessage: message,
+          sid,
+          options,
+          send,
+          deps,
+        });
+        usedCliCompatibilityRetry = true;
+
+        if (!retryResult?.success) {
+          send('chat:stream-end', {});
+        }
+
+        const retryText = String(retryResult?.text || '').trim();
+        if (retryResult?.success && hasMeaningfulAgentText(retryText)) {
+          finalText = retryText;
+          shouldFlagUnverifiedLocalFileOperation = Boolean(retryResult?.unverifiedLocalFileOperation);
+          shouldFlagVpnDnsCompatibilityIssue = Boolean(retryResult?.vpnDnsCompatibilityIssue);
+          preferResultText = true;
+          send('chat:status', {
+            type: 'gateway',
+            message: 'Continued without awareness_init successfully.',
+          });
+        }
       }
 
       if (shouldFlagVpnDnsCompatibilityIssue) {
@@ -1095,17 +1343,14 @@ ${message}`;
         }
       }
 
-      const parseMcpTextPayload = (mcpResponse: any) => {
-        const textPayload = mcpResponse?.result?.content?.[0]?.text;
-        if (!textPayload || typeof textPayload !== 'string') return {};
-        try {
-          return JSON.parse(textPayload);
-        } catch {
-          return {};
-        }
-      };
+      const memoryCapturePolicy = deps.readMemoryCapturePolicy?.() || getMemoryCapturePolicy(os.homedir());
+      const blockedSources = new Set(
+        (memoryCapturePolicy.blockedSources || []).map((item) => item.trim().toLowerCase()).filter(Boolean),
+      );
+      const shouldAutoCaptureDesktopMemory = memoryCapturePolicy.autoCapture !== false
+        && !blockedSources.has('desktop');
 
-      if (finalText && !shouldFlagUnverifiedLocalFileOperation) {
+      if (finalText && !shouldFlagUnverifiedLocalFileOperation && shouldAutoCaptureDesktopMemory) {
         const memoryToolId = `memory-save-${Date.now()}`;
         send('chat:status', {
           type: 'tool_call',
@@ -1386,6 +1631,6 @@ async function chatSendViaCli(
     setTimeout(() => {
       try { child.kill(); } catch {}
       resolve({ success: false, error: 'Response timeout', sessionId: sid });
-    }, 120000);
+    }, CHAT_TIMEOUT_MS);
   });
 }

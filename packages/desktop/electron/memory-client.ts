@@ -25,12 +25,12 @@ export function callMcp(toolName: string, args: Record<string, any>): Promise<an
   });
 }
 
-export function callMcpStrict(toolName: string, args: Record<string, any>): Promise<any> {
+export function callMcpStrict(toolName: string, args: Record<string, any>, timeoutMs = 15000): Promise<any> {
   return new Promise((resolve, reject) => {
     const req = http.request('http://127.0.0.1:37800/mcp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      timeout: 15000,
+      timeout: timeoutMs,
     }, (res) => {
       let data = '';
       res.on('data', (chunk: Buffer) => { data += chunk; });

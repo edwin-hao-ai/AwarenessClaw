@@ -189,6 +189,25 @@ contextBridge.exposeInMainWorld('electronAPI', {
   memoryGetCardEvolution: (cardId: string) => ipcRenderer.invoke('memory:get-card-evolution', cardId),
   memoryEnableSlotReplacement: () => ipcRenderer.invoke('memory:enable-slot-replacement'),
   memoryGetSlotStatus: () => ipcRenderer.invoke('memory:get-slot-status'),
+  memoryLearningStatus: (opts?: { agentId?: string; workspacePath?: string }) => ipcRenderer.invoke('memory:learning-status', opts || {}),
+  memoryLogLearning: (payload: {
+    type: 'learning' | 'error' | 'feature';
+    summary: string;
+    details?: string;
+    suggestedAction?: string;
+    area?: 'frontend' | 'backend' | 'infra' | 'tests' | 'docs' | 'config';
+    priority?: 'low' | 'medium' | 'high' | 'critical';
+    category?: 'correction' | 'insight' | 'knowledge_gap' | 'best_practice';
+    commandName?: string;
+    source?: string;
+    relatedFiles?: string[];
+    tags?: string[];
+    complexity?: 'simple' | 'medium' | 'complex';
+    frequency?: 'first_time' | 'recurring';
+    userContext?: string;
+    agentId?: string;
+    workspacePath?: string;
+  }) => ipcRenderer.invoke('memory:learning-log', payload),
 
   // Cloud Memory Auth
   cloudAuthStart: () => ipcRenderer.invoke('cloud:auth-start'),
