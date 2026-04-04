@@ -1,0 +1,18 @@
+.memory-graph-container {
+  min-height: 300px;
+  max-height: 1080px;
+  height: clamp(300px, calc(100vh - 320px), 1080px);
+}
+
+@supports (height: 100dvh) {
+  .memory-graph-container {
+    height: clamp(300px, calc(100dvh - 320px), 1080px);
+  }
+}
+
+@media (max-height: 760px) {
+  .memory-graph-container {
+    min-height: 260px;
+    height: clamp(260px, calc(100dvh - 260px), 760px);
+  }
+}

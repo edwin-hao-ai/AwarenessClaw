@@ -6,6 +6,7 @@ import { useI18n } from '../lib/i18n';
 import { parseMemoryContextResponse } from '../lib/memory-context';
 import { useExternalNavigator } from '../lib/useExternalNavigator';
 import { useMemorySettings } from '../hooks/useMemorySettings';
+import './memory-graph.css';
 import { MemorySettingsPanel } from '../components/memory/MemorySettingsPanel';
 import { SettingsCloudAuthModal } from '../components/settings/SettingsCloudAuthModal';
 import {
@@ -122,19 +123,53 @@ export default function Memory() {
   const [evolutionLoading, setEvolutionLoading] = useState(false);
   const [graphSize, setGraphSize] = useState({ width: 600, height: 400 });
 
-  // Measure graph container for responsive sizing
+  // Measure graph container when Graph tab is visible and keep it in sync with viewport changes.
   useEffect(() => {
-    const el = graphContainerRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        const { width, height } = entry.contentRect;
-        if (width > 0 && height > 0) setGraphSize({ width, height });
+    if (activeTab !== 'graph') return;
+
+    let frameId: number | null = null;
+
+    const measure = () => {
+      const el = graphContainerRef.current;
+      if (!el) return;
+      const { width, height } = el.getBoundingClientRect();
+      const nextWidth = Math.floor(width);
+      const nextHeight = Math.floor(height);
+
+      if (nextWidth > 0 && nextHeight > 0) {
+        setGraphSize((prev) => (
+          prev.width === nextWidth && prev.height === nextHeight
+            ? prev
+            : { width: nextWidth, height: nextHeight }
+        ));
+      } else {
+        frameId = requestAnimationFrame(measure);
       }
+    };
+
+    // First measure after layout
+    frameId = requestAnimationFrame(measure);
+
+    const el = graphContainerRef.current;
+    if (!el) {
+      return () => {
+        if (frameId !== null) cancelAnimationFrame(frameId);
+      };
+    }
+
+    const ro = new ResizeObserver(() => {
+      measure();
     });
     ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
+
+    window.addEventListener('resize', measure);
+
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', measure);
+      if (frameId !== null) cancelAnimationFrame(frameId);
+    };
+  }, [activeTab]);
 
   // Daemon connection state
   const [daemonHealth, setDaemonHealth] = useState<DaemonHealth | null>(null);
@@ -1273,7 +1308,7 @@ export default function Memory() {
 
             {/* === KNOWLEDGE GRAPH TAB === */}
             {activeTab === 'graph' && (
-              <div ref={graphContainerRef} className="flex-1 -mx-6 -mb-3 min-h-[400px]" style={{ height: 'calc(100vh - 280px)' }}>
+              <div ref={graphContainerRef} className="flex-1 -mx-6 -mb-3 memory-graph-container">
                 <Suspense fallback={
                   <div className="flex items-center justify-center h-full">
                     <Loader2 size={24} className="animate-spin text-brand-500" />

@@ -2,6 +2,10 @@ export interface ElectronAPI {
   getPlatform: () => Promise<string>;
   openExternal: (url: string) => Promise<void>;
   getDashboardUrl: () => Promise<{ url: string | null }>;
+  appZoomGet?: () => Promise<{ success: boolean; factor: number; error?: string }>;
+  appZoomIn?: () => Promise<{ success: boolean; factor: number; error?: string }>;
+  appZoomOut?: () => Promise<{ success: boolean; factor: number; error?: string }>;
+  appZoomReset?: () => Promise<{ success: boolean; factor: number; error?: string }>;
   startupEnsureRuntime: () => Promise<{
     ok: boolean;
     needsSetup?: boolean;

@@ -76,6 +76,30 @@ function useThemeEffect(theme: 'dark' | 'light' | 'system') {
   }, [theme]);
 }
 
+function isEditableElement(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName.toLowerCase();
+  return target.isContentEditable || tag === 'input' || tag === 'textarea' || tag === 'select';
+}
+
+function isZoomInKey(event: KeyboardEvent): boolean {
+  const key = event.key;
+  const withModifier = event.ctrlKey || event.metaKey;
+  if (withModifier) {
+    return key === '+' || key === '=' || key === 'Add' || key === 'NumpadAdd';
+  }
+  return key === '+' || key === 'NumpadAdd';
+}
+
+function isZoomOutKey(event: KeyboardEvent): boolean {
+  const key = event.key;
+  const withModifier = event.ctrlKey || event.metaKey;
+  if (withModifier) {
+    return key === '-' || key === '_' || key === 'Subtract' || key === 'NumpadSubtract';
+  }
+  return key === '-' || key === 'NumpadSubtract';
+}
+
 export default function App() {
   const { config } = useAppConfig();
   const { t } = useI18n();
@@ -100,6 +124,36 @@ export default function App() {
       if (typeof status?.progress === 'number') setStartupProgress(status.progress);
       else if (status?.message) setStartupProgress(estimateStartupProgress(status.message));
     });
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = async (event: KeyboardEvent) => {
+      if (!window.electronAPI) return;
+      if (isEditableElement(event.target)) return;
+
+      if (isZoomInKey(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        await window.electronAPI.appZoomIn?.();
+        return;
+      }
+
+      if (isZoomOutKey(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        await window.electronAPI.appZoomOut?.();
+        return;
+      }
+
+      if ((event.ctrlKey || event.metaKey) && event.key === '0') {
+        event.preventDefault();
+        event.stopPropagation();
+        await window.electronAPI.appZoomReset?.();
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
   useEffect(() => {

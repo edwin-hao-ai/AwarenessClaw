@@ -4,6 +4,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getPlatform: () => ipcRenderer.invoke('app:get-platform'),
   openExternal: (url: string) => ipcRenderer.invoke('app:open-external', url),
   getDashboardUrl: () => ipcRenderer.invoke('app:get-dashboard-url'),
+  appZoomGet: () => ipcRenderer.invoke('app:zoom:get'),
+  appZoomIn: () => ipcRenderer.invoke('app:zoom:in'),
+  appZoomOut: () => ipcRenderer.invoke('app:zoom:out'),
+  appZoomReset: () => ipcRenderer.invoke('app:zoom:reset'),
   startupEnsureRuntime: () => ipcRenderer.invoke('app:startup-ensure-runtime'),
   onStartupStatus: (callback: (status: { message: string; progress?: number }) => void) => {
     ipcRenderer.on('app:startup-status', (_e: any, status: { message: string; progress?: number }) => callback(status));

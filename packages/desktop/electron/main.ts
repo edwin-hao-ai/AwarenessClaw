@@ -861,6 +861,7 @@ registerAppUtilityHandlers({
   safeShellExecAsync,
   readShellOutputAsync,
   homedir: HOME,
+  getMainWindow: () => mainWindow,
 });
 registerAppRuntimeHandlers({
   home: HOME,

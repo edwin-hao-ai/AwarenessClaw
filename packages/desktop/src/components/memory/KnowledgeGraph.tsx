@@ -211,14 +211,14 @@ export default function KnowledgeGraph({ cards, events, width, height, onCardCli
 
   const graphData = useMemo(() => buildGraphData(cards, events), [cards, events]);
 
-  // Zoom to fit on data change
+  // Re-fit when data or viewport size changes
   useEffect(() => {
-    if (graphRef.current && graphData.nodes.length > 0) {
-      setTimeout(() => {
-        graphRef.current?.zoomToFit(400, 60);
-      }, 500);
-    }
-  }, [graphData]);
+    if (!graphRef.current || graphData.nodes.length === 0) return;
+    const id = setTimeout(() => {
+      graphRef.current?.zoomToFit(400, 60);
+    }, 500);
+    return () => clearTimeout(id);
+  }, [graphData, width, height]);
 
   const handleNodeHover = useCallback((node: any, prevNode: any) => {
     if (node) {
