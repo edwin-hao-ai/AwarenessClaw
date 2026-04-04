@@ -371,7 +371,7 @@ function TypewriterMessage({ content, isNew }: { content: string; isNew: boolean
   const text = isNew ? displayed : content;
 
   return (
-    <div className="prose prose-invert prose-sm max-w-none">
+    <div className="prose prose-sm max-w-none dark:prose-invert">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
@@ -1396,7 +1396,7 @@ export default function Dashboard({ isActive = true, onNavigate }: { isActive?: 
   };
 
   const renderStreamingContent = useCallback((content: string) => (
-    <div className="prose prose-invert prose-sm max-w-none">
+    <div className="prose prose-sm max-w-none dark:prose-invert">
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
         code({ children, className }) {
           const isInline = !className;
