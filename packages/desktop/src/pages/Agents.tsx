@@ -285,7 +285,8 @@ export default function Agents({ onNavigate }: { onNavigate?: (page: string) => 
               // so the Bootstrap Q&A ritual starts immediately
               if (agentId && onNavigate) {
                 updateConfig({ selectedAgentId: agentId });
-                onNavigate('chat');
+                // Delay navigation to let config change propagate to Dashboard first
+                setTimeout(() => onNavigate('chat'), 200);
               }
             }}
             onCancel={() => setShowWizard(false)}
