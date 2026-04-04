@@ -231,6 +231,7 @@ const en: Record<string, string> = {
   'channels.status.connecting': 'Connecting to {0}...',
   'channels.status.confirming': 'Confirming {0}...',
   'channels.status.awaitingConfirmation': '{0} is still syncing in OpenClaw...',
+  'channels.status.repairingPlugin': 'Repairing plugin {0}...',
   'channels.oneclick.wait': 'Initializing...',
   'channels.oneclick.patience': 'First time may take 15-20s to load',
   'channels.pendingConfirmation': 'Login completed. OpenClaw is still confirming the channel. This can take a few seconds.',
@@ -760,6 +761,7 @@ const en: Record<string, string> = {
   'settings.health.checking': 'Checking...',
   'settings.health.allGood': 'All checks passed',
   'settings.health.fix': 'Fix',
+  'settings.health.fixTelegram': 'Fix Telegram',
   'settings.health.recheck': 'Re-check',
 
   // Permissions presets
@@ -1237,6 +1239,7 @@ const zh: Record<string, string> = {
   'channels.status.connecting': '正在连接 {0}...',
   'channels.status.confirming': '正在确认 {0}...',
   'channels.status.awaitingConfirmation': '{0} 仍在 OpenClaw 中同步...',
+  'channels.status.repairingPlugin': '正在修复插件 {0}...',
   'channels.oneclick.wait': '正在初始化...',
   'channels.oneclick.patience': '首次加载可能需要 15-20 秒',
   'channels.pendingConfirmation': '登录已完成，OpenClaw 仍在确认该通道，通常还需要几秒钟。',
@@ -1766,6 +1769,7 @@ const zh: Record<string, string> = {
   'settings.health.checking': '检查中...',
   'settings.health.allGood': '所有检查通过',
   'settings.health.fix': '修复',
+  'settings.health.fixTelegram': '修复 Telegram',
   'settings.health.recheck': '重新检查',
 
   // Permissions presets
