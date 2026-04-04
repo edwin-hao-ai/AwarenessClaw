@@ -173,9 +173,9 @@ export function registerChatHandlers(deps: {
     let fullMessage = message;
 
     // Bootstrap injection: if this agent has a BOOTSTRAP.md, inject its content
-    // into the first message so the agent runs the first-run Q&A ritual.
-    // OpenClaw relies on the LLM reading BOOTSTRAP.md via AGENTS.md instructions,
-    // but smaller models (qwen-turbo etc.) may not follow those instructions reliably.
+    // into the FIRST message only, then delete it so subsequent messages are normal.
+    // OpenClaw's native bootstrap relies on the LLM reading BOOTSTRAP.md via AGENTS.md,
+    // but smaller models may not follow those instructions. We inject once and delete.
     if (agentId !== 'main') {
       try {
         const slug = agentId.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
@@ -187,7 +187,14 @@ export function registerChatHandlers(deps: {
           if (fs.existsSync(bp)) {
             const bootstrapContent = fs.readFileSync(bp, 'utf-8').trim();
             if (bootstrapContent) {
-              fullMessage = `[BOOTSTRAP — First Run Ritual]\nThis agent has never been initialized. Before answering, you MUST follow the bootstrap ritual below. Ask the user the questions described, then update the workspace files as instructed. After completing the ritual, delete BOOTSTRAP.md.\n\n${bootstrapContent}\n\n[User's first message]\n${message}`;
+              fullMessage = `[BOOTSTRAP — First Run Ritual]\nThis agent has never been initialized. Before answering, you MUST follow the bootstrap ritual below. Ask the user the questions described, then update the workspace files as instructed.\n\n${bootstrapContent}\n\n[User's first message]\n${message}`;
+              // Delete BOOTSTRAP.md immediately after injection — this ensures
+              // the ritual only runs once, matching OpenClaw's native behavior.
+              // Delete from ALL possible locations so it doesn't re-trigger.
+              for (const d of [flatWs, nestedWs, agentWs]) {
+                const f = path.join(d, 'BOOTSTRAP.md');
+                try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch { /* ignore */ }
+              }
             }
             break;
           }
